@@ -27,13 +27,21 @@ VOICES = {
     "Светлана (RU)": "ru-RU-SvetlanaNeural",
     "Дмитрий (RU)": "ru-RU-DmitryNeural",
     "Guy (EN)": "en-US-GuyNeural",
-    "Aria (EN)": "en-US-AriaNeural"
+    "Aria (EN)": "en-US-AriaNeural",
+    "Katja (DE)": "de-DE-KatjaNeural",
+    "Denise (FR)": "fr-FR-DeniseNeural",
+    "Alvaro (ES)": "es-ES-AlvaroNeural",
+    "Xiaoxiao (CN)": "zh-CN-XiaoxiaoNeural"
 }
 VOICE_AVATARS = {
-    "Светлана (RU)": "👩",
-    "Дмитрий (RU)": "👨",
-    "Guy (EN)": "👱",
-    "Aria (EN)": "👩‍🦰"
+    "Светлана (RU)": "🇷🇺",
+    "Дмитрий (RU)": "🇷🇺",
+    "Guy (EN)": "🇺🇸",
+    "Aria (EN)": "🇺🇸",
+    "Katja (DE)": "🇩🇪",
+    "Denise (FR)": "🇫🇷",
+    "Alvaro (ES)": "🇪🇸",
+    "Xiaoxiao (CN)": "🇨🇳"
 }
 # Persistent Settings Path
 if getattr(sys, 'frozen', False):

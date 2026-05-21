@@ -1,61 +1,61 @@
-# SINC PRO - Voice Assistant Widget
+[🇷🇺 Русский](#sinc-pro---голосовой-виджет) | [🇺🇸 English](#sinc-pro---voice-assistant-widget)
+
+---
+
+# 🇷🇺 SINC PRO - Голосовой виджет
 
 **SINC PRO** — это элегантный, быстрый и удобный голосовой виджет для Windows, созданный для озвучивания любого выделенного текста с помощью нейросетевых голосов (Edge TTS). 
 
 Проект разрабатывался с особой заботой и вниманием к людям с **дислексией**, так как автор программы сам является дислексиком. Главная цель SINC PRO — сделать потребление текстовой информации в любой среде (браузеры, PDF-документы, мессенджеры, рабочие программы) максимально комфортным, быстрым и не требующим усилий.
 
----
+### ✨ Ключевые возможности
 
-## ✨ Ключевые возможности и преимущества
-
-*   **Глобальный доступ отовсюду:** Вы можете выделить текст в абсолютно **любой** программе, где доступно выделение текста, нажать комбинацию клавиш — и программа мгновенно начнет его читать.
-*   **Нейросетевые голоса:** Использование Microsoft Edge TTS обеспечивает естественное, человечное и приятное звучание (доступны русский и английский языки).
+*   **Глобальный доступ отовсюду:** Выделите текст в **любой** программе, нажмите комбинацию клавиш — и программа мгновенно начнет его читать.
+*   **Нейросетевые голоса:** Использование Microsoft Edge TTS обеспечивает премиальное естественное звучание. Поддерживаются русский, английский, немецкий, французский, испанский, китайский и другие языки. Вы можете легко добавлять новые языки и голоса в словари программы.
 *   **Три режима интерфейса:**
-    *   **Оконный режим (Full):** Полноценное окно с текстовым редактором для чтения и редактирования больших объемов текста, поддержкой Markdown и полным управлением.
-    *   **Плеер-панель (Mini):** Компактная полоска сверху экрана поверх всех окон. Идеально для управления воспроизведением во время работы. Включает выдвижную текстовую панель (Text Drawer), которую можно открыть по кнопке `📖`, чтобы следить за текстом.
-    *   **Микро-виджет (Micro):** Ультракомпактный виджет, который занимает минимум места на экране, но дает доступ к паузе и остановке.
+    *   **Оконный режим (Full):** Полноценное окно с текстовым редактором и поддержкой Markdown.
+    *   **Плеер-панель (Mini):** Компактная полоска сверху экрана поверх всех окон. Идеально для работы. Включает выдвижную текстовую панель (Text Drawer), открываемую кнопкой `📖`.
+    *   **Микро-виджет (Micro):** Ультракомпактный виджет для базового управления.
 *   **Всегда поверх других окон:** Виджеты не потеряются среди других программ.
-*   **Кастомизация:** Прямо из виджета можно на лету менять голос (🔊) и скорость чтения (⚡).
-*   **Отсутствие рамок:** Современный дизайн в стиле Windows 11 (Immersive Dark Mode) без системных рамок в компактных режимах.
+*   **Кастомизация на лету:** Прямо из виджета меняйте голос (🔊) и скорость (⚡).
+
+### 🚀 Как пользоваться?
+
+1. Запустите программу (`SINC_PRO.exe` или скрипт).
+2. Выделите любой текст в любом приложении.
+3. Нажмите комбинацию **`Ctrl + Shift`**. 
+4. Программа автоматически скопирует текст и начнет озвучивать его!
+5. Управляйте воспроизведением (Пауза `❙❙`, Плей `▶`, Стоп `■`) из виджета.
+
+### ⚖️ Правовая информация (Disclaimer)
+Данный проект создан исключительно в образовательных, личных целях и для обеспечения доступности (Accessibility). Программа использует библиотеку `edge-tts` для доступа к публичным серверам Microsoft Edge TTS. Разработчик не несет ответственности за любое неправомерное или коммерческое использование данного ПО третьими лицами.
 
 ---
 
-## 🚀 Как пользоваться?
+# 🇺🇸 SINC PRO - Voice Assistant Widget
 
-1. **Запустите программу** (запустите скрипт `voice_widget.py` или скомпилированный `SINC_PRO.exe`). Виджет появится на экране.
-2. **Выделите любой текст** в браузере, документе Word, блокноте, мессенджере или любой другой программе.
-3. Нажмите комбинацию клавиш **`Ctrl + Shift`**. 
-4. Программа автоматически скопирует текст, вставит его в свой буфер и сразу же начнет озвучивать!
-5. Управляйте воспроизведением (Пауза `❙❙`, Плей `▶`, Стоп `■`) прямо из плавающего виджета.
+**SINC PRO** is an elegant, fast, and convenient voice widget for Windows designed to read any selected text aloud using premium neural network voices (Edge TTS).
 
-Вы можете перетаскивать виджет за специальную иконку слева (в режимах Mini и Micro) в любую удобную часть экрана.
+This project was developed with special care and attention to people with **dyslexia**, as the author is dyslexic themselves. The main goal of SINC PRO is to make consuming text in any environment (browsers, PDFs, messengers, work apps) effortless, quick, and comfortable.
 
----
+### ✨ Key Features
 
-## 🛠 Установка и запуск из исходников
+*   **Global Access Everywhere:** Highlight text in **any** application, press the hotkey, and the program will instantly start reading it aloud.
+*   **Premium Neural Voices:** Powered by Microsoft Edge TTS for natural, human-like sound. It supports English, Russian, German, French, Spanish, Chinese, and many more. You can easily add new voices to the dictionary.
+*   **Three UI Modes:**
+    *   **Full Mode:** A complete window with a text editor and Markdown support.
+    *   **Mini Player:** A compact top-screen overlay. Perfect for background listening while working. Includes a "Text Drawer" that expands when you click `📖`.
+    *   **Micro Widget:** An ultra-compact widget with minimal footprint.
+*   **Always on Top:** The widget stays above other applications.
+*   **On-the-fly Customization:** Change voices (🔊) and reading speed (⚡) directly from the widget.
 
-Для работы программы требуется Python 3.10+ и ОС Windows.
+### 🚀 How to use it?
 
-1. Клонируйте репозиторий:
-   ```bash
-   git clone https://github.com/WiseYaroslav28/sinc-pro-voice-widget.git
-   cd sinc-pro-voice-widget
-   ```
-2. Установите необходимые зависимости:
-   ```bash
-   pip install customtkinter edge-tts pyperclip keyboard
-   ```
-3. Запустите приложение:
-   ```bash
-   python voice_widget.py
-   ```
+1. Launch the application (`SINC_PRO.exe` or the Python script).
+2. Highlight any text in any app (browser, Word, Discord, etc.).
+3. Press **`Ctrl + Shift`**.
+4. The program will automatically capture the text and start reading it aloud!
+5. Control playback (Pause `❙❙`, Play `▶`, Stop `■`) from the floating widget.
 
-*Примечание: Вы также можете скомпилировать приложение в `.exe` файл с помощью PyInstaller, используя файл `SINC_PRO.spec`.*
-
----
-
-## ⚖️ Правовая информация (Disclaimer)
-
-Данный проект (SINC PRO) создан исключительно в образовательных, личных целях и для обеспечения доступности (Accessibility). Программа использует библиотеку `edge-tts` для отправки запросов к публичным серверам Microsoft Edge Text-to-Speech API без использования платных ключей Azure. 
-
-Разработчик не несет ответственности за любое неправомерное или коммерческое использование данного программного обеспечения третьими лицами. Проект предоставляется "как есть" (AS IS). Для коммерческого использования технологий синтеза речи Microsoft необходимо приобретать официальные ключи Microsoft Azure Cognitive Services.
+### ⚖️ Disclaimer
+This project is created exclusively for educational, personal, and accessibility purposes. It uses the `edge-tts` library to access Microsoft Edge TTS servers. The developer is not responsible for any misuse or commercial exploitation of this software by third parties.
