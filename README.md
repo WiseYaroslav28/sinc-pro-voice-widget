@@ -1,4 +1,4 @@
-[🇷🇺 Русский](#sinc-pro---голосовой-виджет) | [🇺🇸 English](#SINC-PRO---Voice-Assistant-Widget)
+[🇷🇺 Русский](#sinc-pro---голосовой-виджет) | [🇺🇸 English](#🇺🇸-SINC-PRO---Voice-Assistant-Widget)
 
 ---
 
