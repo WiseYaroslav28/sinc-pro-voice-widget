@@ -1,7 +1,8 @@
-[🇷🇺 Русский](#sinc-pro---голосовой-виджет) | [🇺🇸 English](#🇺🇸-SINC-PRO---Voice-Assistant-Widget)
+[🇷🇺 Русский](#ru) | [🇺🇸 English](#en)
 
 ---
 
+<a id="ru"></a>
 # 🇷🇺 SINC PRO - Голосовой виджет
 
 **SINC PRO** — это элегантный, быстрый и удобный голосовой виджет для Windows, созданный для озвучивания любого выделенного текста с помощью нейросетевых голосов (Edge TTS). 
@@ -32,6 +33,7 @@
 
 ---
 
+<a id="en"></a>
 # 🇺🇸 SINC PRO - Voice Assistant Widget
 
 **SINC PRO** is an elegant, fast, and convenient voice widget for Windows designed to read any selected text aloud using premium neural network voices (Edge TTS).
