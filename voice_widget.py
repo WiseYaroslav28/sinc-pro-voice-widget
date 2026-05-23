@@ -166,6 +166,9 @@ class VoiceAssistantApp(ctk.CTk):
                     self.translate_to = data.get("translate_to", "ru")
                     self.translate_hotkey = data.get("translate_hotkey", "ctrl+alt+t")
                     self.speak_hotkey = data.get("speak_hotkey", "ctrl+shift")
+                    # Auto-fix old conflicting hotkey if present in settings file
+                    if self.translate_hotkey == "ctrl+shift+t":
+                        self.translate_hotkey = "ctrl+alt+t"
         except: pass
 
     def save_settings(self):

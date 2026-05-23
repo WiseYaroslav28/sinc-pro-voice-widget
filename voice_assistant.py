@@ -151,7 +151,7 @@ def load_app_settings():
     settings_file = os.path.join(app_dir, "voice_settings.json")
     
     translate_to = "ru"
-    translate_hotkey = "ctrl+shift+t"
+    translate_hotkey = "ctrl+alt+t" # Default
     speak_hotkey = "ctrl+alt+v" # Default fallback for tray app
     
     if os.path.exists(settings_file):
@@ -160,7 +160,10 @@ def load_app_settings():
             with open(settings_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 translate_to = data.get("translate_to", "ru")
-                translate_hotkey = data.get("translate_hotkey", "ctrl+shift+t")
+                translate_hotkey = data.get("translate_hotkey", "ctrl+alt+t")
+                # Auto-fix old conflicting hotkey if present in settings file
+                if translate_hotkey == "ctrl+shift+t":
+                    translate_hotkey = "ctrl+alt+t"
                 # In settings we might have ctrl+shift for widget, 
                 # but if we run from tray, we can use either the widget's hotkey
                 # or fallback to ctrl+alt+v if it conflicts.
