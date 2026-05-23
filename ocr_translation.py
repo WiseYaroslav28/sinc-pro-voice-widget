@@ -53,20 +53,20 @@ async def run_ocr_on_file(file_path: str) -> list:
         
     return lines_data
 
-def translate_batch_texts(texts: list, target_lang: str) -> list:
-    """Translates a list of texts using GoogleTranslator (deep-translator) in batch."""
+import translation_engine
+
+def translate_batch_texts(texts: list, target_lang: str, engine_type: str = "google_cache", **kwargs) -> list:
+    """Translates a list of texts using our TranslationEngine (with cache and batching)."""
     if not texts:
         return []
     try:
-        translator = GoogleTranslator(source='auto', target=target_lang)
-        # translate_batch returns list of translated strings
-        return translator.translate_batch(texts)
+        engine = translation_engine.get_engine(engine_type, **kwargs)
+        return engine.translate_batch(texts, target_lang)
     except Exception as e:
-        print(f"Translation error: {e}")
-        # Return original texts as fallback
+        print(f"Error in translate_batch_texts: {e}")
         return texts
 
-async def perform_ocr_and_translation(image: Image.Image, target_lang: str) -> list:
+async def perform_ocr_and_translation(image: Image.Image, target_lang: str, engine_type: str = "google_cache", **kwargs) -> list:
     """Saves Pillow Image, runs OCR, translates texts, and returns list of:
     {'text': str, 'bbox': (x1, y1, x2, y2), 'original_text': str}
     """
@@ -92,7 +92,9 @@ async def perform_ocr_and_translation(image: Image.Image, target_lang: str) -> l
             None, 
             translate_batch_texts, 
             original_texts, 
-            target_lang
+            target_lang,
+            engine_type,
+            **kwargs
         )
         
         # Combine back
@@ -106,6 +108,7 @@ async def perform_ocr_and_translation(image: Image.Image, target_lang: str) -> l
             })
             
         return result
+
         
     finally:
         # Clean up temp file

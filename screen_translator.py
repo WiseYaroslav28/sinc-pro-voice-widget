@@ -5,7 +5,15 @@ import threading
 import ctypes
 import sys
 import time
-from PIL import ImageGrab, ImageEnhance, ImageTk
+from PIL import ImageGrab, ImageEnhance, ImageTk, Image, ImageDraw, ImageFont
+
+try:
+    import cv2
+    import numpy as np
+    opencv_available = True
+except ImportError:
+    opencv_available = False
+
 
 # Принудительная установка DPI-awareness для сопоставления координат Tkinter и скриншотов 1:1
 if sys.platform.startswith("win"):
@@ -224,6 +232,8 @@ class ScreenTranslatorFrame(tk.Toplevel):
         self.border_width = 5
         
         self.show_translation = True
+        self.show_highlight = False
+        self.canvas_images = []
         self.last_translated_data = []
         self.is_translating = False
         self.need_update_translation = False
@@ -321,6 +331,19 @@ class ScreenTranslatorFrame(tk.Toplevel):
                                            fg_color="transparent", hover_color="#333", text_color="#aaa", font=ctk.CTkFont(size=12),
                                            command=self.translate_area)
         self.btn_translate.pack(side="right", padx=3, pady=3)
+        
+        self.btn_highlight = ctk.CTkButton(self.toolbar, text="✨", width=24, height=22, corner_radius=4,
+                                           fg_color="transparent", hover_color="#333", text_color="#aaa", font=ctk.CTkFont(size=12),
+                                           command=self.toggle_highlight)
+        self.btn_highlight.pack(side="right", padx=3, pady=3)
+
+    def toggle_highlight(self):
+        self.show_highlight = not self.show_highlight
+        if self.show_highlight:
+            self.btn_highlight.configure(fg_color="#007AFF", text_color="#ffffff")
+        else:
+            self.btn_highlight.configure(fg_color="transparent", text_color="#aaa")
+        self.draw_translations()
 
     def setup_drag_and_resize(self):
         # Настройка 4 границ
@@ -532,8 +555,17 @@ class ScreenTranslatorFrame(tk.Toplevel):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
+            engine_type = getattr(self.master, "translation_engine", "google_cache")
+            ollama_model = getattr(self.master, "ollama_model", "gemma2")
+            ollama_url = getattr(self.master, "ollama_url", "http://localhost:11434")
             data = loop.run_until_complete(
-                ocr_translation.perform_ocr_and_translation(cropped_image, self.translate_to)
+                ocr_translation.perform_ocr_and_translation(
+                    cropped_image, 
+                    self.translate_to,
+                    engine_type=engine_type,
+                    ollama_model=ollama_model,
+                    ollama_url=ollama_url
+                )
             )
             self.after(0, lambda: self.finish_translation(data))
         except Exception as e:
@@ -551,13 +583,13 @@ class ScreenTranslatorFrame(tk.Toplevel):
         self.canvas.delete("all")
         
         # Все операции с GUI (скрытие, координаты, скриншот, показ) выполняются СТРОГО в главном потоке
-        self.update_idletasks()
-        self.withdraw()
-        self.update() # Принудительно скрываем окно в менеджере окон
-        time.sleep(0.15) # Даем DWM время гарантированно скрыть окно перед захватом
-        
         screenshot = None
         try:
+            self.update_idletasks()
+            self.withdraw()
+            self.update() # Принудительно скрываем окно в менеджере окон
+            time.sleep(0.15) # Даем DWM время гарантированно скрыть окно перед захватом
+            
             canvas_x = self.canvas.winfo_rootx()
             canvas_y = self.canvas.winfo_rooty()
             canvas_w = self.canvas.winfo_width()
@@ -566,10 +598,11 @@ class ScreenTranslatorFrame(tk.Toplevel):
             if canvas_w > 10 and canvas_h > 10:
                 screenshot = ImageGrab.grab(bbox=(canvas_x, canvas_y, canvas_x + canvas_w, canvas_y + canvas_h))
         except Exception as e:
-            print(f"Error capturing screen: {e}")
-            
-        self.deiconify()
-        self.attributes("-topmost", True)
+            print(f"Error capturing screen in translate_area: {e}")
+        finally:
+            self.deiconify()
+            self.attributes("-topmost", True)
+            self.update()
         
         if screenshot is None:
             self.is_translating = False
@@ -585,8 +618,17 @@ class ScreenTranslatorFrame(tk.Toplevel):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
+            engine_type = getattr(self.master, "translation_engine", "google_cache")
+            ollama_model = getattr(self.master, "ollama_model", "gemma2")
+            ollama_url = getattr(self.master, "ollama_url", "http://localhost:11434")
             data = loop.run_until_complete(
-                ocr_translation.perform_ocr_and_translation(screenshot, self.translate_to)
+                ocr_translation.perform_ocr_and_translation(
+                    screenshot, 
+                    self.translate_to,
+                    engine_type=engine_type,
+                    ollama_model=ollama_model,
+                    ollama_url=ollama_url
+                )
             )
             self.after(0, lambda: self.finish_translation(data))
         except Exception as e:
@@ -605,12 +647,19 @@ class ScreenTranslatorFrame(tk.Toplevel):
 
     def draw_translations(self):
         self.canvas.delete("all")
+        self.canvas_images.clear()
+        
         if not self.show_translation or not self.last_translated_data:
             self.last_screen_hash = None
             return
             
         for item in self.last_translated_data:
             text = item["text"]
+            original_text = item.get("original_text", "")
+            
+            if not text or text.strip().lower() == original_text.strip().lower():
+                continue
+                
             x1, y1, x2, y2 = item["bbox"]
             w = x2 - x1
             h = y2 - y1
@@ -621,43 +670,103 @@ class ScreenTranslatorFrame(tk.Toplevel):
             if hasattr(self, "current_screenshot") and self.current_screenshot:
                 bg_color, fg_color = analyze_colors(self.current_screenshot, (x1, y1, x2, y2))
             
-            # Динамически вычисляем базовый размер шрифта под высоту строки (в пикселях!)
-            font_size = max(6, int(h * 0.65))
+            draw_w = max(w + 30, int(w * 1.35))
             
-            # Если перевод длиннее оригинального текста, уменьшаем шрифт для лучшей читаемости
-            orig_text = item.get("original_text", "")
-            if orig_text:
-                len_orig = len(orig_text)
-                len_trans = len(text)
-                if len_trans > len_orig and len_orig > 0:
-                    ratio = len_trans / len_orig
-                    if ratio > 1.2:
-                        font_size = max(6, int(font_size * 0.8))
-            
-            # Разрешаем тексту быть немного шире оригинального бокса, чтобы избежать некрасивых переносов
-            draw_w = max(w + 30, int(w * 1.3))
-            
-            # Рисуем подложку точного цвета фона без каёмок (эффект полного закрашивания)
-            half_diff = (draw_w - w) / 2
-            self.canvas.create_rectangle(
-                x1 - half_diff - 2, y1 - 2, x2 + half_diff + 2, y2 + 2,
-                fill=bg_color,
-                outline="",
-                width=0
-            )
-            
-            # Отрисовываем перевод (отрицательный font_size задает размер шрифта в пикселях!)
-            self.canvas.create_text(
-                (x1 + x2) / 2,
-                (y1 + y2) / 2,
-                text=text,
-                fill=fg_color,
-                font=("Segoe UI", -font_size, "bold"),
-                width=draw_w,
-                anchor="center"
-            )
-            
-        # Сбрасываем хэш изменений, чтобы следующая проверка началась с нового стабильного кадра
+            # Создаем блок с переводом
+            block_img = None
+            if hasattr(self, "current_screenshot") and self.current_screenshot:
+                try:
+                    sc_w, sc_h = self.current_screenshot.size
+                    crop_x2 = min(sc_w, x1 + draw_w)
+                    
+                    if crop_x2 > x1 and y2 > y1:
+                        block = self.current_screenshot.crop((x1, y1, crop_x2, y2))
+                        
+                        if opencv_available:
+                            # OpenCV inpainting для стирания оригинального текста в границах (0, 0, w, h)
+                            block_cv = cv2.cvtColor(np.array(block), cv2.COLOR_RGB2BGR)
+                            
+                            # Парсим bg_color в RGB
+                            bg_rgb = tuple(int(bg_color[i:i+2], 16) for i in (1, 3, 5))
+                            bg_b, bg_g, bg_r = bg_rgb[2], bg_rgb[1], bg_rgb[0]
+                            
+                            # Маска для текста: пиксели, отличающиеся от фона
+                            mask = np.zeros(block_cv.shape[:2], dtype=np.uint8)
+                            diff = np.abs(block_cv[:, :w].astype(np.int32) - [bg_b, bg_g, bg_r])
+                            mask_text = np.any(diff > 35, axis=-1).astype(np.uint8) * 255
+                            mask[:, :w] = mask_text
+                            
+                            # Слегка расширяем маску
+                            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+                            mask = cv2.dilate(mask, kernel, iterations=1)
+                            
+                            inpainted = cv2.inpaint(block_cv, mask, 3, cv2.INPAINT_TELEA)
+                            block_clean = Image.fromarray(cv2.cvtColor(inpainted, cv2.COLOR_BGR2RGB))
+                        else:
+                            # Fallback без OpenCV: просто заливаем цветом фона
+                            block_clean = Image.new("RGB", (crop_x2 - x1, y2 - y1), bg_color)
+                            
+                        # Рисуем переведенный текст на очищенном фоне
+                        draw = ImageDraw.Draw(block_clean)
+                        font_size = max(8, int(h * 0.72))
+                        
+                        try:
+                            font = ImageFont.truetype("segoeui.ttf", font_size)
+                        except IOError:
+                            try:
+                                font = ImageFont.truetype("arial.ttf", font_size)
+                            except IOError:
+                                font = ImageFont.load_default()
+                                
+                        # Центрируем текст по вертикали
+                        try:
+                            left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+                            text_h = bottom - top
+                            y_pos = (h - text_h) // 2 - top
+                        except AttributeError:
+                            try:
+                                _, text_h = font.getsize(text)
+                                y_pos = (h - text_h) // 2
+                            except:
+                                y_pos = (h - font_size) // 2
+                                
+                        draw.text((2, y_pos), text, fill=fg_color, font=font)
+                        block_img = block_clean
+                except Exception as e:
+                    print(f"Error rendering block: {e}")
+                    
+            if block_img is not None:
+                img_tk = ImageTk.PhotoImage(block_img)
+                self.canvas_images.append(img_tk)
+                self.canvas.create_image(x1, y1, image=img_tk, anchor="nw")
+            else:
+                # Абсолютный fallback: стандартный Tkinter текст, если PIL-рисунок не удался
+                self.canvas.create_rectangle(
+                    x1 - 3, y1 - 2, x1 + draw_w + 3, y2 + 2,
+                    fill=bg_color,
+                    outline="",
+                    width=0
+                )
+                font_size = max(8, int(h * 0.72))
+                self.canvas.create_text(
+                    x1,
+                    (y1 + y2) / 2,
+                    text=text,
+                    fill=fg_color,
+                    font=("Segoe UI", -font_size, "bold"),
+                    width=draw_w,
+                    anchor="w"
+                )
+                
+            # Если включена подсветка, рисуем синюю рамку вокруг оригинальной области текста
+            if self.show_highlight:
+                self.canvas.create_rectangle(
+                    x1 - 2, y1 - 2, x2 + 2, y2 + 2,
+                    outline="#007AFF",
+                    width=1.5
+                )
+                
+        # Сбрасываем хэш изменений
         self.last_screen_hash = None
 
     def toggle_visibility(self):

@@ -231,6 +231,9 @@ class VoiceAssistantApp(ctk.CTk):
         self.translate_to = "ru"
         self.translate_hotkey = "ctrl+alt+t"
         self.speak_hotkey = "ctrl+shift"
+        self.translation_engine = "google_cache"
+        self.ollama_model = "gemma2"
+        self.ollama_url = "http://localhost:11434"
         try:
             if os.path.exists(SETTINGS_FILE):
                 with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
@@ -242,6 +245,9 @@ class VoiceAssistantApp(ctk.CTk):
                     self.translate_to = data.get("translate_to", "ru")
                     self.translate_hotkey = data.get("translate_hotkey", "ctrl+alt+t")
                     self.speak_hotkey = data.get("speak_hotkey", "ctrl+shift")
+                    self.translation_engine = data.get("translation_engine", "google_cache")
+                    self.ollama_model = data.get("ollama_model", "gemma2")
+                    self.ollama_url = data.get("ollama_url", "http://localhost:11434")
                     # Auto-fix old conflicting hotkey if present in settings file
                     if self.translate_hotkey == "ctrl+shift+t":
                         self.translate_hotkey = "ctrl+alt+t"
@@ -257,7 +263,10 @@ class VoiceAssistantApp(ctk.CTk):
                     "markdown_enabled": self.markdown_enabled,
                     "translate_to": self.translate_to,
                     "translate_hotkey": self.translate_hotkey,
-                    "speak_hotkey": self.speak_hotkey
+                    "speak_hotkey": self.speak_hotkey,
+                    "translation_engine": self.translation_engine,
+                    "ollama_model": self.ollama_model,
+                    "ollama_url": self.ollama_url
                 }, f)
         except: pass
 
