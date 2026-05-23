@@ -10,7 +10,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['torch', 'tensorflow', 'onnxruntime', 'argostranslate', 'ctranslate2', 'spacy', 'thinc', 'tensorboard', 'lxml', 'cryptography'],
+    excludes=['torch', 'tensorflow', 'onnxruntime', 'argostranslate', 'ctranslate2', 'spacy', 'thinc', 'tensorboard'],
     noarchive=False,
     optimize=0,
 )

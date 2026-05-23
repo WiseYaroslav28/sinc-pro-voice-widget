@@ -715,19 +715,31 @@ class VoiceAssistantApp(ctk.CTk):
             
         ctk.CTkLabel(self.overlay_frame, text="ОБЩИЕ НАСТРОЙКИ", font=ctk.CTkFont(size=12, weight="bold"), text_color="#888").pack(pady=(10, 5))
         
-        # Font size settings
+        # 1. Font size settings
         self.font_lbl = ctk.CTkLabel(self.overlay_frame, text=f"Размер шрифта: {self.font_size}")
         self.font_lbl.pack(pady=1)
         f_slider = ctk.CTkSlider(self.overlay_frame, from_=10, to=40, command=self.update_font_slider)
         f_slider.set(self.font_size)
         f_slider.pack(fill="x", padx=30, pady=2)
         
-        # Markdown switch
+        # 2. Markdown switch
         md_switch = ctk.CTkSwitch(self.overlay_frame, text="Markdown форматирование", command=self.toggle_markdown)
         if self.markdown_enabled: md_switch.select()
         md_switch.pack(pady=3)
         
-        # Target language for translation
+        # 3. Translate hotkey setting
+        ctk.CTkLabel(self.overlay_frame, text="Хоткей перевода экрана:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(4, 1))
+        self.hotkey_entry = ctk.CTkEntry(self.overlay_frame, width=150, placeholder_text="ctrl+shift+t", height=24)
+        self.hotkey_entry.insert(0, self.translate_hotkey)
+        self.hotkey_entry.pack(pady=1)
+        
+        # 4. Speak hotkey setting
+        ctk.CTkLabel(self.overlay_frame, text="Хоткей озвучки текста:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(4, 1))
+        self.speak_hotkey_entry = ctk.CTkEntry(self.overlay_frame, width=150, placeholder_text="ctrl+shift", height=24)
+        self.speak_hotkey_entry.insert(0, self.speak_hotkey)
+        self.speak_hotkey_entry.pack(pady=1)
+        
+        # 5. Target language for translation
         ctk.CTkLabel(self.overlay_frame, text="Язык перевода экрана:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(4, 1))
         langs = {"Русский": "ru", "English": "en", "Deutsch": "de", "Français": "fr", "Español": "es", "Chinese": "zh-CN"}
         curr_lang_name = "Русский"
@@ -739,7 +751,7 @@ class VoiceAssistantApp(ctk.CTk):
         self.lang_option.set(curr_lang_name)
         self.lang_option.pack(pady=1)
 
-        # Translation engine setting
+        # 6. Translation engine setting
         ctk.CTkLabel(self.overlay_frame, text="Движок перевода:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(4, 1))
         engines = {"Google Translate": "google_cache", "Argos (Оффлайн)": "argos"}
         curr_eng_name = "Google Translate"
@@ -751,31 +763,27 @@ class VoiceAssistantApp(ctk.CTk):
         self.engine_option.set(curr_eng_name)
         self.engine_option.pack(pady=1)
 
+        # 7. Argos status frame (dynamic container)
         self.argos_status_frame = ctk.CTkFrame(self.overlay_frame, fg_color="transparent")
         self.argos_status_frame.pack(pady=1)
         self.argos_status_label = None
         self.argos_download_btn = None
+        
+        # 8. Save & Close button
+        self.save_btn = ctk.CTkButton(self.overlay_frame, text="СОХРАНИТЬ И ЗАКРЫТЬ", height=26, corner_radius=6, fg_color="#007AFF", hover_color="#005BBB", command=self.save_and_close_overlay)
+        
+        # Initialize engine
         self.on_change_engine(curr_eng_name)
-
-        # Translate hotkey setting
-        ctk.CTkLabel(self.overlay_frame, text="Хоткей перевода экрана:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(4, 1))
-        self.hotkey_entry = ctk.CTkEntry(self.overlay_frame, width=150, placeholder_text="ctrl+shift+t", height=24)
-        self.hotkey_entry.insert(0, self.translate_hotkey)
-        self.hotkey_entry.pack(pady=1)
-        
-        # Speak hotkey setting
-        ctk.CTkLabel(self.overlay_frame, text="Хоткей озвучки текста:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(4, 1))
-        self.speak_hotkey_entry = ctk.CTkEntry(self.overlay_frame, width=150, placeholder_text="ctrl+shift", height=24)
-        self.speak_hotkey_entry.insert(0, self.speak_hotkey)
-        self.speak_hotkey_entry.pack(pady=1)
-        
-        # Save & Close button
-        ctk.CTkButton(self.overlay_frame, text="СОХРАНИТЬ И ЗАКРЫТЬ", height=26, corner_radius=6, fg_color="#007AFF", hover_color="#005BBB", command=self.save_and_close_overlay).pack(pady=(8, 5))
 
 
     def on_change_engine(self, selected_name):
         for child in self.argos_status_frame.winfo_children():
             child.destroy()
+            
+        # Скрываем временный статус-фрейм и кнопку сохранения перед переупаковкой
+        self.argos_status_frame.pack_forget()
+        if hasattr(self, "save_btn"):
+            self.save_btn.pack_forget()
             
         if selected_name == "Argos (Оффлайн)":
             from translation_engine import get_engine
@@ -796,9 +804,19 @@ class VoiceAssistantApp(ctk.CTk):
                     command=self.start_argos_download
                 )
                 self.argos_download_btn.pack(pady=2)
+                
+                # Показываем фрейм со статусом и кнопкой "Скачать"
+                self.argos_status_frame.pack(pady=1)
             else:
-                self.argos_status_label = ctk.CTkLabel(self.argos_status_frame, text="Локальная модель EN->RU готова", text_color="#34C759", font=ctk.CTkFont(size=10))
-                self.argos_status_label.pack(pady=2)
+                # Если модель уже скачана, ничего не показываем
+                pass
+        else:
+            # Для Google Translate скрываем фрейм статуса полностью
+            pass
+            
+        # Всегда перепаковываем кнопку сохранения в самый низ оверлея
+        if hasattr(self, "save_btn"):
+            self.save_btn.pack(pady=(8, 5))
 
     def start_argos_download(self):
         self.argos_download_btn.configure(state="disabled")
@@ -813,13 +831,15 @@ class VoiceAssistantApp(ctk.CTk):
         target_lang = getattr(self, "translate_to", "ru")
         
         def update_status(msg):
-            self.after(0, lambda: self.argos_status_label.configure(text=msg))
+            if hasattr(self, "argos_status_label") and self.argos_status_label and self.argos_status_label.winfo_exists():
+                self.after(0, lambda: self.argos_status_label.configure(text=msg))
             
         success = engine.download_model('en', target_lang, progress_callback=update_status)
         
         def on_finish():
-            self.engine_option.configure(state="normal")
-            self.on_change_engine(self.engine_option.get())
+            if hasattr(self, "engine_option") and self.engine_option.winfo_exists():
+                self.engine_option.configure(state="normal")
+                self.on_change_engine(self.engine_option.get())
             
         self.after(0, on_finish)
 
@@ -831,18 +851,21 @@ class VoiceAssistantApp(ctk.CTk):
         self.save_settings()
         
     def save_and_close_overlay(self):
-        if hasattr(self, "hotkey_entry"):
-            hk = self.hotkey_entry.get().strip().lower()
-            if hk:
-                self.translate_hotkey = hk
-        if hasattr(self, "speak_hotkey_entry"):
-            shk = self.speak_hotkey_entry.get().strip().lower()
-            if shk:
-                self.speak_hotkey = shk
-        if hasattr(self, "engine_option"):
-            engines = {"Google Translate": "google_cache", "Argos (Оффлайн)": "argos", "Msty / Local API": "msty", "Ollama": "ollama"}
-            sel_eng = self.engine_option.get()
-            self.translation_engine = engines.get(sel_eng, "google_cache")
+        try:
+            if hasattr(self, "hotkey_entry") and self.hotkey_entry.winfo_exists():
+                hk = self.hotkey_entry.get().strip().lower()
+                if hk:
+                    self.translate_hotkey = hk
+            if hasattr(self, "speak_hotkey_entry") and self.speak_hotkey_entry.winfo_exists():
+                shk = self.speak_hotkey_entry.get().strip().lower()
+                if shk:
+                    self.speak_hotkey = shk
+            if hasattr(self, "engine_option") and self.engine_option.winfo_exists():
+                engines = {"Google Translate": "google_cache", "Argos (Оффлайн)": "argos", "Msty / Local API": "msty", "Ollama": "ollama"}
+                sel_eng = self.engine_option.get()
+                self.translation_engine = engines.get(sel_eng, "google_cache")
+        except Exception as e:
+            print(f"Error saving settings in overlay: {e}")
             
         self.save_settings()
         self.close_overlay()
@@ -922,6 +945,14 @@ class VoiceAssistantApp(ctk.CTk):
 
     def close_overlay(self):
         if self.overlay_frame:
+            try:
+                self.overlay_frame.place_forget()
+            except:
+                pass
+            try:
+                self.overlay_frame.grid_forget()
+            except:
+                pass
             self.overlay_frame.destroy()
             self.overlay_frame = None
             self.current_overlay = None

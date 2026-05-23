@@ -21,6 +21,16 @@ argostranslate = None
 
 def try_import_argos():
     global argos_available, argostranslate
+    
+    # Очищаем черный список импорта PyInstaller (PEP 302/451 блокировки для excludes)
+    blocked_modules = [
+        'argostranslate', 'argostranslate.package', 'argostranslate.translate',
+        'torch', 'ctranslate2', 'sentencepiece'
+    ]
+    for mod in blocked_modules:
+        if mod in sys.modules and sys.modules[mod] is None:
+            del sys.modules[mod]
+            
     if LOCAL_TRANSLATOR_DIR not in sys.path:
         sys.path.insert(0, LOCAL_TRANSLATOR_DIR)
     try:
@@ -31,6 +41,11 @@ def try_import_argos():
         return True
     except Exception as e:
         print(f"Dynamic Argos import failed: {e}")
+        try:
+            with open(os.path.join(APP_DIR, "argos_import_error.log"), "w", encoding="utf-8") as f:
+                f.write(traceback.format_exc())
+        except:
+            pass
         argos_available = False
         return False
 
