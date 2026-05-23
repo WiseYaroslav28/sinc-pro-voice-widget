@@ -29,3 +29,4 @@ test_*.py
 test_*.log
 test_*.png
 test_*.txt
+*.zip
