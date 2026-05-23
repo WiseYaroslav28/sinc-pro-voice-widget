@@ -6,11 +6,11 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[('sinc_icon.ico', '.')],
-    hiddenimports=['customtkinter', 'edge_tts', 'pyperclip', 'keyboard', 'winrt', 'deep_translator', 'winrt.windows.storage.streams', 'winrt.windows.foundation.collections', 'cv2'],
+    hiddenimports=['customtkinter', 'edge_tts', 'pyperclip', 'keyboard', 'winrt', 'deep_translator', 'winrt.windows.storage.streams', 'winrt.windows.foundation.collections'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['torch', 'tensorflow', 'onnxruntime', 'argostranslate', 'ctranslate2', 'spacy', 'thinc', 'tensorboard', 'lxml', 'cryptography'],
     noarchive=False,
     optimize=0,
 )

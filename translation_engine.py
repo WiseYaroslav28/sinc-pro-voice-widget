@@ -7,20 +7,34 @@ import json
 import urllib.request
 from deep_translator import GoogleTranslator
 
-# Импортируем argostranslate глобально в главном потоке, чтобы избежать DLL конфликтов (WinError 1114) с winrt
-try:
-    import argostranslate.package
-    import argostranslate.translate
-    argos_available = True
-except Exception as e:
-    print(f"Global Argos import failed: {e}")
-    argos_available = False
-
 # Определение директории приложения
 if getattr(sys, 'frozen', False):
     APP_DIR = os.path.dirname(sys.executable)
 else:
     APP_DIR = os.path.dirname(os.path.abspath(__file__))
+
+LOCAL_TRANSLATOR_DIR = os.path.join(APP_DIR, "local_translator")
+
+argos_available = False
+argostranslate = None
+
+def try_import_argos():
+    global argos_available, argostranslate
+    if LOCAL_TRANSLATOR_DIR not in sys.path:
+        sys.path.insert(0, LOCAL_TRANSLATOR_DIR)
+    try:
+        import argostranslate.package
+        import argostranslate.translate
+        import argostranslate
+        argos_available = True
+        return True
+    except Exception as e:
+        print(f"Dynamic Argos import failed: {e}")
+        argos_available = False
+        return False
+
+# Пробуем импортировать при старте
+try_import_argos()
 
 DB_PATH = os.path.join(APP_DIR, "translation_cache.db")
 
@@ -206,37 +220,128 @@ class ArgosEngine(TranslationEngine):
         super().__init__()
         self.argos_translate = None
         if argos_available:
+            self._update_translator()
+
+    def _update_translator(self):
+        try:
             self.argos_translate = argostranslate.translate.translate
-            try:
-                # Обновляем индекс только если нет нужного пакета
-                installed_packages = argostranslate.package.get_installed_packages()
-                en_ru_installed = any(p.from_code == 'en' and p.to_code == 'ru' for p in installed_packages)
+        except Exception as e:
+            print(f"Argos translation init error: {e}")
+            self.argos_translate = None
+
+    def is_model_installed(self, from_code='en', to_code='ru') -> bool:
+        if not argos_available:
+            return False
+        try:
+            installed_packages = argostranslate.package.get_installed_packages()
+            return any(p.from_code == from_code and p.to_code == to_code for p in installed_packages)
+        except Exception as e:
+            print(f"Argos check installed packages error: {e}")
+            return False
+
+    def download_model(self, from_code='en', to_code='ru', progress_callback=None) -> bool:
+        global argos_available
+        if not argos_available:
+            success = self.download_argos_framework(progress_callback)
+            if not success:
+                return False
+            if not try_import_argos():
+                if progress_callback:
+                    progress_callback("Ошибка инициализации")
+                return False
                 
-                if not en_ru_installed:
-                    print("Argos: Installing EN-RU package for the first time... this may take a minute.")
-                    argostranslate.package.update_package_index()
-                    available_packages = argostranslate.package.get_available_packages()
-                    package_to_install = next(
-                        filter(lambda x: x.from_code == 'en' and x.to_code == 'ru', available_packages), None
-                    )
-                    if package_to_install:
-                        argostranslate.package.install_from_path(package_to_install.download())
-                    else:
-                        print("Argos: EN-RU package not found in index.")
-            except Exception as e:
-                print(f"Argos package init error: {e}")
-        else:
-            print("Argos engine is disabled because global import failed.")
+        try:
+            if progress_callback:
+                progress_callback("Обновление индекса...")
+            argostranslate.package.update_package_index()
+            
+            if progress_callback:
+                progress_callback("Поиск модели...")
+            available_packages = argostranslate.package.get_available_packages()
+            package_to_install = next(
+                filter(lambda x: x.from_code == from_code and x.to_code == to_code, available_packages), None
+            )
+            if package_to_install:
+                if progress_callback:
+                    progress_callback("Загрузка модели (~150MB)...")
+                downloaded_file = package_to_install.download()
+                
+                if progress_callback:
+                    progress_callback("Установка модели...")
+                argostranslate.package.install_from_path(downloaded_file)
+                self._update_translator()
+                
+                if progress_callback:
+                    progress_callback("Успешно")
+                return True
+            else:
+                if progress_callback:
+                    progress_callback("Не найдена")
+                return False
+        except Exception as e:
+            print(f"Argos download model error: {e}")
+            if progress_callback:
+                progress_callback("Ошибка установки")
+            return False
+
+    def download_argos_framework(self, progress_callback=None) -> bool:
+        try:
+            url = "https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/download/v3.1.0-WIP/local_translator.zip"
+            os.makedirs(LOCAL_TRANSLATOR_DIR, exist_ok=True)
+            zip_path = os.path.join(APP_DIR, "local_translator.zip")
+            
+            if progress_callback:
+                progress_callback("Скачивание движка (180MB)...")
+            
+            import urllib.request
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req) as response:
+                total_size = int(response.info().get('Content-Length', 0))
+                downloaded = 0
+                block_size = 1024 * 1024 # 1MB
+                with open(zip_path, 'wb') as f:
+                    while True:
+                        block = response.read(block_size)
+                        if not block:
+                            break
+                        f.write(block)
+                        downloaded += len(block)
+                        if total_size > 0 and progress_callback:
+                            percent = int((downloaded / total_size) * 100)
+                            progress_callback(f"Скачивание движка: {percent}%")
+            
+            if progress_callback:
+                progress_callback("Распаковка движка...")
+                
+            import zipfile
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(LOCAL_TRANSLATOR_DIR)
+                
+            try:
+                os.remove(zip_path)
+            except:
+                pass
+                
+            return True
+        except Exception as e:
+            print(f"Error downloading argos framework: {e}")
+            if progress_callback:
+                progress_callback("Ошибка скачивания")
+            return False
 
     def _translate_payload(self, payload: str, target_lang: str) -> str:
+        if not self.is_model_installed('en', target_lang):
+            raise RuntimeError("Локальный переводчик не установлен. Скачайте модель в настройках.")
         if not self.argos_translate:
-            raise RuntimeError("Argos Translate engine is not initialized due to DLL/library loading errors.")
-        return self.argos_translate(payload, 'en', 'ru')
+            raise RuntimeError("Движок Argos Translate не инициализирован.")
+        return self.argos_translate(payload, 'en', target_lang)
         
     def _translate_individual(self, text: str, target_lang: str) -> str:
+        if not self.is_model_installed('en', target_lang):
+            raise RuntimeError("Локальный переводчик не установлен. Скачайте модель в настройках.")
         if not self.argos_translate:
-            raise RuntimeError("Argos Translate engine is not initialized due to DLL/library loading errors.")
-        return self.argos_translate(text, 'en', 'ru')
+            raise RuntimeError("Движок Argos Translate не инициализирован.")
+        return self.argos_translate(text, 'en', target_lang)
 
 
 class OllamaEngine(TranslationEngine):

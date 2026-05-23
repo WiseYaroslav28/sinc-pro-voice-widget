@@ -465,6 +465,7 @@ class VoiceAssistantApp(ctk.CTk):
             None,
             ("⚙ Настройки и функции", self.show_appearance_overlay),
             ("⛶ Перевод экрана", self.open_screen_translator),
+            ("ℹ О программе", self.show_about_overlay),
             None,
             ("✕ Закрыть приложение", self.on_closing)
         ]
@@ -667,6 +668,37 @@ class VoiceAssistantApp(ctk.CTk):
         self.text_box._textbox.tag_configure("md_h2", font=("Inter", int(self.font_size * 1.3), "bold"))
 
     # --- Overlays ---
+    def show_about_overlay(self):
+        if getattr(self, "current_overlay", None) == "about":
+            self.close_overlay()
+            return
+        self.close_overlay()
+        self.current_overlay = "about"
+        
+        self.overlay_frame = ctk.CTkFrame(self, fg_color="#111", corner_radius=10, border_width=1, border_color="#333")
+        if self.display_mode == "full":
+            self.overlay_frame.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.75, relheight=0.6)
+        else:
+            self.geometry("480x320")
+            self.overlay_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+            
+        ctk.CTkLabel(self.overlay_frame, text="О ПРОГРАММЕ SINC PRO", font=ctk.CTkFont(size=12, weight="bold"), text_color="#007AFF").pack(pady=(15, 10))
+        
+        ctk.CTkLabel(self.overlay_frame, text="Разработчик:", font=ctk.CTkFont(size=10, weight="bold"), text_color="#888").pack(pady=(5, 0))
+        ctk.CTkLabel(self.overlay_frame, text="Wise Yaroslav", font=ctk.CTkFont(size=12, weight="bold")).pack()
+        
+        ctk.CTkLabel(self.overlay_frame, text="Текущая версия:", font=ctk.CTkFont(size=10, weight="bold"), text_color="#888").pack(pady=(10, 0))
+        ctk.CTkLabel(self.overlay_frame, text="v3.1.0-WIP (2026-05-23)", font=ctk.CTkFont(size=12)).pack()
+        
+        ctk.CTkLabel(self.overlay_frame, text="GitHub Репозиторий:", font=ctk.CTkFont(size=10, weight="bold"), text_color="#888").pack(pady=(10, 0))
+        
+        repo_lbl = ctk.CTkLabel(self.overlay_frame, text="Открыть репозиторий на GitHub ↗", font=ctk.CTkFont(size=11, underline=True), text_color="#007AFF", cursor="hand2")
+        repo_lbl.pack(pady=2)
+        import webbrowser
+        repo_lbl.bind("<Button-1>", lambda e: webbrowser.open_new("https://github.com/WiseYaroslav28/sinc-pro-voice-widget"))
+        
+        ctk.CTkButton(self.overlay_frame, text="ЗАКРЫТЬ", height=28, corner_radius=6, fg_color="#333", command=self.close_overlay).pack(pady=(15, 10))
+
     def show_appearance_overlay(self):
         if getattr(self, "current_overlay", None) == "settings":
             self.close_overlay()
@@ -708,16 +740,22 @@ class VoiceAssistantApp(ctk.CTk):
 
         # Translation engine setting
         ctk.CTkLabel(self.overlay_frame, text="Движок перевода:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(5, 2))
-        engines = {"Google Translate": "google_cache", "Argos (Оффлайн)": "argos", "Msty / Local API": "msty", "Ollama": "ollama"}
+        engines = {"Google Translate": "google_cache", "Argos (Оффлайн)": "argos"}
         curr_eng_name = "Google Translate"
         for name, code in engines.items():
             if code == self.translation_engine:
                 curr_eng_name = name
                 break
-        self.engine_option = ctk.CTkOptionMenu(self.overlay_frame, values=list(engines.keys()))
+        self.engine_option = ctk.CTkOptionMenu(self.overlay_frame, values=list(engines.keys()), command=self.on_change_engine)
         self.engine_option.set(curr_eng_name)
         self.engine_option.pack(pady=2)
-        
+
+        self.argos_status_frame = ctk.CTkFrame(self.overlay_frame, fg_color="transparent")
+        self.argos_status_frame.pack(pady=2)
+        self.argos_status_label = None
+        self.argos_download_btn = None
+        self.on_change_engine(curr_eng_name)
+
         # Translate hotkey setting
         ctk.CTkLabel(self.overlay_frame, text="Хоткей перевода экрана:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(5, 2))
         self.hotkey_entry = ctk.CTkEntry(self.overlay_frame, width=150, placeholder_text="ctrl+shift+t")
@@ -732,6 +770,57 @@ class VoiceAssistantApp(ctk.CTk):
         
         # Save & Close button
         ctk.CTkButton(self.overlay_frame, text="СОХРАНИТЬ И ЗАКРЫТЬ", height=28, corner_radius=6, fg_color="#007AFF", hover_color="#005BBB", command=self.save_and_close_overlay).pack(pady=10)
+
+
+    def on_change_engine(self, selected_name):
+        for child in self.argos_status_frame.winfo_children():
+            child.destroy()
+            
+        if selected_name == "Argos (Оффлайн)":
+            from translation_engine import get_engine
+            engine = get_engine("argos")
+            target_lang = getattr(self, "translate_to", "ru")
+            
+            if not engine.is_model_installed('en', target_lang):
+                self.argos_status_label = ctk.CTkLabel(self.argos_status_frame, text="Локальная модель EN->RU не установлена", text_color="#FF9500", font=ctk.CTkFont(size=10))
+                self.argos_status_label.pack(pady=2)
+                
+                self.argos_download_btn = ctk.CTkButton(
+                    self.argos_status_frame, 
+                    text="Скачать модель (~150MB)", 
+                    height=24, 
+                    corner_radius=6, 
+                    fg_color="#34C759", 
+                    hover_color="#28A745",
+                    command=self.start_argos_download
+                )
+                self.argos_download_btn.pack(pady=2)
+            else:
+                self.argos_status_label = ctk.CTkLabel(self.argos_status_frame, text="Локальная модель EN->RU готова", text_color="#34C759", font=ctk.CTkFont(size=10))
+                self.argos_status_label.pack(pady=2)
+
+    def start_argos_download(self):
+        self.argos_download_btn.configure(state="disabled")
+        self.engine_option.configure(state="disabled")
+        
+        import threading
+        threading.Thread(target=self._run_argos_download, daemon=True).start()
+
+    def _run_argos_download(self):
+        from translation_engine import get_engine
+        engine = get_engine("argos")
+        target_lang = getattr(self, "translate_to", "ru")
+        
+        def update_status(msg):
+            self.after(0, lambda: self.argos_status_label.configure(text=msg))
+            
+        success = engine.download_model('en', target_lang, progress_callback=update_status)
+        
+        def on_finish():
+            self.engine_option.configure(state="normal")
+            self.on_change_engine(self.engine_option.get())
+            
+        self.after(0, on_finish)
 
     def change_translate_lang(self, name):
         langs = {"Русский": "ru", "English": "en", "Deutsch": "de", "Français": "fr", "Español": "es", "Chinese": "zh-CN"}
@@ -841,7 +930,7 @@ class VoiceAssistantApp(ctk.CTk):
             if self.display_mode == "mini":
                 self.geometry("480x350" if getattr(self, "mini_drawer_open", False) else "480x60")
             elif self.display_mode == "micro":
-                self.geometry("210x60")
+                self.geometry("170x60")
 
     def change_speed(self, value):
         self.current_rate = round(float(value), 2)

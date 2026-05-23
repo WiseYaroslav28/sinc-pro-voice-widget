@@ -800,6 +800,8 @@ class ScreenTranslatorFrame(tk.Toplevel):
     def _run_translation_thread(self, screenshot):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        error_msg = None
+        data = None
         try:
             engine_type = getattr(self.master, "translation_engine", "google_cache")
             ollama_model = getattr(self.master, "ollama_model", "gemma2")
@@ -818,23 +820,46 @@ class ScreenTranslatorFrame(tk.Toplevel):
                     msty_url=msty_url
                 )
             )
-            self.after(0, lambda: self.finish_translation(data))
         except Exception as e:
             print(f"Error during translation process: {e}")
-            self.after(0, lambda: self.finish_translation(None))
+            # Извлекаем более дружелюбный текст ошибки, если это возможно
+            raw_err = str(e)
+            if "Локальный переводчик не установлен" in raw_err:
+                error_msg = "Локальный переводчик не установлен.\nСкачайте модель в настройках."
+            elif "Argos Translate" in raw_err:
+                error_msg = "Ошибка движка Argos.\nПожалуйста, установите модель в настройках."
+            else:
+                error_msg = f"Ошибка перевода: {raw_err[:60]}"
+            data = None
         finally:
             loop.close()
+        self.after(0, lambda: self.finish_translation(data, error_msg))
 
-    def finish_translation(self, data):
-        log_debug(f"finish_translation: received data: {data}")
+    def finish_translation(self, data, error_msg=None):
+        log_debug(f"finish_translation: received data: {data}, error: {error_msg}")
         self.is_translating = False
         self.btn_translate.configure(text="🔄")
+        self.canvas.delete("loading")
+        
         if data is not None:
             self.last_translated_data = data
             self.show_translation = True
             self.draw_translations()
         else:
-            log_debug("finish_translation: data is None!")
+            self.canvas.delete("all")
+            canvas_w = max(self.canvas.winfo_width(), self.winfo_width() - 2 * self.border_width)
+            canvas_h = max(self.canvas.winfo_height(), self.winfo_height() - 2 * self.border_width - 28)
+            msg = error_msg if error_msg else "Ошибка распознавания или перевода"
+            self.canvas.create_text(
+                canvas_w / 2, 
+                canvas_h / 2, 
+                text=f"❌ {msg}", 
+                font=("Segoe UI", 12, "bold"), 
+                fill="#FF3B30", 
+                justify="center",
+                width=canvas_w - 40,
+                tags="error"
+            )
 
     def draw_translations(self):
         log_debug(f"draw_translations: show_translation={self.show_translation}, data size={len(self.last_translated_data) if self.last_translated_data else 0}")
