@@ -10,9 +10,17 @@ import time
 import re
 import json
 import ctypes
+import sys
+if sys.platform.startswith("win"):
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2) # PROCESS_PER_MONITOR_DPI_AWARE
+    except:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except:
+            pass
 import queue
 import hashlib
-import sys
 from PIL import Image as PILImage, ImageDraw as PILImageDraw, ImageFont as PILImageFont
 
 def create_translate_icon(size=24, color="#007AFF"):
@@ -821,10 +829,10 @@ class VoiceAssistantApp(ctk.CTk):
             def on_area_selected(x, y, w, h, cropped_img):
                 if x is not None:
                     from screen_translator import ScreenTranslatorFrame
-                    win_h = h + 28 + 2 * 4
-                    win_w = w + 2 * 4
-                    win_x = x - 4
-                    win_y = y - 28 - 4
+                    win_h = h + 28 + 2 * 5
+                    win_w = w + 2 * 5
+                    win_x = x - 5
+                    win_y = y - 28 - 5
                     
                     self.screen_translator_win = ScreenTranslatorFrame(self, translate_to=self.translate_to)
                     self.screen_translator_win.geometry(f"{win_w}x{win_h}+{win_x}+{win_y}")

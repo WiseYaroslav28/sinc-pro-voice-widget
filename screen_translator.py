@@ -3,7 +3,20 @@ import customtkinter as ctk
 import asyncio
 import threading
 import ctypes
+import sys
+import time
 from PIL import ImageGrab, ImageEnhance, ImageTk
+
+# Принудительная установка DPI-awareness для сопоставления координат Tkinter и скриншотов 1:1
+if sys.platform.startswith("win"):
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2) # PROCESS_PER_MONITOR_DPI_AWARE
+    except:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except:
+            pass
+
 import ocr_translation
 
 def analyze_colors(image, bbox):
@@ -11,30 +24,33 @@ def analyze_colors(image, bbox):
         w, h = image.size
         x1, y1, x2, y2 = bbox
         
-        # Ограничиваем координаты
-        x1 = max(0, min(w - 1, int(x1)))
-        y1 = max(0, min(h - 1, int(y1)))
-        x2 = max(0, min(w - 1, int(x2)))
-        y2 = max(0, min(h - 1, int(y2)))
+        # Расширяем bbox для поиска чистого фона вокруг букв
+        pad = 4
+        bg_x1 = max(0, min(w - 1, int(x1 - pad)))
+        bg_y1 = max(0, min(h - 1, int(y1 - pad)))
+        bg_x2 = max(0, min(w - 1, int(x2 + pad)))
+        bg_y2 = max(0, min(h - 1, int(y2 + pad)))
         
-        if x2 <= x1 or y2 <= y1:
+        tx1 = max(0, min(w - 1, int(x1)))
+        ty1 = max(0, min(h - 1, int(y1)))
+        tx2 = max(0, min(w - 1, int(x2)))
+        ty2 = max(0, min(h - 1, int(y2)))
+        
+        if bg_x2 <= bg_x1 or bg_y2 <= bg_y1:
             return "#FFFFFF", "#000000"
             
-        cropped = image.crop((x1, y1, x2, y2))
-        cw, ch = cropped.size
+        cropped_bg = image.crop((bg_x1, bg_y1, bg_x2, bg_y2))
+        cw, ch = cropped_bg.size
         
-        # Анализируем пиксели по периметру для поиска цвета фона
+        # Анализируем пиксели по краям рамки для определения фона
         edge_pixels = []
-        # Верхняя и нижняя строки
         for x in range(cw):
-            edge_pixels.append(cropped.getpixel((x, 0)))
-            edge_pixels.append(cropped.getpixel((x, ch - 1)))
-        # Левая и правая колонки (без углов)
+            edge_pixels.append(cropped_bg.getpixel((x, 0)))
+            edge_pixels.append(cropped_bg.getpixel((x, ch - 1)))
         for y in range(1, ch - 1):
-            edge_pixels.append(cropped.getpixel((0, y)))
-            edge_pixels.append(cropped.getpixel((cw - 1, y)))
+            edge_pixels.append(cropped_bg.getpixel((0, y)))
+            edge_pixels.append(cropped_bg.getpixel((cw - 1, y)))
             
-        # Среднее значение цвета по периметру
         if edge_pixels:
             r_avg = int(sum(p[0] for p in edge_pixels) / len(edge_pixels))
             g_avg = int(sum(p[1] for p in edge_pixels) / len(edge_pixels))
@@ -43,20 +59,22 @@ def analyze_colors(image, bbox):
         else:
             bg_rgb = (255, 255, 255)
             
-        # Находим самый контрастный пиксель внутри для цвета текста
-        pixels = list(cropped.getdata())
+        # Определяем цвет текста из исходной области (не расширенной)
+        if tx2 > tx1 and ty2 > ty1:
+            cropped_txt = image.crop((tx1, ty1, tx2, ty2))
+            pixels = list(cropped_txt.getdata())
+        else:
+            pixels = []
+            
         max_dist = -1
         fg_rgb = (0, 0, 0)
-        
         for p in pixels:
-            # Считаем евклидово расстояние
             dist = (p[0] - bg_rgb[0])**2 + (p[1] - bg_rgb[1])**2 + (p[2] - bg_rgb[2])**2
             if dist > max_dist:
                 max_dist = dist
                 fg_rgb = p[:3]
                 
-        # Если контраст очень маленький, принудительно делаем черный/белый
-        if max_dist < 400: # порог контрастности
+        if max_dist < 400:
             brightness = (bg_rgb[0] * 299 + bg_rgb[1] * 587 + bg_rgb[2] * 114) / 1000
             if brightness < 128:
                 fg_rgb = (255, 255, 255)
@@ -66,7 +84,7 @@ def analyze_colors(image, bbox):
         bg_hex = f"#{bg_rgb[0]:02x}{bg_rgb[1]:02x}{bg_rgb[2]:02x}"
         fg_hex = f"#{fg_rgb[0]:02x}{fg_rgb[1]:02x}{fg_rgb[2]:02x}"
         
-        # Защита от прозрачного цвета tkinter
+        # Обходим прозрачный цвет окна (tk transparentcolor)
         if bg_hex == "#000001":
             bg_hex = "#000002"
             
@@ -75,15 +93,20 @@ def analyze_colors(image, bbox):
         print(f"Error in analyze_colors: {e}")
         return "#FFFFFF", "#000000"
 
-class AreaSelector(ctk.CTkToplevel):
+
+class AreaSelector(tk.Toplevel):
     def __init__(self, master, on_selected):
-        super().__init__(master)
+        # Проверяем, является ли master корректным виджетом tkinter, иначе передаем None
+        tcl_master = master if isinstance(master, (tk.Misc, ctk.CTk, ctk.CTkToplevel)) else None
+        super().__init__(tcl_master)
+        self.master = master
         self.on_selected = on_selected
         
         self.overrideredirect(True)
         self.attributes("-topmost", True)
+        self.configure(bg="#000000")
         
-        # Get virtual screen metrics for multi-monitor support
+        # Получаем метрики виртуального экрана
         try:
             user32 = ctypes.windll.user32
             self.vx = user32.GetSystemMetrics(76) # SM_XVIRTUALSCREEN
@@ -98,19 +121,19 @@ class AreaSelector(ctk.CTkToplevel):
             self.vw = self.winfo_screenwidth()
             self.vh = self.winfo_screenheight()
             
-        # Manually set geometry to cover the entire virtual screen
+        # Устанавливаем абсолютную геометрию под виртуальный экран
         self.geometry(f"{self.vw}x{self.vh}+{self.vx}+{self.vy}")
         
-        # Grab screenshot of all screens
+        # Снимок экрана
         self.original_screenshot = ImageGrab.grab(all_screens=True)
         
-        # Create dark version for backdrop
+        # Затемненная версия для фона
         enhancer = ImageEnhance.Brightness(self.original_screenshot)
         self.dark_screenshot = enhancer.enhance(0.4)
         
         self.photo_dark = ImageTk.PhotoImage(self.dark_screenshot)
         
-        # Canvas fills the window
+        # Холст выбора области
         self.canvas = tk.Canvas(self, cursor="cross", highlightthickness=0, bg="#000000")
         self.canvas.pack(fill="both", expand=True)
         self.canvas.create_image(0, 0, anchor="nw", image=self.photo_dark)
@@ -126,7 +149,6 @@ class AreaSelector(ctk.CTkToplevel):
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
         self.bind("<Escape>", lambda e: self.cancel())
         
-        # Lift and focus
         self.lift()
         self.focus_force()
 
@@ -172,13 +194,9 @@ class AreaSelector(ctk.CTkToplevel):
         self.destroy()
         
         if w > 10 and h > 10:
-            # Map back to virtual screen coordinates
             abs_x = x1 + self.vx
             abs_y = y1 + self.vy
-            
-            # Crop the target image from the original screenshot
             cropped_image = self.original_screenshot.crop((x1, y1, x2, y2))
-            
             self.on_selected(abs_x, abs_y, w, h, cropped_image)
         else:
             self.on_selected(None, None, None, None, None)
@@ -188,48 +206,70 @@ class AreaSelector(ctk.CTkToplevel):
         self.on_selected(None, None, None, None, None)
 
 
-class ScreenTranslatorFrame(ctk.CTkToplevel):
+class ScreenTranslatorFrame(tk.Toplevel):
     def __init__(self, master, translate_to="ru"):
-        super().__init__(master)
+        # Проверяем, является ли master корректным виджетом tkinter, иначе передаем None
+        tcl_master = master if isinstance(master, (tk.Misc, ctk.CTk, ctk.CTkToplevel)) else None
+        super().__init__(tcl_master)
         self.master = master
         self.translate_to = translate_to
         
         self.overrideredirect(True)
         self.attributes("-topmost", True)
         self.attributes("-transparentcolor", "#000001")
-        self.configure(fg_color="#000001")
+        self.configure(bg="#000001")
         
         self.min_width = 150
         self.min_height = 100
-        self.border_width = 4
+        self.border_width = 5
         
         self.show_translation = True
         self.last_translated_data = []
         self.is_translating = False
+        self.need_update_translation = False
         
-        # Borders: left/top are decorative, right/bottom are for resizing
-        self.left_border = ctk.CTkFrame(self, width=self.border_width, fg_color="#007AFF")
-        self.left_border.pack(side="left", fill="y")
+        # Параметры автоматического отслеживания изменений экрана
+        self.auto_scan = False
+        self.last_screen_hash = None
+        self.stabilize_counter = 0
+        self.screen_changed = False
         
-        self.right_border = ctk.CTkFrame(self, width=self.border_width, fg_color="#007AFF", cursor="size_we")
-        self.right_border.pack(side="right", fill="y")
+        # 4 Границы изменения размера с правильными курсорами
+        self.left_border = tk.Frame(self, bg="#007AFF", cursor="size_we")
+        self.left_border.place(x=0, y=self.border_width, width=self.border_width, relheight=1.0, height=-2*self.border_width)
         
-        self.center_container = ctk.CTkFrame(self, fg_color="transparent")
-        self.center_container.pack(side="top", fill="both", expand=True)
+        self.right_border = tk.Frame(self, bg="#007AFF", cursor="size_we")
+        self.right_border.place(relx=1.0, x=-self.border_width, y=self.border_width, width=self.border_width, relheight=1.0, height=-2*self.border_width)
         
-        # Top border is used for window dragging
-        self.top_border = ctk.CTkFrame(self.center_container, height=self.border_width, fg_color="#007AFF", cursor="fleur")
-        self.top_border.pack(side="top", fill="x")
+        self.top_border = tk.Frame(self, bg="#007AFF", cursor="size_ns")
+        self.top_border.place(x=self.border_width, y=0, relwidth=1.0, width=-2*self.border_width, height=self.border_width)
         
-        self.bottom_border = ctk.CTkFrame(self.center_container, height=self.border_width, fg_color="#007AFF", cursor="size_ns")
-        self.bottom_border.pack(side="bottom", fill="x")
+        self.bottom_border = tk.Frame(self, bg="#007AFF", cursor="size_ns")
+        self.bottom_border.place(x=self.border_width, rely=1.0, y=-self.border_width, relwidth=1.0, width=-2*self.border_width, height=self.border_width)
         
-        # Toolbar
+        # 4 Угла изменения размера с диагональными курсорами
+        self.top_left_corner = tk.Frame(self, bg="#007AFF", cursor="size_nw_se")
+        self.top_left_corner.place(x=0, y=0, width=self.border_width, height=self.border_width)
+        
+        self.top_right_corner = tk.Frame(self, bg="#007AFF", cursor="size_ne_sw")
+        self.top_right_corner.place(relx=1.0, x=-self.border_width, y=0, width=self.border_width, height=self.border_width)
+        
+        self.bottom_left_corner = tk.Frame(self, bg="#007AFF", cursor="size_ne_sw")
+        self.bottom_left_corner.place(x=0, rely=1.0, y=-self.border_width, width=self.border_width, height=self.border_width)
+        
+        self.bottom_right_corner = tk.Frame(self, bg="#007AFF", cursor="size_nw_se")
+        self.bottom_right_corner.place(relx=1.0, x=-self.border_width, rely=1.0, y=-self.border_width, width=self.border_width, height=self.border_width)
+        
+        # Внутренний контейнер для контента
+        self.center_container = tk.Frame(self, bg="#000001")
+        self.center_container.place(x=self.border_width, y=self.border_width, relwidth=1.0, relheight=1.0, width=-2*self.border_width, height=-2*self.border_width)
+        
+        # Панель инструментов
         self.toolbar = ctk.CTkFrame(self.center_container, height=28, fg_color="#181818", corner_radius=0)
         self.toolbar.pack(side="top", fill="x")
         self.toolbar.pack_propagate(False)
         
-        # Transparent Canvas
+        # Прозрачный холст перевода
         self.canvas = tk.Canvas(self.center_container, bg="#000001", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
         
@@ -237,20 +277,26 @@ class ScreenTranslatorFrame(ctk.CTkToplevel):
         self.setup_drag_and_resize()
         
         self.bind("<Escape>", lambda e: self.destroy())
+        self.bind("<ButtonRelease-1>", self.on_global_release)
+        self.canvas.bind("<ButtonRelease-1>", self.on_global_release)
+        
+        # Запуск фонового отслеживания изменений экрана
+        self.after(800, self.check_screen_changes)
 
     def setup_toolbar(self):
         self.lbl_title = ctk.CTkLabel(self.toolbar, text=" ⛶ SINC TRANSLATE", font=ctk.CTkFont(size=10, weight="bold"), text_color="#007AFF")
         self.lbl_title.pack(side="left", padx=5)
         
-        # Drag binds
+        # Перетаскивание за тулбар
         self.toolbar.bind("<ButtonPress-1>", self.start_drag)
         self.toolbar.bind("<B1-Motion>", self.do_drag)
+        self.toolbar.bind("<ButtonRelease-1>", self.on_global_release)
+        
         self.lbl_title.bind("<ButtonPress-1>", self.start_drag)
         self.lbl_title.bind("<B1-Motion>", self.do_drag)
-        self.top_border.bind("<ButtonPress-1>", self.start_drag)
-        self.top_border.bind("<B1-Motion>", self.do_drag)
+        self.lbl_title.bind("<ButtonRelease-1>", self.on_global_release)
         
-        # Controls
+        # Кнопки
         self.btn_close = ctk.CTkButton(self.toolbar, text="✕", width=24, height=22, corner_radius=4,
                                        fg_color="transparent", hover_color="#c0392b", text_color="#aaa", font=ctk.CTkFont(size=12, weight="bold"),
                                        command=self.destroy)
@@ -266,27 +312,110 @@ class ScreenTranslatorFrame(ctk.CTkToplevel):
                                             command=self.toggle_visibility)
         self.btn_visibility.pack(side="right", padx=3, pady=3)
         
+        self.btn_auto = ctk.CTkButton(self.toolbar, text="⚡", width=24, height=22, corner_radius=4,
+                                      fg_color="transparent", hover_color="#333", text_color="#aaa", font=ctk.CTkFont(size=12),
+                                      command=self.toggle_auto_scan)
+        self.btn_auto.pack(side="right", padx=3, pady=3)
+        
         self.btn_translate = ctk.CTkButton(self.toolbar, text="🔄", width=24, height=22, corner_radius=4,
                                            fg_color="transparent", hover_color="#333", text_color="#aaa", font=ctk.CTkFont(size=12),
                                            command=self.translate_area)
         self.btn_translate.pack(side="right", padx=3, pady=3)
 
     def setup_drag_and_resize(self):
-        # Resize only right and bottom borders
-        self.right_border.bind("<ButtonPress-1>", self.start_resize_right)
+        # Настройка 4 границ
+        self.left_border.bind("<ButtonPress-1>", self.start_resize)
+        self.left_border.bind("<B1-Motion>", self.do_resize_left)
+        self.left_border.bind("<ButtonRelease-1>", self.on_global_release)
+        
+        self.right_border.bind("<ButtonPress-1>", self.start_resize)
         self.right_border.bind("<B1-Motion>", self.do_resize_right)
-        self.right_border.bind("<ButtonRelease-1>", lambda e: self.translate_area())
+        self.right_border.bind("<ButtonRelease-1>", self.on_global_release)
         
-        self.bottom_border.bind("<ButtonPress-1>", self.start_resize_bottom)
+        self.top_border.bind("<ButtonPress-1>", self.start_resize)
+        self.top_border.bind("<B1-Motion>", self.do_resize_top)
+        self.top_border.bind("<ButtonRelease-1>", self.on_global_release)
+        
+        self.bottom_border.bind("<ButtonPress-1>", self.start_resize)
         self.bottom_border.bind("<B1-Motion>", self.do_resize_bottom)
-        self.bottom_border.bind("<ButtonRelease-1>", lambda e: self.translate_area())
+        self.bottom_border.bind("<ButtonRelease-1>", self.on_global_release)
         
-        # Binds to trigger auto-translation when finished dragging
-        self.toolbar.bind("<ButtonRelease-1>", lambda e: self.translate_area())
-        self.lbl_title.bind("<ButtonRelease-1>", lambda e: self.translate_area())
-        self.top_border.bind("<ButtonRelease-1>", lambda e: self.translate_area())
+        # Настройка 4 углов
+        self.top_left_corner.bind("<ButtonPress-1>", self.start_resize)
+        self.top_left_corner.bind("<B1-Motion>", self.do_resize_top_left)
+        self.top_left_corner.bind("<ButtonRelease-1>", self.on_global_release)
+        
+        self.top_right_corner.bind("<ButtonPress-1>", self.start_resize)
+        self.top_right_corner.bind("<B1-Motion>", self.do_resize_top_right)
+        self.top_right_corner.bind("<ButtonRelease-1>", self.on_global_release)
+        
+        self.bottom_left_corner.bind("<ButtonPress-1>", self.start_resize)
+        self.bottom_left_corner.bind("<B1-Motion>", self.do_resize_bottom_left)
+        self.bottom_left_corner.bind("<ButtonRelease-1>", self.on_global_release)
+        
+        self.bottom_right_corner.bind("<ButtonPress-1>", self.start_resize)
+        self.bottom_right_corner.bind("<B1-Motion>", self.do_resize_bottom_right)
+        self.bottom_right_corner.bind("<ButtonRelease-1>", self.on_global_release)
 
-    # --- Dragging ---
+    def toggle_auto_scan(self):
+        self.auto_scan = not self.auto_scan
+        if self.auto_scan:
+            self.btn_auto.configure(fg_color="#007AFF", text_color="#ffffff")
+            self.translate_area()
+        else:
+            self.btn_auto.configure(fg_color="transparent", text_color="#aaa")
+
+    # --- Фоновый мониторинг изменений экрана ---
+    def check_screen_changes(self):
+        if not self.winfo_exists():
+            return
+            
+        if self.auto_scan and not self.is_translating and not getattr(self, "need_update_translation", False):
+            try:
+                canvas_x = self.canvas.winfo_rootx()
+                canvas_y = self.canvas.winfo_rooty()
+                canvas_w = self.canvas.winfo_width()
+                canvas_h = self.canvas.winfo_height()
+                
+                if canvas_w > 10 and canvas_h > 10:
+                    current_img = ImageGrab.grab(bbox=(canvas_x, canvas_y, canvas_x + canvas_w, canvas_y + canvas_h))
+                    # Даунсэмплинг для быстрой обработки и исключения шумов
+                    small_img = current_img.resize((32, 32)).convert("L")
+                    pixels = list(small_img.getdata())
+                    
+                    if self.last_screen_hash is not None:
+                        diff = sum(abs(p1 - p2) for p1, p2 in zip(pixels, self.last_screen_hash)) / len(pixels)
+                        
+                        if diff > 3.0:
+                            # Экран изменился
+                            self.screen_changed = True
+                            self.stabilize_counter = 0
+                            self.last_screen_hash = pixels
+                        else:
+                            # Экран стабилен
+                            if getattr(self, "screen_changed", False):
+                                self.stabilize_counter += 1
+                                # Если стабилен более 800 мс (1 цикла) после изменений, переводим
+                                if self.stabilize_counter >= 1:
+                                    self.screen_changed = False
+                                    self.stabilize_counter = 0
+                                    self.translate_area()
+                    else:
+                        self.last_screen_hash = pixels
+                        self.screen_changed = False
+                        self.stabilize_counter = 0
+            except Exception as e:
+                print(f"Error checking screen changes: {e}")
+                
+        self.after(800, self.check_screen_changes)
+
+    # --- Перевод при отпускании мыши ---
+    def on_global_release(self, event):
+        if getattr(self, "need_update_translation", False):
+            self.need_update_translation = False
+            self.translate_area()
+
+    # --- Перетаскивание за тулбар ---
     def start_drag(self, event):
         self.drag_start_x = event.x_root
         self.drag_start_y = event.y_root
@@ -294,42 +423,107 @@ class ScreenTranslatorFrame(ctk.CTkToplevel):
         self.win_start_y = self.winfo_rooty()
 
     def do_drag(self, event):
+        self.need_update_translation = True
         dx = event.x_root - self.drag_start_x
         dy = event.y_root - self.drag_start_y
         self.geometry(f"+{self.win_start_x + dx}+{self.win_start_y + dy}")
 
-    # --- Resizing (Fixed with absolute X/Y to avoid jumping) ---
-    def start_resize_right(self, event):
+    # --- Классический ресайз (Фиксированные стартовые переменные) ---
+    def start_resize(self, event):
         self.resize_start_x = event.x_root
-        self.resize_start_width = self.winfo_width()
-        self.resize_win_x = self.winfo_rootx()
-        self.resize_win_y = self.winfo_rooty()
-        
-    def do_resize_right(self, event):
-        dx = event.x_root - self.resize_start_x
-        new_w = max(self.min_width, self.resize_start_width + dx)
-        self.geometry(f"{new_w}x{self.winfo_height()}+{self.resize_win_x}+{self.resize_win_y}")
-
-    def start_resize_bottom(self, event):
         self.resize_start_y = event.y_root
-        self.resize_start_height = self.winfo_height()
+        self.resize_start_w = self.winfo_width()
+        self.resize_start_h = self.winfo_height()
         self.resize_win_x = self.winfo_rootx()
         self.resize_win_y = self.winfo_rooty()
-        
-    def do_resize_bottom(self, event):
-        dy = event.y_root - self.resize_start_y
-        new_h = max(self.min_height, self.resize_start_height + dy)
-        self.geometry(f"{self.winfo_width()}x{new_h}+{self.resize_win_x}+{self.resize_win_y}")
 
-    # --- Translating ---
+    def do_resize_right(self, event):
+        self.need_update_translation = True
+        dx = event.x_root - self.resize_start_x
+        new_w = max(self.min_width, self.resize_start_w + dx)
+        self.geometry(f"{new_w}x{self.resize_start_h}+{self.resize_win_x}+{self.resize_win_y}")
+
+    def do_resize_bottom(self, event):
+        self.need_update_translation = True
+        dy = event.y_root - self.resize_start_y
+        new_h = max(self.min_height, self.resize_start_h + dy)
+        self.geometry(f"{self.resize_start_w}x{new_h}+{self.resize_win_x}+{self.resize_win_y}")
+
+    def do_resize_left(self, event):
+        self.need_update_translation = True
+        dx = event.x_root - self.resize_start_x
+        new_w = max(self.min_width, self.resize_start_w - dx)
+        if new_w > self.min_width:
+            new_x = self.resize_win_x + dx
+        else:
+            new_x = self.resize_win_x + (self.resize_start_w - self.min_width)
+        self.geometry(f"{new_w}x{self.resize_start_h}+{new_x}+{self.resize_win_y}")
+
+    def do_resize_top(self, event):
+        self.need_update_translation = True
+        dy = event.y_root - self.resize_start_y
+        new_h = max(self.min_height, self.resize_start_h - dy)
+        if new_h > self.min_height:
+            new_y = self.resize_win_y + dy
+        else:
+            new_y = self.resize_win_y + (self.resize_start_h - self.min_height)
+        self.geometry(f"{self.resize_start_w}x{new_h}+{self.resize_win_x}+{new_y}")
+
+    def do_resize_top_left(self, event):
+        self.need_update_translation = True
+        dx = event.x_root - self.resize_start_x
+        dy = event.y_root - self.resize_start_y
+        new_w = max(self.min_width, self.resize_start_w - dx)
+        new_h = max(self.min_height, self.resize_start_h - dy)
+        if new_w > self.min_width:
+            new_x = self.resize_win_x + dx
+        else:
+            new_x = self.resize_win_x + (self.resize_start_w - self.min_width)
+        if new_h > self.min_height:
+            new_y = self.resize_win_y + dy
+        else:
+            new_y = self.resize_win_y + (self.resize_start_h - self.min_height)
+        self.geometry(f"{new_w}x{new_h}+{new_x}+{new_y}")
+
+    def do_resize_top_right(self, event):
+        self.need_update_translation = True
+        dx = event.x_root - self.resize_start_x
+        dy = event.y_root - self.resize_start_y
+        new_w = max(self.min_width, self.resize_start_w + dx)
+        new_h = max(self.min_height, self.resize_start_h - dy)
+        if new_h > self.min_height:
+            new_y = self.resize_win_y + dy
+        else:
+            new_y = self.resize_win_y + (self.resize_start_h - self.min_height)
+        self.geometry(f"{new_w}x{new_h}+{self.resize_win_x}+{new_y}")
+
+    def do_resize_bottom_left(self, event):
+        self.need_update_translation = True
+        dx = event.x_root - self.resize_start_x
+        dy = event.y_root - self.resize_start_y
+        new_w = max(self.min_width, self.resize_start_w - dx)
+        new_h = max(self.min_height, self.resize_start_h + dy)
+        if new_w > self.min_width:
+            new_x = self.resize_win_x + dx
+        else:
+            new_x = self.resize_win_x + (self.resize_start_w - self.min_width)
+        self.geometry(f"{new_w}x{new_h}+{new_x}+{self.resize_win_y}")
+
+    def do_resize_bottom_right(self, event):
+        self.need_update_translation = True
+        dx = event.x_root - self.resize_start_x
+        dy = event.y_root - self.resize_start_y
+        new_w = max(self.min_width, self.resize_start_w + dx)
+        new_h = max(self.min_height, self.resize_start_h + dy)
+        self.geometry(f"{new_w}x{new_h}+{self.resize_win_x}+{self.resize_win_y}")
+
+    # --- Процесс перевода ---
     def translate_precropped(self, cropped_image):
         if self.is_translating:
             return
         self.is_translating = True
         self.btn_translate.configure(text="⌛")
         self.canvas.delete("all")
-        
-        # Save screenshot for color analysis
         self.current_screenshot = cropped_image
         
         threading.Thread(target=self._run_precropped_translation_thread, args=(cropped_image,), daemon=True).start()
@@ -362,12 +556,10 @@ class ScreenTranslatorFrame(ctk.CTkToplevel):
         threading.Thread(target=self._run_translation_thread, daemon=True).start()
 
     def _run_translation_thread(self):
-        # Force redraw windows to ensure coordinates are updated
         self.update_idletasks()
         
-        # Hide frame to capture clean screen
+        # Скрываем рамку для чистого захвата экрана под ней
         self.attributes("-alpha", 0.0)
-        import time
         time.sleep(0.08)
         
         try:
@@ -388,7 +580,6 @@ class ScreenTranslatorFrame(ctk.CTkToplevel):
             self.after(0, lambda: self.btn_translate.configure(text="🔄"))
             return
             
-        # Save screenshot for color analysis
         self.current_screenshot = screenshot
         
         loop = asyncio.new_event_loop()
@@ -410,19 +601,22 @@ class ScreenTranslatorFrame(ctk.CTkToplevel):
     def draw_translations(self):
         self.canvas.delete("all")
         if not self.show_translation or not self.last_translated_data:
+            self.last_screen_hash = None
             return
             
         for item in self.last_translated_data:
             text = item["text"]
             x1, y1, x2, y2 = item["bbox"]
+            w = x2 - x1
+            h = y2 - y1
             
-            # Analyze background and foreground text colors (Google Lens style)
+            # Анализируем цвет фона и текста
             bg_color = "#FFFFFF"
             fg_color = "#000000"
             if hasattr(self, "current_screenshot") and self.current_screenshot:
                 bg_color, fg_color = analyze_colors(self.current_screenshot, (x1, y1, x2, y2))
             
-            # Draw seamless background rectangle without outline (erases original text)
+            # Рисуем подложку точного цвета фона без каёмок (эффект «закрашивания»)
             self.canvas.create_rectangle(
                 x1 - 1, y1 - 1, x2 + 1, y2 + 1,
                 fill=bg_color,
@@ -430,16 +624,22 @@ class ScreenTranslatorFrame(ctk.CTkToplevel):
                 width=0
             )
             
-            # Draw translated text with the original color
+            # Динамически вычисляем размер шрифта под высоту строки (Google Lens style)
+            font_size = max(6, int(h * 0.65))
+            
+            # Отрисовываем перевод оригинальным цветом текста
             self.canvas.create_text(
                 (x1 + x2) / 2,
                 (y1 + y2) / 2,
                 text=text,
                 fill=fg_color,
-                font=("Segoe UI", 9, "bold"),
-                width=x2 - x1 + 4,
+                font=("Segoe UI", font_size, "bold"),
+                width=w + 10,
                 anchor="center"
             )
+            
+        # Сбрасываем хэш, чтобы избежать ложных детекций изменений от только что нарисованного перевода
+        self.last_screen_hash = None
 
     def toggle_visibility(self):
         self.show_translation = not self.show_translation

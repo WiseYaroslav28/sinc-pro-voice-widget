@@ -7,6 +7,14 @@ import edge_tts
 import os
 import ctypes
 import sys
+if sys.platform.startswith("win"):
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2) # PROCESS_PER_MONITOR_DPI_AWARE
+    except:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except:
+            pass
 import threading
 import time
 import re
@@ -198,10 +206,10 @@ def open_screen_translator_from_tray(icon=None):
             
             def on_area_selected(x, y, w, h, cropped_img):
                 if x is not None:
-                    win_h = h + 28 + 2 * 4
-                    win_w = w + 2 * 4
-                    win_x = x - 4
-                    win_y = y - 28 - 4
+                    win_h = h + 28 + 2 * 5
+                    win_w = w + 2 * 5
+                    win_x = x - 5
+                    win_y = y - 28 - 5
                     
                     win = ScreenTranslatorFrame(adapter, translate_to=translate_to)
                     win.geometry(f"{win_w}x{win_h}+{win_x}+{win_y}")
