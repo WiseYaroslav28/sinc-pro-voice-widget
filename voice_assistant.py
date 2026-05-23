@@ -196,7 +196,7 @@ def open_screen_translator_from_tray(icon=None):
                     
             adapter = TrayAppAdapter(translate_to)
             
-            def on_area_selected(x, y, w, h):
+            def on_area_selected(x, y, w, h, cropped_img):
                 if x is not None:
                     win_h = h + 28 + 2 * 4
                     win_w = w + 2 * 4
@@ -206,7 +206,7 @@ def open_screen_translator_from_tray(icon=None):
                     win = ScreenTranslatorFrame(adapter, translate_to=translate_to)
                     win.geometry(f"{win_w}x{win_h}+{win_x}+{win_y}")
                     win.focus()
-                    win.translate_area()
+                    win.translate_precropped(cropped_img)
                     win.mainloop()
                     
             selector = AreaSelector(root, on_area_selected)

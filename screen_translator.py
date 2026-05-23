@@ -106,13 +106,17 @@ class AreaSelector(ctk.CTkToplevel):
             # Map back to virtual screen coordinates
             abs_x = x1 + self.vx
             abs_y = y1 + self.vy
-            self.on_selected(abs_x, abs_y, w, h)
+            
+            # Crop the target image from the original screenshot
+            cropped_image = self.original_screenshot.crop((x1, y1, x2, y2))
+            
+            self.on_selected(abs_x, abs_y, w, h, cropped_image)
         else:
-            self.on_selected(None, None, None, None)
+            self.on_selected(None, None, None, None, None)
 
     def cancel(self):
         self.destroy()
-        self.on_selected(None, None, None, None)
+        self.on_selected(None, None, None, None, None)
 
 
 class ScreenTranslatorFrame(ctk.CTkToplevel):
@@ -218,26 +222,56 @@ class ScreenTranslatorFrame(ctk.CTkToplevel):
         dy = event.y_root - self.drag_start_y
         self.geometry(f"+{self.win_start_x + dx}+{self.win_start_y + dy}")
 
-    # --- Resizing ---
+    # --- Resizing (Fixed with absolute X/Y to avoid jumping) ---
     def start_resize_right(self, event):
         self.resize_start_x = event.x_root
         self.resize_start_width = self.winfo_width()
+        self.resize_win_x = self.winfo_x()
+        self.resize_win_y = self.winfo_y()
         
     def do_resize_right(self, event):
         dx = event.x_root - self.resize_start_x
         new_w = max(self.min_width, self.resize_start_width + dx)
-        self.geometry(f"{new_w}x{self.winfo_height()}")
+        self.geometry(f"{new_w}x{self.winfo_height()}+{self.resize_win_x}+{self.resize_win_y}")
 
     def start_resize_bottom(self, event):
         self.resize_start_y = event.y_root
         self.resize_start_height = self.winfo_height()
+        self.resize_win_x = self.winfo_x()
+        self.resize_win_y = self.winfo_y()
         
     def do_resize_bottom(self, event):
         dy = event.y_root - self.resize_start_y
         new_h = max(self.min_height, self.resize_start_height + dy)
-        self.geometry(f"{self.winfo_width()}x{new_h}")
+        self.geometry(f"{self.winfo_width()}x{new_h}+{self.resize_win_x}+{self.resize_win_y}")
 
     # --- Translating ---
+    def translate_precropped(self, cropped_image):
+        if self.is_translating:
+            return
+        self.is_translating = True
+        self.btn_translate.configure(text="⌛")
+        self.canvas.delete("all")
+        
+        threading.Thread(target=self._run_precropped_translation_thread, args=(cropped_image,), daemon=True).start()
+
+    def _run_precropped_translation_thread(self, cropped_image):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            data = loop.run_until_complete(
+                ocr_translation.perform_ocr_and_translation(cropped_image, self.translate_to)
+            )
+            self.last_translated_data = data
+            self.show_translation = True
+            self.after(0, self.draw_translations)
+        except Exception as e:
+            print(f"Error during translation process: {e}")
+        finally:
+            loop.close()
+            self.is_translating = False
+            self.after(0, lambda: self.btn_translate.configure(text="🔄"))
+
     def translate_area(self):
         if self.is_translating:
             return
@@ -249,6 +283,9 @@ class ScreenTranslatorFrame(ctk.CTkToplevel):
         threading.Thread(target=self._run_translation_thread, daemon=True).start()
 
     def _run_translation_thread(self):
+        # Force redraw windows to ensure coordinates are updated
+        self.update_idletasks()
+        
         # Hide frame to capture clean screen
         self.attributes("-alpha", 0.0)
         import time

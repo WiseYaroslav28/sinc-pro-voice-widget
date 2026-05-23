@@ -89,6 +89,74 @@ else:
 SETTINGS_FILE = os.path.join(APP_DIR, "voice_settings.json")
 CREATE_NO_WINDOW = 0x08000000
 
+class ContextMenu(ctk.CTkToplevel):
+    def __init__(self, master, x, y, options):
+        super().__init__(master)
+        self.overrideredirect(True)
+        self.attributes("-topmost", True)
+        self.configure(fg_color="#181818")
+        
+        self.border_frame = ctk.CTkFrame(self, fg_color="#181818", border_width=1, border_color="#007AFF", corner_radius=6)
+        self.border_frame.pack(fill="both", expand=True, padx=1, pady=1)
+        
+        for opt in options:
+            if opt is None:
+                sep = ctk.CTkFrame(self.border_frame, height=1, fg_color="#333333")
+                sep.pack(fill="x", padx=10, pady=5)
+            else:
+                label, command = opt
+                btn = ctk.CTkButton(
+                    self.border_frame,
+                    text=label,
+                    anchor="w",
+                    fg_color="transparent",
+                    hover_color="#007AFF",
+                    text_color="#ffffff",
+                    font=ctk.CTkFont(family="Segoe UI", size=11),
+                    height=26,
+                    corner_radius=4,
+                    command=self.make_cmd(command)
+                )
+                btn.pack(fill="x", padx=5, pady=2)
+                
+        # Smart positioning logic
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        w = 200
+        h = sum([30 if opt is not None else 10 for opt in options]) + 15
+        
+        x_pos = x if x + w <= sw else x - w
+        y_pos = y if y + h <= sh else y - h
+        
+        x_pos = max(10, min(sw - w - 10, x_pos))
+        y_pos = max(10, min(sh - h - 10, y_pos))
+        
+        self.geometry(f"{w}x{h}+{x_pos}+{y_pos}")
+        
+        self.bind("<FocusOut>", lambda e: self.destroy())
+        self.bind("<ButtonPress-1>", self.on_click_outside)
+        self.bind("<Escape>", lambda e: self.destroy())
+        
+        self.after(100, self.grab_focus)
+        
+    def make_cmd(self, command):
+        def cmd():
+            self.destroy()
+            command()
+        return cmd
+        
+    def grab_focus(self):
+        try:
+            self.focus_force()
+            self.grab_set()
+        except:
+            pass
+            
+    def on_click_outside(self, event):
+        x, y = event.x, event.y
+        if x < 0 or y < 0 or x > self.winfo_width() or y > self.winfo_height():
+            self.destroy()
+
 class VoiceAssistantApp(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -228,6 +296,9 @@ class VoiceAssistantApp(ctk.CTk):
         self.btn_settings = ctk.CTkButton(self.top_bar, text="⚙", width=30, height=30, corner_radius=6, 
                                    fg_color="transparent", hover_color="#333", text_color="#888", font=ctk.CTkFont(size=20), command=self.show_appearance_overlay)
 
+        self.btn_clear = ctk.CTkButton(self.top_bar, text="🧹", width=30, height=30, corner_radius=6,
+                                   fg_color="#222", hover_color="#c0392b", text_color="#ccc", font=ctk.CTkFont(size=16), command=self.clear_text_box)
+
         # Status-bar tooltips
         def set_status(txt):
             if not self.is_speaking:
@@ -254,6 +325,9 @@ class VoiceAssistantApp(ctk.CTk):
 
         self.btn_text_drawer.bind("<Enter>", lambda e: set_status("Показать/скрыть текст (📖)"))
         self.btn_text_drawer.bind("<Leave>", lambda e: reset_status())
+
+        self.btn_clear.bind("<Enter>", lambda e: set_status("Очистить текст (🧹)"))
+        self.btn_clear.bind("<Leave>", lambda e: reset_status())
 
         # Micro mode controls
         self.play_micro = ctk.CTkButton(self.top_bar, text="▶", width=30, height=30, corner_radius=6, fg_color="#007AFF", font=ctk.CTkFont(size=18), command=self.toggle_play_pause)
@@ -368,20 +442,17 @@ class VoiceAssistantApp(ctk.CTk):
             self.bind_right_click(child)
 
     def show_context_menu(self, event):
-        if self.display_mode not in ["mini", "micro"]:
-            return
-            
-        menu = tk.Menu(self, tearoff=0, bg="#1a1a1a", fg="#ffffff", activebackground="#007AFF", activeforeground="#ffffff", bd=1)
-        menu.add_command(label="🗖 Редактор (Full)", command=lambda: self.apply_mode("full"))
-        menu.add_command(label="▬ Плеер-панель (Mini)", command=lambda: self.apply_mode("mini"))
-        menu.add_command(label="● Микро-виджет (Micro)", command=lambda: self.apply_mode("micro"))
-        menu.add_separator()
-        menu.add_command(label="✕ Закрыть приложение", command=self.on_closing)
-        
-        try:
-            menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            menu.grab_release()
+        options = [
+            (f"{'✓ ' if self.display_mode == 'full' else '    '}🗖 Редактор (Full)", lambda: self.apply_mode("full")),
+            (f"{'✓ ' if self.display_mode == 'mini' else '    '}▬ Плеер-панель (Mini)", lambda: self.apply_mode("mini")),
+            (f"{'✓ ' if self.display_mode == 'micro' else '    '}● Микро-виджет (Micro)", self.enter_micro_mode),
+            None,
+            ("⚙ Настройки и функции", self.show_appearance_overlay),
+            ("⛶ Перевод экрана", self.open_screen_translator),
+            None,
+            ("✕ Закрыть приложение", self.on_closing)
+        ]
+        ContextMenu(self, event.x_root, event.y_root, options)
 
     def apply_mode(self, mode, initial=False):
         if not initial:
@@ -400,6 +471,7 @@ class VoiceAssistantApp(ctk.CTk):
         self.btn_to_micro.grid_forget()
         self.btn_restore.grid_forget()
         self.btn_settings.grid_forget()
+        self.btn_clear.grid_forget()
         self.play_micro.grid_forget()
         self.stop_micro.grid_forget()
         self.mini_center.grid_forget()
@@ -426,8 +498,9 @@ class VoiceAssistantApp(ctk.CTk):
             self.btn_to_mini.grid(row=0, column=0, padx=5)
             self.btn_to_micro.grid(row=0, column=1, padx=5)
             self.full_header.grid(row=0, column=2, sticky="w", padx=10)
-            self.btn_screen_translate.grid(row=0, column=3, padx=5, sticky="e")
-            self.btn_settings.grid(row=0, column=5, padx=5, sticky="e")
+            self.btn_screen_translate.grid(row=0, column=4, padx=5, sticky="e")
+            self.btn_clear.grid(row=0, column=5, padx=5, sticky="e")
+            self.btn_settings.grid(row=0, column=6, padx=5, sticky="e")
             
             # Configure top_bar column weights for full mode
             self.top_bar.grid_columnconfigure(0, weight=0)
@@ -436,6 +509,7 @@ class VoiceAssistantApp(ctk.CTk):
             self.top_bar.grid_columnconfigure(3, weight=1) # spacer
             self.top_bar.grid_columnconfigure(4, weight=0)
             self.top_bar.grid_columnconfigure(5, weight=0)
+            self.top_bar.grid_columnconfigure(6, weight=0)
             
             self.text_box.grid(row=1, column=0, padx=20, pady=0, sticky="nsew")
             self.footer.grid(row=2, column=0, sticky="ew", padx=20, pady=20)
@@ -756,7 +830,7 @@ class VoiceAssistantApp(ctk.CTk):
             self.screen_translator_win.focus()
         else:
             from screen_translator import AreaSelector
-            def on_area_selected(x, y, w, h):
+            def on_area_selected(x, y, w, h, cropped_img):
                 if x is not None:
                     from screen_translator import ScreenTranslatorFrame
                     win_h = h + 28 + 2 * 4
@@ -767,7 +841,7 @@ class VoiceAssistantApp(ctk.CTk):
                     self.screen_translator_win = ScreenTranslatorFrame(self, translate_to=self.translate_to)
                     self.screen_translator_win.geometry(f"{win_w}x{win_h}+{win_x}+{win_y}")
                     self.screen_translator_win.focus()
-                    self.screen_translator_win.translate_area()
+                    self.screen_translator_win.translate_precropped(cropped_img)
                     
             selector = AreaSelector(self, on_area_selected)
 
@@ -909,6 +983,10 @@ class VoiceAssistantApp(ctk.CTk):
         threading.Thread(target=self.producer_thread, args=(self.current_sentences, start_idx, reuse_cache), daemon=True).start()
         threading.Thread(target=self.consumer_thread, args=(len(self.current_sentences), start_idx), daemon=True).start()
 
+    def clear_text_box(self):
+        self.stop_speech()
+        self.text_box.delete("0.0", "end")
+
     def stop_speech(self):
         self.stop_requested = True
         self.is_paused = False
@@ -949,11 +1027,6 @@ class VoiceAssistantApp(ctk.CTk):
         if not self.is_speaking or self.is_paused:
             return
         self.is_paused = True
-        try:
-            winmm = ctypes.windll.winmm
-            winmm.mciSendStringW('pause widget_audio', None, 0, None)
-        except:
-            pass
         self.play_main.configure(text="▶ ПЛЕЙ")
         if hasattr(self, 'play_mini'):
             self.play_mini.configure(text="▶")
@@ -964,11 +1037,6 @@ class VoiceAssistantApp(ctk.CTk):
         if not self.is_speaking or not self.is_paused:
             return
         self.is_paused = False
-        try:
-            winmm = ctypes.windll.winmm
-            winmm.mciSendStringW('resume widget_audio', None, 0, None)
-        except:
-            pass
         self.play_main.configure(text="❙❙ ПАУЗА")
         if hasattr(self, 'play_mini'):
             self.play_mini.configure(text="❙❙")
@@ -1074,10 +1142,20 @@ class VoiceAssistantApp(ctk.CTk):
                         
                     winmm.mciSendStringW('play widget_audio', None, 0, None)
                     
+                    was_paused = False
                     while not self.stop_requested:
                         if self.is_paused:
+                            if not was_paused:
+                                winmm.mciSendStringW('stop widget_audio', None, 0, None)
+                                was_paused = True
                             time.sleep(0.05)
                             continue
+                            
+                        if was_paused:
+                            winmm.mciSendStringW('close widget_audio', None, 0, None)
+                            winmm.mciSendStringW(cmd_open, None, 0, None)
+                            winmm.mciSendStringW('play widget_audio', None, 0, None)
+                            was_paused = False
                             
                         buf = ctypes.create_unicode_buffer(128)
                         winmm.mciSendStringW('status widget_audio mode', buf, 128, None)
