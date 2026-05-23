@@ -11,6 +11,8 @@
 
 ### ✨ Ключевые возможности
 
+*   **Перевод экрана в реальном времени (v2.0.0):** Интерактивная рамка `⛶ A文` для перевода любой области экрана. Рамку можно перемещать и растягивать. Она полностью прозрачна для кликов (click-through) — вы можете продолжать работать с элементами под ней. Переведенный текст накладывается плашками поверх оригинала. По кнопке 🔊 перевод мгновенно передается в основной плеер и озвучивается.
+*   **Контекстное меню быстрого доступа (v2.0.0):** Клик правой кнопкой мыши по виджету в режимах Mini и Micro открывает удобное меню для переключения режимов или закрытия приложения.
 *   **Глобальный доступ отовсюду:** Выделите текст в **любой** программе, нажмите комбинацию клавиш — и программа мгновенно начнет его читать.
 *   **Нейросетевые голоса:** Использование Microsoft Edge TTS обеспечивает премиальное естественное звучание. Поддерживаются русский, английский, немецкий, французский, испанский, китайский и другие языки. Вы можете легко добавлять новые языки и голоса в словари программы.
 *   **Три режима интерфейса:**
@@ -18,7 +20,7 @@
     *   **Плеер-панель (Mini):** Компактная полоска сверху экрана поверх всех окон. Идеально для работы. Включает выдвижную текстовую панель (Text Drawer), открываемую кнопкой `📖`.
     *   **Микро-виджет (Micro):** Ультракомпактный виджет для базового управления.
 *   **Всегда поверх других окон:** Виджеты не потеряются среди других программ.
-*   **Кастомизация на лету:** Прямо из виджета меняйте голос (🔊) и скорость (⚡).
+*   **Кастомизация на лету:** Прямо из виджета меняйте голос (🔊), скорость (⚡) и настраивайте горячие клавиши (хоткей перевода по умолчанию: `Ctrl + Shift + T`).
 
 ### 🚀 Как пользоваться?
 
@@ -42,6 +44,8 @@ This project was developed with special care and attention to people with **dysl
 
 ### ✨ Key Features
 
+*   **Real-time Screen Translator (v2.0.0):** An interactive crop frame `⛶ A文` to translate any screen region. The frame is resizable and moveable. It is completely click-through — you can scroll and click elements underneath it. Translated text is overlaid on patches. Click 🔊 to instantly forward and speak the translation.
+*   **Quick Access Context Menu (v2.0.0):** Right-click the widget in Mini and Micro modes to toggle UI modes or exit the app.
 *   **Global Access Everywhere:** Highlight text in **any** application, press the hotkey, and the program will instantly start reading it aloud.
 *   **Premium Neural Voices:** Powered by Microsoft Edge TTS for natural, human-like sound. It supports English, Russian, German, French, Spanish, Chinese, and many more. You can easily add new voices to the dictionary.
 *   **Three UI Modes:**
@@ -49,7 +53,7 @@ This project was developed with special care and attention to people with **dysl
     *   **Mini Player:** A compact top-screen overlay. Perfect for background listening while working. Includes a "Text Drawer" that expands when you click `📖`.
     *   **Micro Widget:** An ultra-compact widget with minimal footprint.
 *   **Always on Top:** The widget stays above other applications.
-*   **On-the-fly Customization:** Change voices (🔊) and reading speed (⚡) directly from the widget.
+*   **On-the-fly Customization:** Change voices (🔊), reading speed (⚡), and customize hotkeys (default Screen Translate hotkey is `Ctrl + Shift + T`).
 
 ### 🚀 How to use it?
 

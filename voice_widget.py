@@ -13,6 +13,43 @@ import ctypes
 import queue
 import hashlib
 import sys
+from PIL import Image as PILImage, ImageDraw as PILImageDraw, ImageFont as PILImageFont
+
+def create_translate_icon(size=24, color="#007AFF"):
+    """Dynamically draws an icon: a crop border containing letters A and 文"""
+    image = PILImage.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = PILImageDraw.Draw(image)
+    
+    # Draw corners (⛶ style)
+    w = size
+    d = 4 # thickness of corners
+    l = 6 # length of corner lines
+    
+    # Top-left
+    draw.line([(d, d), (d + l, d)], fill=color, width=2)
+    draw.line([(d, d), (d, d + l)], fill=color, width=2)
+    # Top-right
+    draw.line([(w - d, d), (w - d - l, d)], fill=color, width=2)
+    draw.line([(w - d, d), (w - d, d + l)], fill=color, width=2)
+    # Bottom-left
+    draw.line([(d, w - d), (d + l, w - d)], fill=color, width=2)
+    draw.line([(d, w - d), (d, w - d - l)], fill=color, width=2)
+    # Bottom-right
+    draw.line([(w - d, w - d), (w - d - l, w - d)], fill=color, width=2)
+    draw.line([(w - d, w - d), (w - d, w - d - l)], fill=color, width=2)
+    
+    # Try to load fonts for A and 文
+    try:
+        font = PILImageFont.truetype("msyh.ttc", 9)
+    except IOError:
+        try:
+            font = PILImageFont.truetype("Arial.ttf", 9)
+        except IOError:
+            font = PILImageFont.load_default()
+            
+    draw.text((size/2 - 6, size/2 - 7), "A", fill="#FFFFFF", font=font)
+    draw.text((size/2, size/2 - 2), "文", fill="#FFFFFF", font=font)
+    return image
 
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
@@ -111,6 +148,12 @@ class VoiceAssistantApp(ctk.CTk):
                 pass
 
     def load_settings(self):
+        self.current_voice = "Светлана (RU)"
+        self.current_rate = 1.0
+        self.font_size = 15
+        self.markdown_enabled = True
+        self.translate_to = "ru"
+        self.translate_hotkey = "ctrl+shift+t"
         try:
             if os.path.exists(SETTINGS_FILE):
                 with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
@@ -119,6 +162,8 @@ class VoiceAssistantApp(ctk.CTk):
                     self.current_rate = data.get("rate", 1.0)
                     self.font_size = data.get("font_size", 15)
                     self.markdown_enabled = data.get("markdown_enabled", True)
+                    self.translate_to = data.get("translate_to", "ru")
+                    self.translate_hotkey = data.get("translate_hotkey", "ctrl+shift+t")
         except: pass
 
     def save_settings(self):
@@ -128,7 +173,9 @@ class VoiceAssistantApp(ctk.CTk):
                     "voice": self.current_voice, 
                     "rate": self.current_rate,
                     "font_size": self.font_size,
-                    "markdown_enabled": self.markdown_enabled
+                    "markdown_enabled": self.markdown_enabled,
+                    "translate_to": self.translate_to,
+                    "translate_hotkey": self.translate_hotkey
                 }, f)
         except: pass
 
@@ -146,21 +193,31 @@ class VoiceAssistantApp(ctk.CTk):
         self.drag_h.bind("<ButtonPress-1>", self.start_drag)
         self.drag_h.bind("<B1-Motion>", self.do_drag)
 
+        # Dynamically generate Translate icon
+        self.img_translate = ctk.CTkImage(
+            light_image=create_translate_icon(),
+            dark_image=create_translate_icon(),
+            size=(24, 24)
+        )
+        
         # Mode Toggles
         self.btn_to_full = ctk.CTkButton(self.top_bar, text="🗖", width=30, height=30, corner_radius=6, 
                                    fg_color="#222", hover_color="#333", text_color="#ccc", font=ctk.CTkFont(size=20), command=lambda: self.apply_mode("full"))
         
-        self.btn_to_mini = ctk.CTkButton(self.top_bar, text="⛶", width=30, height=30, corner_radius=6, 
-                                   fg_color="#222", hover_color="#333", text_color="#ccc", font=ctk.CTkFont(size=20), command=lambda: self.apply_mode("mini"))
+        self.btn_to_mini = ctk.CTkButton(self.top_bar, text="▬", width=30, height=30, corner_radius=6, 
+                                   fg_color="#222", hover_color="#333", text_color="#ccc", font=ctk.CTkFont(size=14, weight="bold"), command=lambda: self.apply_mode("mini"))
 
-        self.btn_to_micro = ctk.CTkButton(self.top_bar, text="-", width=30, height=30, corner_radius=6, 
-                                   fg_color="#222", hover_color="#333", text_color="#ccc", font=ctk.CTkFont(size=22, weight="bold"), command=self.enter_micro_mode)
+        self.btn_to_micro = ctk.CTkButton(self.top_bar, text="●", width=30, height=30, corner_radius=6, 
+                                   fg_color="#222", hover_color="#333", text_color="#ccc", font=ctk.CTkFont(size=12), command=self.enter_micro_mode)
 
-        self.btn_restore = ctk.CTkButton(self.top_bar, text="⛶", width=30, height=30, corner_radius=6, 
-                                   fg_color="#222", hover_color="#333", text_color="#ccc", font=ctk.CTkFont(size=20), command=self.restore_mode)
+        self.btn_restore = ctk.CTkButton(self.top_bar, text="▬", width=30, height=30, corner_radius=6, 
+                                   fg_color="#222", hover_color="#333", text_color="#ccc", font=ctk.CTkFont(size=14, weight="bold"), command=self.restore_mode)
 
         self.btn_text_drawer = ctk.CTkButton(self.top_bar, text="📖", width=30, height=30, corner_radius=6,
                                    fg_color="#222", hover_color="#333", text_color="#ccc", font=ctk.CTkFont(size=18), command=self.toggle_text_drawer)
+
+        self.btn_screen_translate = ctk.CTkButton(self.top_bar, image=self.img_translate, text="", width=30, height=30, corner_radius=6,
+                                   fg_color="#222", hover_color="#333", command=self.open_screen_translator)
 
         self.btn_settings = ctk.CTkButton(self.top_bar, text="⚙", width=30, height=30, corner_radius=6, 
                                    fg_color="transparent", hover_color="#333", text_color="#888", font=ctk.CTkFont(size=20), command=self.show_appearance_overlay)
@@ -177,14 +234,17 @@ class VoiceAssistantApp(ctk.CTk):
         self.btn_to_full.bind("<Enter>", lambda e: set_status("Открыть редактор (🗖)"))
         self.btn_to_full.bind("<Leave>", lambda e: reset_status())
         
-        self.btn_to_mini.bind("<Enter>", lambda e: set_status("Свернуть в плеер-панель (⛶)"))
+        self.btn_to_mini.bind("<Enter>", lambda e: set_status("Свернуть в плеер-панель (▬)"))
         self.btn_to_mini.bind("<Leave>", lambda e: reset_status())
         
-        self.btn_to_micro.bind("<Enter>", lambda e: set_status("Свернуть в мини-виджет (-)"))
+        self.btn_to_micro.bind("<Enter>", lambda e: set_status("Свернуть в мини-виджет (●)"))
         self.btn_to_micro.bind("<Leave>", lambda e: reset_status())
         
-        self.btn_restore.bind("<Enter>", lambda e: set_status("Открыть плеер-панель (⛶)"))
+        self.btn_restore.bind("<Enter>", lambda e: set_status("Открыть плеер-панель (▬)"))
         self.btn_restore.bind("<Leave>", lambda e: reset_status())
+        
+        self.btn_screen_translate.bind("<Enter>", lambda e: set_status("Перевод области экрана (⛶ A文)"))
+        self.btn_screen_translate.bind("<Leave>", lambda e: reset_status())
 
         self.btn_text_drawer.bind("<Enter>", lambda e: set_status("Показать/скрыть текст (📖)"))
         self.btn_text_drawer.bind("<Leave>", lambda e: reset_status())
@@ -287,6 +347,35 @@ class VoiceAssistantApp(ctk.CTk):
         self.scrub_thumb_full.bind("<ButtonRelease-1>", self.on_scrub_end)
         
         self.scrub_container_full.grid(row=0, column=0, columnspan=4, sticky="ew", padx=15, pady=(15, 0))
+        
+        # Right click context menu binding for widgets
+        self.bind_right_click(self)
+
+    def bind_right_click(self, widget):
+        # We don't override standard textbox right click menu
+        if not isinstance(widget, ctk.CTkTextbox):
+            try:
+                widget.bind("<Button-3>", self.show_context_menu)
+            except:
+                pass
+        for child in widget.winfo_children():
+            self.bind_right_click(child)
+
+    def show_context_menu(self, event):
+        if self.display_mode not in ["mini", "micro"]:
+            return
+            
+        menu = tk.Menu(self, tearoff=0, bg="#1a1a1a", fg="#ffffff", activebackground="#007AFF", activeforeground="#ffffff", bd=1)
+        menu.add_command(label="🗖 Редактор (Full)", command=lambda: self.apply_mode("full"))
+        menu.add_command(label="▬ Плеер-панель (Mini)", command=lambda: self.apply_mode("mini"))
+        menu.add_command(label="● Микро-виджет (Micro)", command=lambda: self.apply_mode("micro"))
+        menu.add_separator()
+        menu.add_command(label="✕ Закрыть приложение", command=self.on_closing)
+        
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
 
     def apply_mode(self, mode, initial=False):
         if not initial:
@@ -316,6 +405,9 @@ class VoiceAssistantApp(ctk.CTk):
         if hasattr(self, 'btn_text_drawer'):
             self.btn_text_drawer.configure(fg_color="#222")
             
+        # Hide translate button by default
+        self.btn_screen_translate.grid_forget()
+        
         if mode == "full":
             self.overrideredirect(False)
             self.geometry("480x650")
@@ -328,7 +420,8 @@ class VoiceAssistantApp(ctk.CTk):
             self.btn_to_mini.grid(row=0, column=0, padx=5)
             self.btn_to_micro.grid(row=0, column=1, padx=5)
             self.full_header.grid(row=0, column=2, sticky="w", padx=10)
-            self.btn_settings.grid(row=0, column=4, padx=5, sticky="e")
+            self.btn_screen_translate.grid(row=0, column=3, padx=5, sticky="e")
+            self.btn_settings.grid(row=0, column=5, padx=5, sticky="e")
             
             # Configure top_bar column weights for full mode
             self.top_bar.grid_columnconfigure(0, weight=0)
@@ -353,17 +446,19 @@ class VoiceAssistantApp(ctk.CTk):
             self.btn_to_micro.grid(row=0, column=1, padx=5)
             self.btn_to_full.grid(row=0, column=2, padx=5)
             self.btn_text_drawer.grid(row=0, column=3, padx=5)
+            self.btn_screen_translate.grid(row=0, column=4, padx=5)
             
-            self.mini_center.grid(row=0, column=4, sticky="ew", padx=10)
-            self.right_frame.grid(row=0, column=5, padx=5)
+            self.mini_center.grid(row=0, column=5, sticky="ew", padx=10)
+            self.right_frame.grid(row=0, column=6, padx=5)
             
             # Configure top_bar column weights for mini mode
             self.top_bar.grid_columnconfigure(0, weight=0)
             self.top_bar.grid_columnconfigure(1, weight=0)
             self.top_bar.grid_columnconfigure(2, weight=0)
             self.top_bar.grid_columnconfigure(3, weight=0)
-            self.top_bar.grid_columnconfigure(4, weight=1) # mini_center expanded
-            self.top_bar.grid_columnconfigure(5, weight=0)
+            self.top_bar.grid_columnconfigure(4, weight=0) # translate button
+            self.top_bar.grid_columnconfigure(5, weight=1) # mini_center expanded
+            self.top_bar.grid_columnconfigure(6, weight=0)
             
             if self.is_speaking:
                 self.scrub_container_mini.pack(in_=self.mini_center, fill="x", expand=True)
@@ -490,23 +585,59 @@ class VoiceAssistantApp(ctk.CTk):
         if hasattr(self, 'btn_settings'): self.btn_settings.configure(fg_color="#007AFF")
         self.overlay_frame = ctk.CTkFrame(self, fg_color="#111", corner_radius=10, border_width=1, border_color="#333")
         if self.display_mode == "full":
-            self.overlay_frame.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.7, relheight=0.5)
+            self.overlay_frame.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.75, relheight=0.7)
         else:
-            self.geometry("480x250")
+            self.geometry("480x420")
             self.overlay_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
             
-        ctk.CTkLabel(self.overlay_frame, text="НАСТРОЙКИ ВИДА", font=ctk.CTkFont(size=12, weight="bold"), text_color="#888").pack(pady=10)
+        ctk.CTkLabel(self.overlay_frame, text="ОБЩИЕ НАСТРОЙКИ", font=ctk.CTkFont(size=12, weight="bold"), text_color="#888").pack(pady=10)
         
+        # Font size settings
         ctk.CTkLabel(self.overlay_frame, text=f"Размер шрифта: {self.font_size}").pack()
         f_slider = ctk.CTkSlider(self.overlay_frame, from_=10, to=40, command=self.update_font_slider)
         f_slider.set(self.font_size)
         f_slider.pack(fill="x", padx=30, pady=5)
         
+        # Markdown switch
         md_switch = ctk.CTkSwitch(self.overlay_frame, text="Markdown форматирование", command=self.toggle_markdown)
         if self.markdown_enabled: md_switch.select()
-        md_switch.pack(pady=10)
+        md_switch.pack(pady=5)
         
-        ctk.CTkButton(self.overlay_frame, text="ЗАКРЫТЬ", height=28, corner_radius=6, fg_color="#333", command=self.close_overlay).pack(pady=10)
+        # Target language for translation
+        ctk.CTkLabel(self.overlay_frame, text="Язык перевода экрана:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(10, 2))
+        langs = {"Русский": "ru", "English": "en", "Deutsch": "de", "Français": "fr", "Español": "es", "Chinese": "zh-CN"}
+        curr_lang_name = "Русский"
+        for name, code in langs.items():
+            if code == self.translate_to:
+                curr_lang_name = name
+                break
+        self.lang_option = ctk.CTkOptionMenu(self.overlay_frame, values=list(langs.keys()), command=self.change_translate_lang)
+        self.lang_option.set(curr_lang_name)
+        self.lang_option.pack(pady=2)
+        
+        # Hotkey setting
+        ctk.CTkLabel(self.overlay_frame, text="Хоткей перевода экрана:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(10, 2))
+        self.hotkey_entry = ctk.CTkEntry(self.overlay_frame, width=150, placeholder_text="ctrl+shift+t")
+        self.hotkey_entry.insert(0, self.translate_hotkey)
+        self.hotkey_entry.pack(pady=2)
+        
+        # Save & Close button
+        ctk.CTkButton(self.overlay_frame, text="СОХРАНИТЬ И ЗАКРЫТЬ", height=28, corner_radius=6, fg_color="#007AFF", hover_color="#005BBB", command=self.save_and_close_overlay).pack(pady=15)
+
+    def change_translate_lang(self, name):
+        langs = {"Русский": "ru", "English": "en", "Deutsch": "de", "Français": "fr", "Español": "es", "Chinese": "zh-CN"}
+        self.translate_to = langs.get(name, "ru")
+        if hasattr(self, "screen_translator_win") and self.screen_translator_win.winfo_exists():
+            self.screen_translator_win.translate_to = self.translate_to
+        self.save_settings()
+        
+    def save_and_close_overlay(self):
+        if hasattr(self, "hotkey_entry"):
+            hk = self.hotkey_entry.get().strip().lower()
+            if hk:
+                self.translate_hotkey = hk
+        self.save_settings()
+        self.close_overlay()
 
     def update_font_slider(self, val):
         self.font_size = int(val)
@@ -602,12 +733,31 @@ class VoiceAssistantApp(ctk.CTk):
         self.save_settings()
 
     # --- Play Logic ---
+    def open_screen_translator(self):
+        # Check if screen translator window is already open
+        if hasattr(self, "screen_translator_win") and self.screen_translator_win.winfo_exists():
+            self.screen_translator_win.translate_area()
+            self.screen_translator_win.focus()
+        else:
+            from screen_translator import ScreenTranslatorFrame
+            self.screen_translator_win = ScreenTranslatorFrame(self, translate_to=self.translate_to)
+            self.screen_translator_win.focus()
+
     def start_hotkey_listener(self):
         def check_hotkey():
             while True:
-                if keyboard.is_pressed('ctrl+shift'):
-                    self.on_hotkey_triggered()
-                    time.sleep(1.0)
+                try:
+                    if hasattr(self, "translate_hotkey") and self.translate_hotkey:
+                        if keyboard.is_pressed(self.translate_hotkey):
+                            self.after(0, self.open_screen_translator)
+                            time.sleep(1.0)
+                            continue
+                            
+                    if keyboard.is_pressed('ctrl+shift'):
+                        self.on_hotkey_triggered()
+                        time.sleep(1.0)
+                except Exception as e:
+                    pass
                 time.sleep(0.05)
         threading.Thread(target=check_hotkey, daemon=True).start()
 

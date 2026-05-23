@@ -143,14 +143,67 @@ def set_rate(rate_str, icon):
     RATE = rate_str
     icon.update_menu()
 
+def load_translate_settings():
+    if getattr(sys, 'frozen', False):
+        app_dir = os.path.dirname(sys.executable)
+    else:
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+    settings_file = os.path.join(app_dir, "voice_settings.json")
+    
+    translate_to = "ru"
+    translate_hotkey = "ctrl+shift+t"
+    
+    if os.path.exists(settings_file):
+        try:
+            import json
+            with open(settings_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                translate_to = data.get("translate_to", "ru")
+                translate_hotkey = data.get("translate_hotkey", "ctrl+shift+t")
+        except:
+            pass
+    return translate_to, translate_hotkey
+
+def open_screen_translator_from_tray(icon=None):
+    def run_gui():
+        try:
+            import customtkinter as ctk
+            from screen_translator import ScreenTranslatorFrame
+            
+            # Create hidden root
+            root = ctk.CTk()
+            root.withdraw()
+            
+            translate_to, _ = load_translate_settings()
+            
+            class TrayAppAdapter:
+                def __init__(self, translate_to):
+                    self.translate_to = translate_to
+                    
+                def update_text_and_play(self, text):
+                    stop_audio()
+                    while is_speaking:
+                        time.sleep(0.05)
+                    threading.Thread(target=lambda: asyncio.run(speak_text_async(text, icon)), daemon=True).start()
+                    
+            adapter = TrayAppAdapter(translate_to)
+            win = ScreenTranslatorFrame(adapter, translate_to=translate_to)
+            win.mainloop()
+        except Exception as e:
+            print(f"Error opening translator from tray: {e}")
+        
+    threading.Thread(target=run_gui, daemon=True).start()
+
 def create_tray():
     image = Image.open(ICON_PATH)
+    translate_to, translate_hotkey = load_translate_settings()
     
     def is_checked(rate):
         return lambda item: RATE == rate
 
     menu = pystray.Menu(
         pystray.MenuItem("Озвучить (Ctrl+Alt+V)", lambda icon: on_hotkey(icon)),
+        pystray.MenuItem(f"Перевод экрана ({translate_hotkey.upper()})", lambda icon: open_screen_translator_from_tray(icon)),
         pystray.MenuItem("Остановить", lambda: stop_audio()),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Скорость", pystray.Menu(
@@ -167,6 +220,13 @@ def create_tray():
     
     icon = pystray.Icon("Antigravity Voice", image, "Antigravity Voice Assistant", menu)
     keyboard.add_hotkey(HOTKEY, lambda: on_hotkey(icon))
+    
+    if translate_hotkey:
+        try:
+            keyboard.add_hotkey(translate_hotkey, lambda: open_screen_translator_from_tray(icon))
+        except Exception as e:
+            print(f"Failed to register translate hotkey: {e}")
+            
     icon.run()
 
 if __name__ == "__main__":
