@@ -153,7 +153,7 @@ class VoiceAssistantApp(ctk.CTk):
         self.font_size = 15
         self.markdown_enabled = True
         self.translate_to = "ru"
-        self.translate_hotkey = "ctrl+shift+t"
+        self.translate_hotkey = "ctrl+alt+t"
         self.speak_hotkey = "ctrl+shift"
         try:
             if os.path.exists(SETTINGS_FILE):
@@ -164,7 +164,7 @@ class VoiceAssistantApp(ctk.CTk):
                     self.font_size = data.get("font_size", 15)
                     self.markdown_enabled = data.get("markdown_enabled", True)
                     self.translate_to = data.get("translate_to", "ru")
-                    self.translate_hotkey = data.get("translate_hotkey", "ctrl+shift+t")
+                    self.translate_hotkey = data.get("translate_hotkey", "ctrl+alt+t")
                     self.speak_hotkey = data.get("speak_hotkey", "ctrl+shift")
         except: pass
 

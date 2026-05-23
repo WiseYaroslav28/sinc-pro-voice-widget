@@ -2,6 +2,7 @@ import tkinter as tk
 import customtkinter as ctk
 import asyncio
 import threading
+import ctypes
 from PIL import ImageGrab, ImageEnhance, ImageTk
 import ocr_translation
 
@@ -11,19 +12,37 @@ class AreaSelector(ctk.CTkToplevel):
         self.on_selected = on_selected
         
         self.overrideredirect(True)
-        self.attributes("-fullscreen", True)
         self.attributes("-topmost", True)
         
-        # Grab screenshot of the entire screen
+        # Get virtual screen metrics for multi-monitor support
+        try:
+            user32 = ctypes.windll.user32
+            self.vx = user32.GetSystemMetrics(76) # SM_XVIRTUALSCREEN
+            self.vy = user32.GetSystemMetrics(77) # SM_YVIRTUALSCREEN
+            self.vw = user32.GetSystemMetrics(78) # SM_CXVIRTUALSCREEN
+            self.vh = user32.GetSystemMetrics(79) # SM_CYVIRTUALSCREEN
+            if self.vw <= 0 or self.vh <= 0:
+                raise Exception()
+        except:
+            self.vx = 0
+            self.vy = 0
+            self.vw = self.winfo_screenwidth()
+            self.vh = self.winfo_screenheight()
+            
+        # Manually set geometry to cover the entire virtual screen
+        self.geometry(f"{self.vw}x{self.vh}+{self.vx}+{self.vy}")
+        
+        # Grab screenshot of all screens
         self.original_screenshot = ImageGrab.grab(all_screens=True)
         
-        # Create dark/muted version for "snipping" effect
+        # Create dark version for backdrop
         enhancer = ImageEnhance.Brightness(self.original_screenshot)
         self.dark_screenshot = enhancer.enhance(0.4)
         
         self.photo_dark = ImageTk.PhotoImage(self.dark_screenshot)
         
-        self.canvas = tk.Canvas(self, cursor="cross", highlightthickness=0)
+        # Canvas fills the window
+        self.canvas = tk.Canvas(self, cursor="cross", highlightthickness=0, bg="#000000")
         self.canvas.pack(fill="both", expand=True)
         self.canvas.create_image(0, 0, anchor="nw", image=self.photo_dark)
         
@@ -38,6 +57,8 @@ class AreaSelector(ctk.CTkToplevel):
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
         self.bind("<Escape>", lambda e: self.cancel())
         
+        # Lift and focus
+        self.lift()
         self.focus_force()
 
     def on_press(self, event):
@@ -82,7 +103,10 @@ class AreaSelector(ctk.CTkToplevel):
         self.destroy()
         
         if w > 10 and h > 10:
-            self.on_selected(x1, y1, w, h)
+            # Map back to virtual screen coordinates
+            abs_x = x1 + self.vx
+            abs_y = y1 + self.vy
+            self.on_selected(abs_x, abs_y, w, h)
         else:
             self.on_selected(None, None, None, None)
 
@@ -120,7 +144,7 @@ class ScreenTranslatorFrame(ctk.CTkToplevel):
         self.center_container = ctk.CTkFrame(self, fg_color="transparent")
         self.center_container.pack(side="top", fill="both", expand=True)
         
-        # Top border can be used for dragging
+        # Top border is used for window dragging
         self.top_border = ctk.CTkFrame(self.center_container, height=self.border_width, fg_color="#007AFF", cursor="fleur")
         self.top_border.pack(side="top", fill="x")
         
@@ -175,7 +199,7 @@ class ScreenTranslatorFrame(ctk.CTkToplevel):
         self.btn_translate.pack(side="right", padx=3, pady=3)
 
     def setup_drag_and_resize(self):
-        # Resize only right and bottom borders to avoid X/Y coordinates jittering
+        # Resize only right and bottom borders
         self.right_border.bind("<ButtonPress-1>", self.start_resize_right)
         self.right_border.bind("<B1-Motion>", self.do_resize_right)
         
@@ -194,7 +218,7 @@ class ScreenTranslatorFrame(ctk.CTkToplevel):
         dy = event.y_root - self.drag_start_y
         self.geometry(f"+{self.win_start_x + dx}+{self.win_start_y + dy}")
 
-    # --- Resizing (Safe, only width and height, no X/Y shifting) ---
+    # --- Resizing ---
     def start_resize_right(self, event):
         self.resize_start_x = event.x_root
         self.resize_start_width = self.winfo_width()
@@ -225,7 +249,7 @@ class ScreenTranslatorFrame(ctk.CTkToplevel):
         threading.Thread(target=self._run_translation_thread, daemon=True).start()
 
     def _run_translation_thread(self):
-        # 1. Hide frame to get a clean screenshot
+        # Hide frame to capture clean screen
         self.attributes("-alpha", 0.0)
         import time
         time.sleep(0.08)
@@ -236,13 +260,11 @@ class ScreenTranslatorFrame(ctk.CTkToplevel):
             canvas_w = self.canvas.winfo_width()
             canvas_h = self.canvas.winfo_height()
             
-            # 2. Grab screenshot
             screenshot = ImageGrab.grab(bbox=(canvas_x, canvas_y, canvas_x + canvas_w, canvas_y + canvas_h))
         except Exception as e:
             screenshot = None
             print(f"Error capturing screen: {e}")
             
-        # 3. Restore visibility
         self.attributes("-alpha", 1.0)
         
         if screenshot is None:
@@ -250,7 +272,6 @@ class ScreenTranslatorFrame(ctk.CTkToplevel):
             self.after(0, lambda: self.btn_translate.configure(text="🔄"))
             return
             
-        # 4. Run OCR and Translation
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
