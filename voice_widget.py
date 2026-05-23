@@ -504,7 +504,7 @@ class VoiceAssistantApp(ctk.CTk):
         
         if mode == "full":
             self.overrideredirect(False)
-            self.geometry("480x650")
+            self.geometry("480x600")
             self.apply_dark_titlebar()
             
             self.grid_rowconfigure(0, weight=0)
@@ -706,70 +706,71 @@ class VoiceAssistantApp(ctk.CTk):
         self.close_overlay()
         self.current_overlay = "settings"
         if hasattr(self, 'btn_settings'): self.btn_settings.configure(fg_color="#007AFF")
-        self.overlay_frame = ctk.CTkFrame(self, fg_color="#111", corner_radius=10, border_width=1, border_color="#333")
+        self.overlay_frame = ctk.CTkScrollableFrame(self, fg_color="#111", corner_radius=10, border_width=1, border_color="#333")
         if self.display_mode == "full":
-            self.overlay_frame.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.75, relheight=0.82)
+            self.overlay_frame.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.78, relheight=0.82)
         else:
             self.geometry("480x480")
             self.overlay_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
             
-        ctk.CTkLabel(self.overlay_frame, text="ОБЩИЕ НАСТРОЙКИ", font=ctk.CTkFont(size=12, weight="bold"), text_color="#888").pack(pady=10)
+        ctk.CTkLabel(self.overlay_frame, text="ОБЩИЕ НАСТРОЙКИ", font=ctk.CTkFont(size=12, weight="bold"), text_color="#888").pack(pady=(10, 5))
         
         # Font size settings
-        ctk.CTkLabel(self.overlay_frame, text=f"Размер шрифта: {self.font_size}").pack()
+        self.font_lbl = ctk.CTkLabel(self.overlay_frame, text=f"Размер шрифта: {self.font_size}")
+        self.font_lbl.pack(pady=1)
         f_slider = ctk.CTkSlider(self.overlay_frame, from_=10, to=40, command=self.update_font_slider)
         f_slider.set(self.font_size)
-        f_slider.pack(fill="x", padx=30, pady=5)
+        f_slider.pack(fill="x", padx=30, pady=2)
         
         # Markdown switch
         md_switch = ctk.CTkSwitch(self.overlay_frame, text="Markdown форматирование", command=self.toggle_markdown)
         if self.markdown_enabled: md_switch.select()
-        md_switch.pack(pady=5)
+        md_switch.pack(pady=3)
         
         # Target language for translation
-        ctk.CTkLabel(self.overlay_frame, text="Язык перевода экрана:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(5, 2))
+        ctk.CTkLabel(self.overlay_frame, text="Язык перевода экрана:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(4, 1))
         langs = {"Русский": "ru", "English": "en", "Deutsch": "de", "Français": "fr", "Español": "es", "Chinese": "zh-CN"}
         curr_lang_name = "Русский"
         for name, code in langs.items():
             if code == self.translate_to:
                 curr_lang_name = name
                 break
-        self.lang_option = ctk.CTkOptionMenu(self.overlay_frame, values=list(langs.keys()), command=self.change_translate_lang)
+        self.lang_option = ctk.CTkOptionMenu(self.overlay_frame, values=list(langs.keys()), command=self.change_translate_lang, height=24)
         self.lang_option.set(curr_lang_name)
-        self.lang_option.pack(pady=2)
+        self.lang_option.pack(pady=1)
 
         # Translation engine setting
-        ctk.CTkLabel(self.overlay_frame, text="Движок перевода:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(5, 2))
+        ctk.CTkLabel(self.overlay_frame, text="Движок перевода:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(4, 1))
         engines = {"Google Translate": "google_cache", "Argos (Оффлайн)": "argos"}
         curr_eng_name = "Google Translate"
         for name, code in engines.items():
             if code == self.translation_engine:
                 curr_eng_name = name
                 break
-        self.engine_option = ctk.CTkOptionMenu(self.overlay_frame, values=list(engines.keys()), command=self.on_change_engine)
+        self.engine_option = ctk.CTkOptionMenu(self.overlay_frame, values=list(engines.keys()), command=self.on_change_engine, height=24)
         self.engine_option.set(curr_eng_name)
-        self.engine_option.pack(pady=2)
+        self.engine_option.pack(pady=1)
 
         self.argos_status_frame = ctk.CTkFrame(self.overlay_frame, fg_color="transparent")
-        self.argos_status_frame.pack(pady=2)
+        self.argos_status_frame.pack(pady=1)
         self.argos_status_label = None
         self.argos_download_btn = None
         self.on_change_engine(curr_eng_name)
 
         # Translate hotkey setting
-        ctk.CTkLabel(self.overlay_frame, text="Хоткей перевода экрана:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(5, 2))
-        self.hotkey_entry = ctk.CTkEntry(self.overlay_frame, width=150, placeholder_text="ctrl+shift+t")
+        ctk.CTkLabel(self.overlay_frame, text="Хоткей перевода экрана:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(4, 1))
+        self.hotkey_entry = ctk.CTkEntry(self.overlay_frame, width=150, placeholder_text="ctrl+shift+t", height=24)
         self.hotkey_entry.insert(0, self.translate_hotkey)
-        self.hotkey_entry.pack(pady=2)
+        self.hotkey_entry.pack(pady=1)
         
         # Speak hotkey setting
-        ctk.CTkLabel(self.overlay_frame, text="Хоткей озвучки текста:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(5, 2))
-        self.speak_hotkey_entry = ctk.CTkEntry(self.overlay_frame, width=150, placeholder_text="ctrl+shift")
+        ctk.CTkLabel(self.overlay_frame, text="Хоткей озвучки текста:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(4, 1))
+        self.speak_hotkey_entry = ctk.CTkEntry(self.overlay_frame, width=150, placeholder_text="ctrl+shift", height=24)
         self.speak_hotkey_entry.insert(0, self.speak_hotkey)
-        self.speak_hotkey_entry.pack(pady=2)
+        self.speak_hotkey_entry.pack(pady=1)
         
         # Save & Close button
-        ctk.CTkButton(self.overlay_frame, text="СОХРАНИТЬ И ЗАКРЫТЬ", height=28, corner_radius=6, fg_color="#007AFF", hover_color="#005BBB", command=self.save_and_close_overlay).pack(pady=10)
+        ctk.CTkButton(self.overlay_frame, text="СОХРАНИТЬ И ЗАКРЫТЬ", height=26, corner_radius=6, fg_color="#007AFF", hover_color="#005BBB", command=self.save_and_close_overlay).pack(pady=(8, 5))
 
 
     def on_change_engine(self, selected_name):
@@ -848,6 +849,8 @@ class VoiceAssistantApp(ctk.CTk):
 
     def update_font_slider(self, val):
         self.font_size = int(val)
+        if hasattr(self, "font_lbl"):
+            self.font_lbl.configure(text=f"Размер шрифта: {self.font_size}")
         self.apply_font_size()
         self.save_settings()
 

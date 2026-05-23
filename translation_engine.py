@@ -14,6 +14,7 @@ else:
     APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 LOCAL_TRANSLATOR_DIR = os.path.join(APP_DIR, "local_translator")
+os.environ["ARGOS_PACKAGES_DIR"] = os.path.join(LOCAL_TRANSLATOR_DIR, "packages")
 
 argos_available = False
 argostranslate = None
@@ -286,29 +287,41 @@ class ArgosEngine(TranslationEngine):
 
     def download_argos_framework(self, progress_callback=None) -> bool:
         try:
-            url = "https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/download/v3.1.0-WIP/local_translator.zip"
             os.makedirs(LOCAL_TRANSLATOR_DIR, exist_ok=True)
             zip_path = os.path.join(APP_DIR, "local_translator.zip")
+            parent_zip_path = os.path.join(os.path.dirname(APP_DIR), "local_translator.zip")
             
-            if progress_callback:
-                progress_callback("Скачивание движка (180MB)...")
-            
-            import urllib.request
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req) as response:
-                total_size = int(response.info().get('Content-Length', 0))
-                downloaded = 0
-                block_size = 1024 * 1024 # 1MB
-                with open(zip_path, 'wb') as f:
-                    while True:
-                        block = response.read(block_size)
-                        if not block:
-                            break
-                        f.write(block)
-                        downloaded += len(block)
-                        if total_size > 0 and progress_callback:
-                            percent = int((downloaded / total_size) * 100)
-                            progress_callback(f"Скачивание движка: {percent}%")
+            found_local = False
+            if os.path.exists(zip_path):
+                found_local = True
+            elif os.path.exists(parent_zip_path):
+                zip_path = parent_zip_path
+                found_local = True
+                
+            if found_local:
+                if progress_callback:
+                    progress_callback("Распаковка локального архива...")
+            else:
+                url = "https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/download/v3.1.0-WIP/local_translator.zip"
+                if progress_callback:
+                    progress_callback("Скачивание движка (180MB)...")
+                
+                import urllib.request
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req) as response:
+                    total_size = int(response.info().get('Content-Length', 0))
+                    downloaded = 0
+                    block_size = 1024 * 1024 # 1MB
+                    with open(zip_path, 'wb') as f:
+                        while True:
+                            block = response.read(block_size)
+                            if not block:
+                                break
+                            f.write(block)
+                            downloaded += len(block)
+                            if total_size > 0 and progress_callback:
+                                percent = int((downloaded / total_size) * 100)
+                                progress_callback(f"Скачивание движка: {percent}%")
             
             if progress_callback:
                 progress_callback("Распаковка движка...")
@@ -317,10 +330,11 @@ class ArgosEngine(TranslationEngine):
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(LOCAL_TRANSLATOR_DIR)
                 
-            try:
-                os.remove(zip_path)
-            except:
-                pass
+            if not found_local:
+                try:
+                    os.remove(zip_path)
+                except:
+                    pass
                 
             return True
         except Exception as e:
