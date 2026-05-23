@@ -33,17 +33,41 @@ def try_import_argos():
             
     # Динамически мокаем stanza и minisbd, чтобы избежать ModuleNotFoundError
     from types import ModuleType
+    
     if 'stanza' not in sys.modules:
         stanza_mock = ModuleType("stanza")
-        stanza_mock.Pipeline = lambda *args, **kwargs: None
+        
+        class StanzaSentenceMock:
+            def __init__(self, text):
+                self.text = text
+
+        class StanzaDocMock:
+            def __init__(self, text):
+                self.sentences = [StanzaSentenceMock(text)]
+
+        class StanzaPipelineMock:
+            def __init__(self, *args, **kwargs):
+                pass
+            def __call__(self, text):
+                return StanzaDocMock(text)
+
+        stanza_mock.Pipeline = StanzaPipelineMock
         sys.modules["stanza"] = stanza_mock
         
     if 'minisbd' not in sys.modules:
         minisbd_mock = ModuleType("minisbd")
-        minisbd_mock.SBDetect = lambda *args, **kwargs: None
+        
+        class MiniSBDMock:
+            def __init__(self, *args, **kwargs):
+                pass
+            def sentences(self, text):
+                return [text]
+                
+        minisbd_mock.SBDetect = MiniSBDMock
         minisbd_mock.models = ModuleType("minisbd.models")
         minisbd_mock.models.cache_dir = ""
         minisbd_mock.models.list_models = lambda: []
+        
         sys.modules["minisbd"] = minisbd_mock
         sys.modules["minisbd.models"] = minisbd_mock.models
 
