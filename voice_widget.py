@@ -774,7 +774,6 @@ class VoiceAssistantApp(ctk.CTk):
         
         # Initialize engine
         self.on_change_engine(curr_eng_name)
-
     def on_change_engine(self, selected_name):
         for child in self.argos_status_frame.winfo_children():
             child.destroy()
@@ -806,11 +805,13 @@ class VoiceAssistantApp(ctk.CTk):
                 )
                 self.argos_download_btn.pack(pady=2)
                 
-                # Показываем фрейм со статусом и кнопкой "Скачать"
+                # Показываем статус и кнопку "Скачать"
                 self.argos_status_frame.pack(pady=1)
             else:
-                # Если модель уже скачана, ничего не показываем
-                pass
+                # Если модель установлена, показываем красивую зеленую надпись
+                self.argos_status_label = ctk.CTkLabel(self.argos_status_frame, text="Локальная модель EN->RU готова", text_color="#34C759", font=ctk.CTkFont(size=10, weight="bold"))
+                self.argos_status_label.pack(pady=2)
+                self.argos_status_frame.pack(pady=1)
         else:
             # Для Google Translate скрываем фрейм статуса полностью
             pass
@@ -821,8 +822,11 @@ class VoiceAssistantApp(ctk.CTk):
 
         # Управляем геометрией окна в режиме mini для предотвращения пустот
         if self.display_mode == "mini":
-            if selected_name == "Argos (Оффлайн)" and not is_installed:
-                self.geometry("480x440")
+            if selected_name == "Argos (Оффлайн)":
+                if not is_installed:
+                    self.geometry("480x440")
+                else:
+                    self.geometry("480x370")
             else:
                 self.geometry("480x360")
 
