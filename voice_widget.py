@@ -688,7 +688,7 @@ class VoiceAssistantApp(ctk.CTk):
         ctk.CTkLabel(self.overlay_frame, text="Wise Yaroslav", font=ctk.CTkFont(size=12, weight="bold")).pack()
         
         ctk.CTkLabel(self.overlay_frame, text="Текущая версия:", font=ctk.CTkFont(size=10, weight="bold"), text_color="#888").pack(pady=(10, 0))
-        ctk.CTkLabel(self.overlay_frame, text="v3.1.0 (2026-05-23)", font=ctk.CTkFont(size=12)).pack()
+        ctk.CTkLabel(self.overlay_frame, text="v3.1.1 (2026-05-23)", font=ctk.CTkFont(size=12)).pack()
         
         ctk.CTkLabel(self.overlay_frame, text="GitHub Репозиторий:", font=ctk.CTkFont(size=10, weight="bold"), text_color="#888").pack(pady=(10, 0))
         
@@ -1096,6 +1096,69 @@ class VoiceAssistantApp(ctk.CTk):
                 self.text_box.tag_add("md_hide", f"{idx}.{start_match}", f"{idx}.{start_match+2}")
                 self.text_box.tag_add("md_hide", f"{idx}.{end_match-2}", f"{idx}.{end_match}")
 
+    def split_into_sentences(self, text):
+        if not text:
+            return []
+        
+        try:
+            import pysbd
+            import re
+            lang = "ru" if "(RU)" in self.current_voice else "en"
+            segmenter = pysbd.Segmenter(language=lang, clean=False, char_span=True)
+            spans = segmenter.segment(text)
+            
+            sentences = []
+            for span in spans:
+                s = span.sent
+                stripped = s.strip()
+                if stripped:
+                    leading_spaces = len(s) - len(s.lstrip())
+                    trailing_spaces = len(s) - len(s.rstrip())
+                    sentences.append((span.start + leading_spaces, span.end - trailing_spaces))
+            
+            # Склеиваем разорванные инициалы без пробела (например, "А.С." и "Пушкин")
+            merged_sentences = []
+            for start, end in sentences:
+                if not merged_sentences:
+                    merged_sentences.append((start, end))
+                else:
+                    prev_start, prev_end = merged_sentences[-1]
+                    prev_text = text[prev_start:prev_end].strip()
+                    curr_text = text[start:end].strip()
+                    
+                    is_initial = False
+                    if re.search(r'\b[А-ЯЁA-Z]\.[А-ЯЁA-Z]\.$', prev_text):
+                        is_initial = True
+                    elif re.search(r'\b[А-ЯЁA-Z]\.$', prev_text):
+                        is_initial = True
+                        # Если перед одиночной буквой стоит строчное слово длиной > 3, то это не инициал
+                        match = re.search(r'([a-zA-Zа-яА-ЯёЁ-]+)\s+[А-ЯЁA-Z]\.$', prev_text)
+                        if match:
+                            before_word = match.group(1)
+                            if before_word[0].islower() and len(before_word) > 3:
+                                is_initial = False
+                                
+                    starts_with_upper = curr_text and curr_text[0].isupper()
+                    
+                    if is_initial and starts_with_upper:
+                        merged_sentences[-1] = (prev_start, end)
+                    else:
+                        merged_sentences.append((start, end))
+            
+            return merged_sentences
+        except Exception as e:
+            print(f"Error using pysbd, falling back to regex: {e}")
+            import re
+            sentences = []
+            for m in re.finditer(r'[^.!?]+[.!?]*', text):
+                s = m.group()
+                stripped = s.strip()
+                if stripped:
+                    leading_spaces = len(s) - len(s.lstrip())
+                    trailing_spaces = len(s) - len(s.rstrip())
+                    sentences.append((m.start() + leading_spaces, m.end() - trailing_spaces))
+            return sentences
+
     def clean_markdown_for_tts(self, text):
         import re
         # Remove headers
@@ -1113,19 +1176,8 @@ class VoiceAssistantApp(ctk.CTk):
         if not full_text: return
         
         # Get raw sentences and their offsets
-        raw_sentences = []
-        self.sentence_offsets = []
-        for m in re.finditer(r'[^.!?]+[.!?]*', full_text):
-            s = m.group()
-            stripped = s.strip()
-            if stripped:
-                leading_spaces = len(s) - len(s.lstrip())
-                trailing_spaces = len(s) - len(s.rstrip())
-                s_start = m.start() + leading_spaces
-                s_end = m.end() - trailing_spaces
-                raw_sentences.append(stripped)
-                self.sentence_offsets.append((s_start, s_end))
-                
+        self.sentence_offsets = self.split_into_sentences(full_text)
+        raw_sentences = [full_text[start:end] for start, end in self.sentence_offsets]
         self.current_sentences = [self.clean_markdown_for_tts(s) for s in raw_sentences]
         if not self.current_sentences: return
         
@@ -1230,16 +1282,7 @@ class VoiceAssistantApp(ctk.CTk):
         char_offset = len(self.text_box.get("1.0", start_pos))
         
         # Calculate sentence offsets on the fly
-        sentences_with_offsets = []
-        for m in re.finditer(r'[^.!?]+[.!?]*', full_text):
-            s = m.group()
-            stripped = s.strip()
-            if stripped:
-                leading_spaces = len(s) - len(s.lstrip())
-                trailing_spaces = len(s) - len(s.rstrip())
-                s_start = m.start() + leading_spaces
-                s_end = m.end() - trailing_spaces
-                sentences_with_offsets.append((s_start, s_end))
+        sentences_with_offsets = self.split_into_sentences(full_text)
                 
         for idx, (s_start, s_end) in enumerate(sentences_with_offsets):
             if s_start <= char_offset <= s_end:

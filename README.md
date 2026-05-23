@@ -11,10 +11,11 @@
 
 ### ✨ Ключевые возможности
 
-*   **Перевод экрана в реальном времени [В стадии доработки / WIP] (v3.1.0):** Интерактивная рамка `⛶ A文` для перевода любой области экрана. Рамку можно перемещать и растягивать. Она полностью прозрачна для кликов (click-through) — вы можете продолжать работать с элементами под ней. Переведенный текст накладывается плашками поверх оригинала. По кнопке 🔊 перевод мгновенно передается в основной плеер и озвучивается.
+*   **Перевод экрана в реальном времени [В стадии доработки / WIP] (v3.1.1):** Интерактивная рамка `⛶ A文` для перевода любой области экрана. Рамку можно перемещать и растягивать. Она полностью прозрачна для кликов (click-through) — вы можете продолжать работать с элементами под ней. Переведенный текст накладывается плашками поверх оригинала. По кнопке 🔊 перевод мгновенно передается в основной плеер и озвучивается.
 *   **Контекстное меню быстрого доступа (v3.0.0):** Клик правой кнопкой мыши по виджету в режимах Mini и Micro opens удобное меню для переключения режимов или закрытия приложения.
 *   **Глобальный доступ отовсюду:** Выделите текст в **любой** программе, нажмите комбинацию клавиш — и программа мгновенно начнет его читать.
 *   **Нейросетевые голоса:** Использование Microsoft Edge TTS обеспечивает премиальное естественное звучание. Поддерживаются русский, английский, немецкий, французский, испанский, китайский и другие языки. Вы можете легко добавлять новые языки и голоса в словари программы.
+*   **Интеллектуальное разбиение текста (v3.1.1):** Использование библиотеки `pysbd` предотвращает ошибочные разрывы предложений на дробных числах (например, `5.5`), многоточиях и сокращениях (например, `т.д.`), а также автоматически склеивает русские инициалы для плавного чтения.
 *   **Три режима интерфейса:**
     *   **Оконный режим (Full):** Полноценное окно с текстовым редактором и поддержкой Markdown.
     *   **Плеер-панель (Mini):** Компактная полоска сверху экрана поверх всех окон. Идеально для работы. Включает выдвижную текстовую панель (Text Drawer), открываемую кнопкой `📖`.
@@ -65,10 +66,11 @@ This project was developed with special care and attention to people with **dysl
 
 ### ✨ Key Features
 
-*   **Real-time Screen Translator [Work In Progress / WIP] (v3.1.0):** An interactive crop frame `⛶ A文` to translate any screen region. The frame is resizable and moveable. It is completely click-through — you can scroll and click elements underneath it. Translated text is overlaid on patches. Click 🔊 to instantly forward and speak the translation.
+*   **Real-time Screen Translator [Work In Progress / WIP] (v3.1.1):** An interactive crop frame `⛶ A文` to translate any screen region. The frame is resizable and moveable. It is completely click-through — you can scroll and click elements underneath it. Translated text is overlaid on patches. Click 🔊 to instantly forward and speak the translation.
 *   **Quick Access Context Menu (v3.0.0):** Right-click the widget in Mini and Micro modes to toggle UI modes or exit the app.
 *   **Global Access Everywhere:** Highlight text in **any** application, press the hotkey, and the program will instantly start reading it aloud.
 *   **Premium Neural Voices:** Powered by Microsoft Edge TTS for natural, human-like sound. It supports English, Russian, German, French, Spanish, Chinese, and many more. You can easily add new voices to the dictionary.
+*   **Intelligent Sentence Segmentation (v3.1.1):** Integration of `pysbd` prevents incorrect sentence breaks on decimals (e.g. `5.5`), ellipses, and standard abbreviations (e.g. `etc.`), and automatically merges Russian initials for fluent speech.
 *   **Three UI Modes:**
     *   **Full Mode:** A complete window with a text editor and Markdown support.
     *   **Mini Player:** A compact top-screen overlay. Perfect for background listening while working. Includes a "Text Drawer" that expands when you click `📖`.
