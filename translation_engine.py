@@ -31,10 +31,27 @@ def try_import_argos():
         if mod in sys.modules and sys.modules[mod] is None:
             del sys.modules[mod]
             
+    # Динамически мокаем stanza и minisbd, чтобы избежать ModuleNotFoundError
+    from types import ModuleType
+    if 'stanza' not in sys.modules:
+        stanza_mock = ModuleType("stanza")
+        stanza_mock.Pipeline = lambda *args, **kwargs: None
+        sys.modules["stanza"] = stanza_mock
+        
+    if 'minisbd' not in sys.modules:
+        minisbd_mock = ModuleType("minisbd")
+        minisbd_mock.SBDetect = lambda *args, **kwargs: None
+        minisbd_mock.models = ModuleType("minisbd.models")
+        minisbd_mock.models.cache_dir = ""
+        minisbd_mock.models.list_models = lambda: []
+        sys.modules["minisbd"] = minisbd_mock
+        sys.modules["minisbd.models"] = minisbd_mock.models
+
     if LOCAL_TRANSLATOR_DIR not in sys.path:
         sys.path.insert(0, LOCAL_TRANSLATOR_DIR)
     try:
         import argostranslate.package
+
         import argostranslate.translate
         import argostranslate
         argos_available = True

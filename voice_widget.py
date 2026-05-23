@@ -775,7 +775,6 @@ class VoiceAssistantApp(ctk.CTk):
         # Initialize engine
         self.on_change_engine(curr_eng_name)
 
-
     def on_change_engine(self, selected_name):
         for child in self.argos_status_frame.winfo_children():
             child.destroy()
@@ -785,12 +784,14 @@ class VoiceAssistantApp(ctk.CTk):
         if hasattr(self, "save_btn"):
             self.save_btn.pack_forget()
             
+        # Получаем движок для проверки
+        from translation_engine import get_engine
+        engine = get_engine("argos")
+        target_lang = getattr(self, "translate_to", "ru")
+        is_installed = engine.is_model_installed('en', target_lang)
+
         if selected_name == "Argos (Оффлайн)":
-            from translation_engine import get_engine
-            engine = get_engine("argos")
-            target_lang = getattr(self, "translate_to", "ru")
-            
-            if not engine.is_model_installed('en', target_lang):
+            if not is_installed:
                 self.argos_status_label = ctk.CTkLabel(self.argos_status_frame, text="Локальная модель EN->RU не установлена", text_color="#FF9500", font=ctk.CTkFont(size=10))
                 self.argos_status_label.pack(pady=2)
                 
@@ -817,6 +818,13 @@ class VoiceAssistantApp(ctk.CTk):
         # Всегда перепаковываем кнопку сохранения в самый низ оверлея
         if hasattr(self, "save_btn"):
             self.save_btn.pack(pady=(8, 5))
+
+        # Управляем геометрией окна в режиме mini для предотвращения пустот
+        if self.display_mode == "mini":
+            if selected_name == "Argos (Оффлайн)" and not is_installed:
+                self.geometry("480x440")
+            else:
+                self.geometry("480x360")
 
     def start_argos_download(self):
         self.argos_download_btn.configure(state="disabled")
@@ -942,18 +950,29 @@ class VoiceAssistantApp(ctk.CTk):
         self.save_settings()
         self.close_overlay()
         self.btn_voice.configure(text=f"🔊 {self.current_voice.split(' ')[0]}")
-
     def close_overlay(self):
         if self.overlay_frame:
             try:
                 self.overlay_frame.place_forget()
-            except:
-                pass
+            except: pass
             try:
                 self.overlay_frame.grid_forget()
-            except:
-                pass
-            self.overlay_frame.destroy()
+            except: pass
+            try:
+                self.overlay_frame.pack_forget()
+            except: pass
+            
+            try:
+                self.overlay_frame.destroy()
+            except Exception as e:
+                print(f"Error destroying overlay_frame: {e}")
+                try:
+                    with open(os.path.join(APP_DIR, "overlay_destroy_error.log"), "w", encoding="utf-8") as f:
+                        import traceback
+                        f.write(traceback.format_exc())
+                except:
+                    pass
+            
             self.overlay_frame = None
             self.current_overlay = None
             if hasattr(self, 'btn_settings'): self.btn_settings.configure(fg_color="transparent")
