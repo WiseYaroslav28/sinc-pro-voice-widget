@@ -143,7 +143,7 @@ def set_rate(rate_str, icon):
     RATE = rate_str
     icon.update_menu()
 
-def load_translate_settings():
+def load_app_settings():
     if getattr(sys, 'frozen', False):
         app_dir = os.path.dirname(sys.executable)
     else:
@@ -152,6 +152,7 @@ def load_translate_settings():
     
     translate_to = "ru"
     translate_hotkey = "ctrl+shift+t"
+    speak_hotkey = "ctrl+alt+v" # Default fallback for tray app
     
     if os.path.exists(settings_file):
         try:
@@ -160,21 +161,25 @@ def load_translate_settings():
                 data = json.load(f)
                 translate_to = data.get("translate_to", "ru")
                 translate_hotkey = data.get("translate_hotkey", "ctrl+shift+t")
+                # In settings we might have ctrl+shift for widget, 
+                # but if we run from tray, we can use either the widget's hotkey
+                # or fallback to ctrl+alt+v if it conflicts.
+                speak_hotkey = data.get("speak_hotkey", "ctrl+alt+v")
         except:
             pass
-    return translate_to, translate_hotkey
+    return translate_to, translate_hotkey, speak_hotkey
 
 def open_screen_translator_from_tray(icon=None):
     def run_gui():
         try:
             import customtkinter as ctk
-            from screen_translator import ScreenTranslatorFrame
+            from screen_translator import AreaSelector, ScreenTranslatorFrame
             
             # Create hidden root
             root = ctk.CTk()
             root.withdraw()
             
-            translate_to, _ = load_translate_settings()
+            translate_to, _, _ = load_app_settings()
             
             class TrayAppAdapter:
                 def __init__(self, translate_to):
@@ -187,8 +192,23 @@ def open_screen_translator_from_tray(icon=None):
                     threading.Thread(target=lambda: asyncio.run(speak_text_async(text, icon)), daemon=True).start()
                     
             adapter = TrayAppAdapter(translate_to)
-            win = ScreenTranslatorFrame(adapter, translate_to=translate_to)
-            win.mainloop()
+            
+            def on_area_selected(x, y, w, h):
+                if x is not None:
+                    win_h = h + 28 + 2 * 4
+                    win_w = w + 2 * 4
+                    win_x = x - 4
+                    win_y = y - 28 - 4
+                    
+                    win = ScreenTranslatorFrame(adapter, translate_to=translate_to)
+                    win.geometry(f"{win_w}x{win_h}+{win_x}+{win_y}")
+                    win.focus()
+                    win.translate_area()
+                    win.mainloop()
+                    
+            selector = AreaSelector(root, on_area_selected)
+            selector.mainloop()
+            
         except Exception as e:
             print(f"Error opening translator from tray: {e}")
         
@@ -196,13 +216,13 @@ def open_screen_translator_from_tray(icon=None):
 
 def create_tray():
     image = Image.open(ICON_PATH)
-    translate_to, translate_hotkey = load_translate_settings()
+    translate_to, translate_hotkey, speak_hotkey = load_app_settings()
     
     def is_checked(rate):
         return lambda item: RATE == rate
 
     menu = pystray.Menu(
-        pystray.MenuItem("Озвучить (Ctrl+Alt+V)", lambda icon: on_hotkey(icon)),
+        pystray.MenuItem(f"Озвучить ({speak_hotkey.upper()})", lambda icon: on_hotkey(icon)),
         pystray.MenuItem(f"Перевод экрана ({translate_hotkey.upper()})", lambda icon: open_screen_translator_from_tray(icon)),
         pystray.MenuItem("Остановить", lambda: stop_audio()),
         pystray.Menu.SEPARATOR,
@@ -219,8 +239,13 @@ def create_tray():
     )
     
     icon = pystray.Icon("Antigravity Voice", image, "Antigravity Voice Assistant", menu)
-    keyboard.add_hotkey(HOTKEY, lambda: on_hotkey(icon))
     
+    if speak_hotkey:
+        try:
+            keyboard.add_hotkey(speak_hotkey, lambda: on_hotkey(icon))
+        except Exception as e:
+            print(f"Failed to register speak hotkey: {e}")
+            
     if translate_hotkey:
         try:
             keyboard.add_hotkey(translate_hotkey, lambda: open_screen_translator_from_tray(icon))

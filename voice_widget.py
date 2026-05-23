@@ -154,6 +154,7 @@ class VoiceAssistantApp(ctk.CTk):
         self.markdown_enabled = True
         self.translate_to = "ru"
         self.translate_hotkey = "ctrl+shift+t"
+        self.speak_hotkey = "ctrl+shift"
         try:
             if os.path.exists(SETTINGS_FILE):
                 with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
@@ -164,6 +165,7 @@ class VoiceAssistantApp(ctk.CTk):
                     self.markdown_enabled = data.get("markdown_enabled", True)
                     self.translate_to = data.get("translate_to", "ru")
                     self.translate_hotkey = data.get("translate_hotkey", "ctrl+shift+t")
+                    self.speak_hotkey = data.get("speak_hotkey", "ctrl+shift")
         except: pass
 
     def save_settings(self):
@@ -175,7 +177,8 @@ class VoiceAssistantApp(ctk.CTk):
                     "font_size": self.font_size,
                     "markdown_enabled": self.markdown_enabled,
                     "translate_to": self.translate_to,
-                    "translate_hotkey": self.translate_hotkey
+                    "translate_hotkey": self.translate_hotkey,
+                    "speak_hotkey": self.speak_hotkey
                 }, f)
         except: pass
 
@@ -585,9 +588,9 @@ class VoiceAssistantApp(ctk.CTk):
         if hasattr(self, 'btn_settings'): self.btn_settings.configure(fg_color="#007AFF")
         self.overlay_frame = ctk.CTkFrame(self, fg_color="#111", corner_radius=10, border_width=1, border_color="#333")
         if self.display_mode == "full":
-            self.overlay_frame.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.75, relheight=0.7)
+            self.overlay_frame.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.75, relheight=0.82)
         else:
-            self.geometry("480x420")
+            self.geometry("480x480")
             self.overlay_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
             
         ctk.CTkLabel(self.overlay_frame, text="ОБЩИЕ НАСТРОЙКИ", font=ctk.CTkFont(size=12, weight="bold"), text_color="#888").pack(pady=10)
@@ -615,11 +618,17 @@ class VoiceAssistantApp(ctk.CTk):
         self.lang_option.set(curr_lang_name)
         self.lang_option.pack(pady=2)
         
-        # Hotkey setting
+        # Translate hotkey setting
         ctk.CTkLabel(self.overlay_frame, text="Хоткей перевода экрана:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(10, 2))
         self.hotkey_entry = ctk.CTkEntry(self.overlay_frame, width=150, placeholder_text="ctrl+shift+t")
         self.hotkey_entry.insert(0, self.translate_hotkey)
         self.hotkey_entry.pack(pady=2)
+        
+        # Speak hotkey setting
+        ctk.CTkLabel(self.overlay_frame, text="Хоткей озвучки текста:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(10, 2))
+        self.speak_hotkey_entry = ctk.CTkEntry(self.overlay_frame, width=150, placeholder_text="ctrl+shift")
+        self.speak_hotkey_entry.insert(0, self.speak_hotkey)
+        self.speak_hotkey_entry.pack(pady=2)
         
         # Save & Close button
         ctk.CTkButton(self.overlay_frame, text="СОХРАНИТЬ И ЗАКРЫТЬ", height=28, corner_radius=6, fg_color="#007AFF", hover_color="#005BBB", command=self.save_and_close_overlay).pack(pady=15)
@@ -636,6 +645,10 @@ class VoiceAssistantApp(ctk.CTk):
             hk = self.hotkey_entry.get().strip().lower()
             if hk:
                 self.translate_hotkey = hk
+        if hasattr(self, "speak_hotkey_entry"):
+            shk = self.speak_hotkey_entry.get().strip().lower()
+            if shk:
+                self.speak_hotkey = shk
         self.save_settings()
         self.close_overlay()
 
@@ -739,9 +752,21 @@ class VoiceAssistantApp(ctk.CTk):
             self.screen_translator_win.translate_area()
             self.screen_translator_win.focus()
         else:
-            from screen_translator import ScreenTranslatorFrame
-            self.screen_translator_win = ScreenTranslatorFrame(self, translate_to=self.translate_to)
-            self.screen_translator_win.focus()
+            from screen_translator import AreaSelector
+            def on_area_selected(x, y, w, h):
+                if x is not None:
+                    from screen_translator import ScreenTranslatorFrame
+                    win_h = h + 28 + 2 * 4
+                    win_w = w + 2 * 4
+                    win_x = x - 4
+                    win_y = y - 28 - 4
+                    
+                    self.screen_translator_win = ScreenTranslatorFrame(self, translate_to=self.translate_to)
+                    self.screen_translator_win.geometry(f"{win_w}x{win_h}+{win_x}+{win_y}")
+                    self.screen_translator_win.focus()
+                    self.screen_translator_win.translate_area()
+                    
+            selector = AreaSelector(self, on_area_selected)
 
     def start_hotkey_listener(self):
         def check_hotkey():
@@ -753,9 +778,11 @@ class VoiceAssistantApp(ctk.CTk):
                             time.sleep(1.0)
                             continue
                             
-                    if keyboard.is_pressed('ctrl+shift'):
-                        self.on_hotkey_triggered()
-                        time.sleep(1.0)
+                    if hasattr(self, "speak_hotkey") and self.speak_hotkey:
+                        if keyboard.is_pressed(self.speak_hotkey):
+                            self.on_hotkey_triggered()
+                            time.sleep(1.0)
+                            continue
                 except Exception as e:
                     pass
                 time.sleep(0.05)
