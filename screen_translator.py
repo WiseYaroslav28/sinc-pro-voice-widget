@@ -6,6 +6,75 @@ import ctypes
 from PIL import ImageGrab, ImageEnhance, ImageTk
 import ocr_translation
 
+def analyze_colors(image, bbox):
+    try:
+        w, h = image.size
+        x1, y1, x2, y2 = bbox
+        
+        # Ограничиваем координаты
+        x1 = max(0, min(w - 1, int(x1)))
+        y1 = max(0, min(h - 1, int(y1)))
+        x2 = max(0, min(w - 1, int(x2)))
+        y2 = max(0, min(h - 1, int(y2)))
+        
+        if x2 <= x1 or y2 <= y1:
+            return "#FFFFFF", "#000000"
+            
+        cropped = image.crop((x1, y1, x2, y2))
+        cw, ch = cropped.size
+        
+        # Анализируем пиксели по периметру для поиска цвета фона
+        edge_pixels = []
+        # Верхняя и нижняя строки
+        for x in range(cw):
+            edge_pixels.append(cropped.getpixel((x, 0)))
+            edge_pixels.append(cropped.getpixel((x, ch - 1)))
+        # Левая и правая колонки (без углов)
+        for y in range(1, ch - 1):
+            edge_pixels.append(cropped.getpixel((0, y)))
+            edge_pixels.append(cropped.getpixel((cw - 1, y)))
+            
+        # Среднее значение цвета по периметру
+        if edge_pixels:
+            r_avg = int(sum(p[0] for p in edge_pixels) / len(edge_pixels))
+            g_avg = int(sum(p[1] for p in edge_pixels) / len(edge_pixels))
+            b_avg = int(sum(p[2] for p in edge_pixels) / len(edge_pixels))
+            bg_rgb = (r_avg, g_avg, b_avg)
+        else:
+            bg_rgb = (255, 255, 255)
+            
+        # Находим самый контрастный пиксель внутри для цвета текста
+        pixels = list(cropped.getdata())
+        max_dist = -1
+        fg_rgb = (0, 0, 0)
+        
+        for p in pixels:
+            # Считаем евклидово расстояние
+            dist = (p[0] - bg_rgb[0])**2 + (p[1] - bg_rgb[1])**2 + (p[2] - bg_rgb[2])**2
+            if dist > max_dist:
+                max_dist = dist
+                fg_rgb = p[:3]
+                
+        # Если контраст очень маленький, принудительно делаем черный/белый
+        if max_dist < 400: # порог контрастности
+            brightness = (bg_rgb[0] * 299 + bg_rgb[1] * 587 + bg_rgb[2] * 114) / 1000
+            if brightness < 128:
+                fg_rgb = (255, 255, 255)
+            else:
+                fg_rgb = (0, 0, 0)
+                
+        bg_hex = f"#{bg_rgb[0]:02x}{bg_rgb[1]:02x}{bg_rgb[2]:02x}"
+        fg_hex = f"#{fg_rgb[0]:02x}{fg_rgb[1]:02x}{fg_rgb[2]:02x}"
+        
+        # Защита от прозрачного цвета tkinter
+        if bg_hex == "#000001":
+            bg_hex = "#000002"
+            
+        return bg_hex, fg_hex
+    except Exception as e:
+        print(f"Error in analyze_colors: {e}")
+        return "#FFFFFF", "#000000"
+
 class AreaSelector(ctk.CTkToplevel):
     def __init__(self, master, on_selected):
         super().__init__(master)
@@ -206,16 +275,23 @@ class ScreenTranslatorFrame(ctk.CTkToplevel):
         # Resize only right and bottom borders
         self.right_border.bind("<ButtonPress-1>", self.start_resize_right)
         self.right_border.bind("<B1-Motion>", self.do_resize_right)
+        self.right_border.bind("<ButtonRelease-1>", lambda e: self.translate_area())
         
         self.bottom_border.bind("<ButtonPress-1>", self.start_resize_bottom)
         self.bottom_border.bind("<B1-Motion>", self.do_resize_bottom)
+        self.bottom_border.bind("<ButtonRelease-1>", lambda e: self.translate_area())
+        
+        # Binds to trigger auto-translation when finished dragging
+        self.toolbar.bind("<ButtonRelease-1>", lambda e: self.translate_area())
+        self.lbl_title.bind("<ButtonRelease-1>", lambda e: self.translate_area())
+        self.top_border.bind("<ButtonRelease-1>", lambda e: self.translate_area())
 
     # --- Dragging ---
     def start_drag(self, event):
         self.drag_start_x = event.x_root
         self.drag_start_y = event.y_root
-        self.win_start_x = self.winfo_x()
-        self.win_start_y = self.winfo_y()
+        self.win_start_x = self.winfo_rootx()
+        self.win_start_y = self.winfo_rooty()
 
     def do_drag(self, event):
         dx = event.x_root - self.drag_start_x
@@ -226,8 +302,8 @@ class ScreenTranslatorFrame(ctk.CTkToplevel):
     def start_resize_right(self, event):
         self.resize_start_x = event.x_root
         self.resize_start_width = self.winfo_width()
-        self.resize_win_x = self.winfo_x()
-        self.resize_win_y = self.winfo_y()
+        self.resize_win_x = self.winfo_rootx()
+        self.resize_win_y = self.winfo_rooty()
         
     def do_resize_right(self, event):
         dx = event.x_root - self.resize_start_x
@@ -237,8 +313,8 @@ class ScreenTranslatorFrame(ctk.CTkToplevel):
     def start_resize_bottom(self, event):
         self.resize_start_y = event.y_root
         self.resize_start_height = self.winfo_height()
-        self.resize_win_x = self.winfo_x()
-        self.resize_win_y = self.winfo_y()
+        self.resize_win_x = self.winfo_rootx()
+        self.resize_win_y = self.winfo_rooty()
         
     def do_resize_bottom(self, event):
         dy = event.y_root - self.resize_start_y
@@ -252,6 +328,9 @@ class ScreenTranslatorFrame(ctk.CTkToplevel):
         self.is_translating = True
         self.btn_translate.configure(text="⌛")
         self.canvas.delete("all")
+        
+        # Save screenshot for color analysis
+        self.current_screenshot = cropped_image
         
         threading.Thread(target=self._run_precropped_translation_thread, args=(cropped_image,), daemon=True).start()
 
@@ -309,6 +388,9 @@ class ScreenTranslatorFrame(ctk.CTkToplevel):
             self.after(0, lambda: self.btn_translate.configure(text="🔄"))
             return
             
+        # Save screenshot for color analysis
+        self.current_screenshot = screenshot
+        
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
@@ -334,25 +416,28 @@ class ScreenTranslatorFrame(ctk.CTkToplevel):
             text = item["text"]
             x1, y1, x2, y2 = item["bbox"]
             
-            x1 = max(0, x1 - 2)
-            y1 = max(0, y1 - 2)
-            x2 = x2 + 2
-            y2 = y2 + 2
+            # Analyze background and foreground text colors (Google Lens style)
+            bg_color = "#FFFFFF"
+            fg_color = "#000000"
+            if hasattr(self, "current_screenshot") and self.current_screenshot:
+                bg_color, fg_color = analyze_colors(self.current_screenshot, (x1, y1, x2, y2))
             
+            # Draw seamless background rectangle without outline (erases original text)
             self.canvas.create_rectangle(
-                x1, y1, x2, y2,
-                fill="#0D0D0D",
-                outline="#007AFF",
-                width=1
+                x1 - 1, y1 - 1, x2 + 1, y2 + 1,
+                fill=bg_color,
+                outline="",
+                width=0
             )
             
+            # Draw translated text with the original color
             self.canvas.create_text(
                 (x1 + x2) / 2,
                 (y1 + y2) / 2,
                 text=text,
-                fill="#FFFFFF",
+                fill=fg_color,
                 font=("Segoe UI", 9, "bold"),
-                width=x2 - x1,
+                width=x2 - x1 + 4,
                 anchor="center"
             )
 

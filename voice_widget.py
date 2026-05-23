@@ -331,7 +331,6 @@ class VoiceAssistantApp(ctk.CTk):
 
         # Micro mode controls
         self.play_micro = ctk.CTkButton(self.top_bar, text="▶", width=30, height=30, corner_radius=6, fg_color="#007AFF", font=ctk.CTkFont(size=18), command=self.toggle_play_pause)
-        self.stop_micro = ctk.CTkButton(self.top_bar, text="■", width=30, height=30, corner_radius=6, fg_color="#c0392b", font=ctk.CTkFont(size=18), command=self.stop_speech)
 
         # Full mode header
         self.full_header = ctk.CTkFrame(self.top_bar, fg_color="transparent")
@@ -352,15 +351,12 @@ class VoiceAssistantApp(ctk.CTk):
         
         self.btn_mini_voice = ctk.CTkButton(self.right_frame, text="🔊", width=30, height=30, corner_radius=6, fg_color="#222", hover_color="#333", font=ctk.CTkFont(size=16), command=self.show_voice_overlay)
         self.btn_mini_speed = ctk.CTkButton(self.right_frame, text=f"{self.current_rate}x", width=45, height=30, corner_radius=6, fg_color="#222", hover_color="#333", font=ctk.CTkFont(size=12, weight="bold"), command=self.show_speed_overlay)
-        self.c_action_btn = ctk.CTkButton(self.right_frame, text="■", width=30, height=30, corner_radius=6, fg_color="#c0392b", font=ctk.CTkFont(size=18), command=self.stop_speech)
         self.play_mini = ctk.CTkButton(self.right_frame, text="▶", width=30, height=30, corner_radius=6, fg_color="#007AFF", font=ctk.CTkFont(size=18), command=self.toggle_play_pause)
 
-        # Order: Voice -> Speed -> Stop -> Play
+        # Order: Voice -> Speed -> Play
         self.btn_mini_voice.pack(side="left", padx=2)
         self.btn_mini_speed.pack(side="left", padx=2)
-        self.c_action_btn.pack(side="left", padx=2)
         self.play_mini.pack(side="left", padx=2)
-        self.c_action_btn.pack_forget() # Hidden initially
 
         # --- Mini Scrubber ---
         self.scrub_container_mini = ctk.CTkFrame(self, fg_color="transparent", height=20, cursor="hand2")
@@ -396,7 +392,7 @@ class VoiceAssistantApp(ctk.CTk):
         self.text_box._textbox.tag_lower("buffered")
 
         self.footer = ctk.CTkFrame(self, fg_color="#181818", corner_radius=15, height=80)
-        self.footer.grid_columnconfigure((0,1,2,3), weight=1) # Ensure columns stretch properly
+        self.footer.grid_columnconfigure((0,1,2), weight=1) # Ensure columns stretch properly
 
         self.btn_voice = ctk.CTkButton(self.footer, text=f"🔊 {self.current_voice.split(' ')[0]}", width=40, height=35, corner_radius=10, fg_color="#222", hover_color="#333", font=ctk.CTkFont(size=12), command=self.show_voice_overlay)
         self.btn_voice.grid(row=1, column=0, padx=15, pady=(15, 15), sticky="w")
@@ -404,11 +400,8 @@ class VoiceAssistantApp(ctk.CTk):
         self.btn_speed = ctk.CTkButton(self.footer, text=f"⚡ {self.current_rate}x", width=40, height=35, corner_radius=10, fg_color="#222", hover_color="#333", font=ctk.CTkFont(size=12), command=self.show_speed_overlay)
         self.btn_speed.grid(row=1, column=1, padx=0, pady=(15, 15), sticky="w")
 
-        self.btn_stop = ctk.CTkButton(self.footer, text="■", width=40, height=35, corner_radius=10, fg_color="#c0392b", hover_color="#e74c3c", font=ctk.CTkFont(size=22), command=self.stop_speech)
-        self.btn_stop.grid(row=1, column=2, padx=10, pady=(15, 15))
-
         self.play_main = ctk.CTkButton(self.footer, text="▶ ПЛЕЙ", width=90, height=35, corner_radius=10, fg_color="#007AFF", font=ctk.CTkFont(size=14, weight="bold"), command=self.toggle_play_pause)
-        self.play_main.grid(row=1, column=3, padx=15, pady=(15, 15), sticky="e")
+        self.play_main.grid(row=1, column=2, padx=15, pady=(15, 15), sticky="e")
 
         # --- Full Scrubber ---
         self.scrub_container_full = ctk.CTkFrame(self.footer, fg_color="transparent", height=20, cursor="hand2")
@@ -426,7 +419,7 @@ class VoiceAssistantApp(ctk.CTk):
         self.scrub_thumb_full.bind("<B1-Motion>", lambda e: self.on_scrub_drag(e, "full"))
         self.scrub_thumb_full.bind("<ButtonRelease-1>", self.on_scrub_end)
         
-        self.scrub_container_full.grid(row=0, column=0, columnspan=4, sticky="ew", padx=15, pady=(15, 0))
+        self.scrub_container_full.grid(row=0, column=0, columnspan=3, sticky="ew", padx=15, pady=(15, 0))
         
         # Right click context menu binding for widgets
         self.bind_right_click(self)
@@ -473,7 +466,6 @@ class VoiceAssistantApp(ctk.CTk):
         self.btn_settings.grid_forget()
         self.btn_clear.grid_forget()
         self.play_micro.grid_forget()
-        self.stop_micro.grid_forget()
         self.mini_center.grid_forget()
         self.right_frame.grid_forget()
         self.scrub_container_mini.pack_forget()
@@ -548,7 +540,7 @@ class VoiceAssistantApp(ctk.CTk):
                 
         elif mode == "micro":
             self.overrideredirect(True)
-            self.geometry("210x60")
+            self.geometry("170x60")
             
             self.grid_rowconfigure(0, weight=1)
             self.grid_rowconfigure(1, weight=0)
@@ -557,7 +549,7 @@ class VoiceAssistantApp(ctk.CTk):
             self.drag_h.grid(row=0, column=0, padx=5)
             self.btn_restore.grid(row=0, column=1, padx=3)
             self.btn_to_full.grid(row=0, column=2, padx=3)
-            self.play_micro.grid(row=0, column=5, padx=3)
+            self.play_micro.grid(row=0, column=4, padx=3)
             
             # Configure top_bar column weights for micro mode
             self.top_bar.grid_columnconfigure(0, weight=0)
@@ -565,10 +557,6 @@ class VoiceAssistantApp(ctk.CTk):
             self.top_bar.grid_columnconfigure(2, weight=0)
             self.top_bar.grid_columnconfigure(3, weight=1) # spacer
             self.top_bar.grid_columnconfigure(4, weight=0)
-            self.top_bar.grid_columnconfigure(5, weight=0)
-            
-            if self.is_speaking:
-                self.stop_micro.grid(row=0, column=4, padx=3)
             
         if not initial:
             self.after(50, self.deiconify)
@@ -971,13 +959,9 @@ class VoiceAssistantApp(ctk.CTk):
         self.buffer_prog_mini.set(0)
         self.update_thumb_pos(0)
         
-        self.c_action_btn.pack(side="left", padx=2, before=self.play_mini)
-        
         if self.display_mode == "mini":
             self.c_status.pack_forget()
             self.scrub_container_mini.pack(in_=self.mini_center, fill="x", expand=True)
-        elif self.display_mode == "micro":
-            self.stop_micro.grid(row=0, column=4, padx=3)
             
         while not self.item_queue.empty(): self.item_queue.get()
         threading.Thread(target=self.producer_thread, args=(self.current_sentences, start_idx, reuse_cache), daemon=True).start()
@@ -1006,9 +990,7 @@ class VoiceAssistantApp(ctk.CTk):
         if hasattr(self, 'play_micro'):
             self.play_micro.configure(text="▶")
         
-        self.c_action_btn.pack_forget()
-        if hasattr(self, 'stop_micro'):
-            self.stop_micro.grid_forget()
+
             
         if self.display_mode == "mini":
             self.scrub_container_mini.pack_forget()
