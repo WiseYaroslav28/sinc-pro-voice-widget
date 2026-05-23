@@ -688,7 +688,7 @@ class VoiceAssistantApp(ctk.CTk):
         ctk.CTkLabel(self.overlay_frame, text="Wise Yaroslav", font=ctk.CTkFont(size=12, weight="bold")).pack()
         
         ctk.CTkLabel(self.overlay_frame, text="Текущая версия:", font=ctk.CTkFont(size=10, weight="bold"), text_color="#888").pack(pady=(10, 0))
-        ctk.CTkLabel(self.overlay_frame, text="v3.1.0-WIP (2026-05-23)", font=ctk.CTkFont(size=12)).pack()
+        ctk.CTkLabel(self.overlay_frame, text="v3.1.0 (2026-05-23)", font=ctk.CTkFont(size=12)).pack()
         
         ctk.CTkLabel(self.overlay_frame, text="GitHub Репозиторий:", font=ctk.CTkFont(size=10, weight="bold"), text_color="#888").pack(pady=(10, 0))
         
