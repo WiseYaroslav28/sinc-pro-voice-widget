@@ -234,6 +234,8 @@ class VoiceAssistantApp(ctk.CTk):
         self.translation_engine = "google_cache"
         self.ollama_model = "gemma2"
         self.ollama_url = "http://localhost:11434"
+        self.msty_model = "Gemma 4"
+        self.msty_url = "http://localhost:8080"
         try:
             if os.path.exists(SETTINGS_FILE):
                 with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
@@ -248,6 +250,8 @@ class VoiceAssistantApp(ctk.CTk):
                     self.translation_engine = data.get("translation_engine", "google_cache")
                     self.ollama_model = data.get("ollama_model", "gemma2")
                     self.ollama_url = data.get("ollama_url", "http://localhost:11434")
+                    self.msty_model = data.get("msty_model", "Gemma 4")
+                    self.msty_url = data.get("msty_url", "http://localhost:8080")
                     # Auto-fix old conflicting hotkey if present in settings file
                     if self.translate_hotkey == "ctrl+shift+t":
                         self.translate_hotkey = "ctrl+alt+t"
@@ -266,7 +270,9 @@ class VoiceAssistantApp(ctk.CTk):
                     "speak_hotkey": self.speak_hotkey,
                     "translation_engine": self.translation_engine,
                     "ollama_model": self.ollama_model,
-                    "ollama_url": self.ollama_url
+                    "ollama_url": self.ollama_url,
+                    "msty_model": self.msty_model,
+                    "msty_url": self.msty_url
                 }, f)
         except: pass
 
@@ -689,7 +695,7 @@ class VoiceAssistantApp(ctk.CTk):
         md_switch.pack(pady=5)
         
         # Target language for translation
-        ctk.CTkLabel(self.overlay_frame, text="Язык перевода экрана:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(10, 2))
+        ctk.CTkLabel(self.overlay_frame, text="Язык перевода экрана:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(5, 2))
         langs = {"Русский": "ru", "English": "en", "Deutsch": "de", "Français": "fr", "Español": "es", "Chinese": "zh-CN"}
         curr_lang_name = "Русский"
         for name, code in langs.items():
@@ -699,21 +705,33 @@ class VoiceAssistantApp(ctk.CTk):
         self.lang_option = ctk.CTkOptionMenu(self.overlay_frame, values=list(langs.keys()), command=self.change_translate_lang)
         self.lang_option.set(curr_lang_name)
         self.lang_option.pack(pady=2)
+
+        # Translation engine setting
+        ctk.CTkLabel(self.overlay_frame, text="Движок перевода:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(5, 2))
+        engines = {"Google Translate": "google_cache", "Argos (Оффлайн)": "argos", "Msty / Local API": "msty", "Ollama": "ollama"}
+        curr_eng_name = "Google Translate"
+        for name, code in engines.items():
+            if code == self.translation_engine:
+                curr_eng_name = name
+                break
+        self.engine_option = ctk.CTkOptionMenu(self.overlay_frame, values=list(engines.keys()))
+        self.engine_option.set(curr_eng_name)
+        self.engine_option.pack(pady=2)
         
         # Translate hotkey setting
-        ctk.CTkLabel(self.overlay_frame, text="Хоткей перевода экрана:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(10, 2))
+        ctk.CTkLabel(self.overlay_frame, text="Хоткей перевода экрана:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(5, 2))
         self.hotkey_entry = ctk.CTkEntry(self.overlay_frame, width=150, placeholder_text="ctrl+shift+t")
         self.hotkey_entry.insert(0, self.translate_hotkey)
         self.hotkey_entry.pack(pady=2)
         
         # Speak hotkey setting
-        ctk.CTkLabel(self.overlay_frame, text="Хоткей озвучки текста:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(10, 2))
+        ctk.CTkLabel(self.overlay_frame, text="Хоткей озвучки текста:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(5, 2))
         self.speak_hotkey_entry = ctk.CTkEntry(self.overlay_frame, width=150, placeholder_text="ctrl+shift")
         self.speak_hotkey_entry.insert(0, self.speak_hotkey)
         self.speak_hotkey_entry.pack(pady=2)
         
         # Save & Close button
-        ctk.CTkButton(self.overlay_frame, text="СОХРАНИТЬ И ЗАКРЫТЬ", height=28, corner_radius=6, fg_color="#007AFF", hover_color="#005BBB", command=self.save_and_close_overlay).pack(pady=15)
+        ctk.CTkButton(self.overlay_frame, text="СОХРАНИТЬ И ЗАКРЫТЬ", height=28, corner_radius=6, fg_color="#007AFF", hover_color="#005BBB", command=self.save_and_close_overlay).pack(pady=10)
 
     def change_translate_lang(self, name):
         langs = {"Русский": "ru", "English": "en", "Deutsch": "de", "Français": "fr", "Español": "es", "Chinese": "zh-CN"}
@@ -731,6 +749,11 @@ class VoiceAssistantApp(ctk.CTk):
             shk = self.speak_hotkey_entry.get().strip().lower()
             if shk:
                 self.speak_hotkey = shk
+        if hasattr(self, "engine_option"):
+            engines = {"Google Translate": "google_cache", "Argos (Оффлайн)": "argos", "Msty / Local API": "msty", "Ollama": "ollama"}
+            sel_eng = self.engine_option.get()
+            self.translation_engine = engines.get(sel_eng, "google_cache")
+            
         self.save_settings()
         self.close_overlay()
 
@@ -838,12 +861,18 @@ class VoiceAssistantApp(ctk.CTk):
             def on_area_selected(x, y, w, h, cropped_img):
                 if x is not None:
                     from screen_translator import ScreenTranslatorFrame
-                    win_h = h + 28 + 2 * 5
-                    win_w = w + 2 * 5
+                    # Рамки по 5 пикселей, верхний отступ под тулбар 28 пикселей.
+                    win_w = w + 10
+                    win_h = h + 38
                     win_x = x - 5
-                    win_y = y - 28 - 5
+                    win_y = y - 33
                     
-                    self.screen_translator_win = ScreenTranslatorFrame(self, translate_to=self.translate_to)
+                    self.screen_translator_win = ScreenTranslatorFrame(
+                        self, 
+                        translate_to=self.translate_to, 
+                        target_x=x, 
+                        target_y=y
+                    )
                     self.screen_translator_win.geometry(f"{win_w}x{win_h}+{win_x}+{win_y}")
                     self.screen_translator_win.focus()
                     self.screen_translator_win.translate_precropped(cropped_img)

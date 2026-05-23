@@ -25,7 +25,73 @@ if sys.platform.startswith("win"):
         except:
             pass
 
+from ctypes import wintypes
+
+def get_virtual_screen_origin():
+    try:
+        user32 = ctypes.windll.user32
+        vx = user32.GetSystemMetrics(76) # SM_XVIRTUALSCREEN
+        vy = user32.GetSystemMetrics(77) # SM_YVIRTUALSCREEN
+        return vx, vy
+    except Exception as e:
+        print(f"Error in get_virtual_screen_origin: {e}")
+        return 0, 0
+
+def wrap_text(text, font, max_width):
+    words = text.split(' ')
+    lines = []
+    current_line = []
+    
+    for word in words:
+        test_line = ' '.join(current_line + [word])
+        try:
+            # Pillow 10+
+            draw_temp = ImageDraw.Draw(Image.new("RGB", (1,1)))
+            left, top, right, bottom = draw_temp.textbbox((0, 0), test_line, font=font)
+            w = right - left
+        except:
+            try:
+                w, _ = font.getsize(test_line)
+            except:
+                w = len(test_line) * (font.size * 0.55)
+                
+        if w <= max_width:
+            current_line.append(word)
+        else:
+            if current_line:
+                lines.append(' '.join(current_line))
+                current_line = [word]
+            else:
+                lines.append(word)
+                current_line = []
+                
+    if current_line:
+        lines.append(' '.join(current_line))
+    return lines
+
+def get_canvas_physical_pos(canvas):
+    try:
+        hwnd = canvas.winfo_id()
+        class POINT(ctypes.Structure):
+            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+        pt = POINT(0, 0)
+        ctypes.windll.user32.ClientToScreen(hwnd, ctypes.byref(pt))
+        return pt.x, pt.y
+    except Exception as e:
+        # Так как log_debug определен ниже, выведем в консоль
+        print(f"Error in get_canvas_physical_pos: {e}")
+        return canvas.winfo_rootx(), canvas.winfo_rooty()
+
 import ocr_translation
+
+def log_debug(message):
+    try:
+        import os
+        log_path = r"c:\Antigravity projects\voice-server\debug.log"
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}\n")
+    except Exception as e:
+        print(f"Log error: {e}")
 
 def analyze_colors(image, bbox):
     try:
@@ -172,6 +238,8 @@ class AreaSelector(tk.Toplevel):
         )
 
     def on_drag(self, event):
+        if self.start_x is None or self.start_y is None:
+            return
         cur_x, cur_y = event.x, event.y
         x1 = min(self.start_x, cur_x)
         y1 = min(self.start_y, cur_y)
@@ -190,6 +258,10 @@ class AreaSelector(tk.Toplevel):
         self.canvas.itemconfig(self.rect_image_id, image=self.active_photo_image)
 
     def on_release(self, event):
+        if self.start_x is None or self.start_y is None:
+            self.destroy()
+            self.on_selected(None, None, None, None, None)
+            return
         cur_x, cur_y = event.x, event.y
         x1 = min(self.start_x, cur_x)
         y1 = min(self.start_y, cur_y)
@@ -215,12 +287,24 @@ class AreaSelector(tk.Toplevel):
 
 
 class ScreenTranslatorFrame(tk.Toplevel):
-    def __init__(self, master, translate_to="ru"):
+    def get_scale_factor(self):
+        try:
+            dpi = self.winfo_fpixels('1i')
+            scale = dpi / 96.0
+            if 0.5 <= scale <= 4.0:
+                return scale
+        except Exception as e:
+            print(f"Error getting scale factor: {e}")
+        return 1.0
+
+    def __init__(self, master, translate_to="ru", target_x=None, target_y=None):
         # Проверяем, является ли master корректным виджетом tkinter, иначе передаем None
         tcl_master = master if isinstance(master, (tk.Misc, ctk.CTk, ctk.CTkToplevel)) else None
         super().__init__(tcl_master)
         self.master = master
         self.translate_to = translate_to
+        self.target_x = target_x
+        self.target_y = target_y
         
         self.overrideredirect(True)
         self.attributes("-topmost", True)
@@ -292,6 +376,40 @@ class ScreenTranslatorFrame(tk.Toplevel):
         
         # Запуск фонового отслеживания изменений экрана
         self.after(800, self.check_screen_changes)
+        
+        # Запуск калибровки положения окна
+        self.after(50, self.align_canvas)
+
+    def align_canvas(self):
+        if getattr(self, "target_x", None) is None or getattr(self, "target_y", None) is None:
+            return
+        
+        self.update_idletasks()
+        self.update()
+        
+        # Получаем реальные физические координаты Canvas на экране
+        real_x, real_y = get_canvas_physical_pos(self.canvas)
+        
+        # Вычисляем разницу в физических пикселях
+        dx_phys = self.target_x - real_x
+        dy_phys = self.target_y - real_y
+        
+        if abs(dx_phys) > 1 or abs(dy_phys) > 1:
+            geom = self.geometry().split('+')
+            try:
+                cur_x = int(geom[1])
+                cur_y = int(geom[2])
+            except:
+                cur_x = self.winfo_x()
+                cur_y = self.winfo_y()
+            
+            # Так как процесс DPI-aware, geometry() принимает физические пиксели напрямую.
+            dx = dx_phys
+            dy = dy_phys
+            
+            self.geometry(f"+{int(cur_x + dx)}+{int(cur_y + dy)}")
+            self.update()
+            log_debug(f"align_canvas: aligned by dx={dx}, dy={dy}. Target: {self.target_x},{self.target_y}. Real was: {real_x},{real_y}")
 
     def setup_toolbar(self):
         self.lbl_title = ctk.CTkLabel(self.toolbar, text=" ⛶ SINC TRANSLATE", font=ctk.CTkFont(size=10, weight="bold"), text_color="#007AFF")
@@ -395,13 +513,24 @@ class ScreenTranslatorFrame(tk.Toplevel):
             
         if self.auto_scan and not self.is_translating and not getattr(self, "need_update_translation", False):
             try:
-                canvas_x = self.canvas.winfo_rootx()
-                canvas_y = self.canvas.winfo_rooty()
+                # Обрабатываем все события перемещения окна, чтобы получить свежие координаты
+                self.update()
+                canvas_x, canvas_y = get_canvas_physical_pos(self.canvas)
                 canvas_w = self.canvas.winfo_width()
                 canvas_h = self.canvas.winfo_height()
                 
                 if canvas_w > 10 and canvas_h > 10:
-                    current_img = ImageGrab.grab(bbox=(canvas_x, canvas_y, canvas_x + canvas_w, canvas_y + canvas_h))
+                    # Обходим баг Pillow с отрицательными координатами:
+                    # Делаем полноэкранный снимок виртуального экрана и вырезаем Canvas по координатам
+                    vx, vy = get_virtual_screen_origin()
+                    full_screenshot = ImageGrab.grab(all_screens=True)
+                    
+                    crop_x1 = canvas_x - vx
+                    crop_y1 = canvas_y - vy
+                    crop_x2 = crop_x1 + canvas_w
+                    crop_y2 = crop_y1 + canvas_h
+                    
+                    current_img = full_screenshot.crop((crop_x1, crop_y1, crop_x2, crop_y2))
                     # Даунсэмплинг для быстрой обработки и исключения шумов
                     small_img = current_img.resize((32, 32)).convert("L")
                     pixels = list(small_img.getdata())
@@ -547,8 +676,25 @@ class ScreenTranslatorFrame(tk.Toplevel):
         self.is_translating = True
         self.btn_translate.configure(text="⌛")
         self.canvas.delete("all")
+        
+        # Принудительно обновляем геометрию окна, чтобы winfo_width() вернул реальные размеры
+        self.update_idletasks()
+        self.update()
+        
+        canvas_w = max(self.canvas.winfo_width(), self.winfo_width() - 2 * self.border_width)
+        canvas_h = max(self.canvas.winfo_height(), self.winfo_height() - 2 * self.border_width - 28)
+        self.canvas.create_text(
+            canvas_w / 2, 
+            canvas_h / 2, 
+            text="⏳ Перевод...", 
+            font=("Segoe UI", 24, "bold"), 
+            fill="#007AFF", 
+            justify="center",
+            tags="loading"
+        )
         self.current_screenshot = cropped_image
         
+        log_debug(f"translate_precropped: starting thread, image size={cropped_image.size}")
         threading.Thread(target=self._run_precropped_translation_thread, args=(cropped_image,), daemon=True).start()
 
     def _run_precropped_translation_thread(self, cropped_image):
@@ -558,13 +704,18 @@ class ScreenTranslatorFrame(tk.Toplevel):
             engine_type = getattr(self.master, "translation_engine", "google_cache")
             ollama_model = getattr(self.master, "ollama_model", "gemma2")
             ollama_url = getattr(self.master, "ollama_url", "http://localhost:11434")
+            msty_model = getattr(self.master, "msty_model", "local-model")
+            msty_url = getattr(self.master, "msty_url", "http://localhost:8080")
+            
             data = loop.run_until_complete(
                 ocr_translation.perform_ocr_and_translation(
                     cropped_image, 
                     self.translate_to,
                     engine_type=engine_type,
                     ollama_model=ollama_model,
-                    ollama_url=ollama_url
+                    ollama_url=ollama_url,
+                    msty_model=msty_model,
+                    msty_url=msty_url
                 )
             )
             self.after(0, lambda: self.finish_translation(data))
@@ -580,29 +731,48 @@ class ScreenTranslatorFrame(tk.Toplevel):
         
         self.is_translating = True
         self.btn_translate.configure(text="⌛")
-        self.canvas.delete("all")
         
-        # Все операции с GUI (скрытие, координаты, скриншот, показ) выполняются СТРОГО в главном потоке
+        # Делаем холст прозрачным и очищаем
+        self.canvas.delete("all")
+        self.canvas_images.clear()
+        
+        # Получаем координаты и размеры холста Canvas ДО скрытия окна!
+        # Сначала принудительно обновляем события Tkinter, чтобы применить перемещение
+        self.update()
+        canvas_x, canvas_y = get_canvas_physical_pos(self.canvas)
+        canvas_w = self.canvas.winfo_width()
+        canvas_h = self.canvas.winfo_height()
+        
+        log_debug(f"translate_area: physical pos = ({canvas_x}, {canvas_y}), size = {canvas_w}x{canvas_h}")
+        
+        # Скрываем окно переводчика гарантированным способом
+        self.withdraw()
+        self.update()
+        time.sleep(0.18) # Даем DWM время скрыть окно перед скриншотом
+        
         screenshot = None
         try:
-            self.update_idletasks()
-            self.withdraw()
-            self.update() # Принудительно скрываем окно в менеджере окон
-            time.sleep(0.15) # Даем DWM время гарантированно скрыть окно перед захватом
-            
-            canvas_x = self.canvas.winfo_rootx()
-            canvas_y = self.canvas.winfo_rooty()
-            canvas_w = self.canvas.winfo_width()
-            canvas_h = self.canvas.winfo_height()
-            
             if canvas_w > 10 and canvas_h > 10:
-                screenshot = ImageGrab.grab(bbox=(canvas_x, canvas_y, canvas_x + canvas_w, canvas_y + canvas_h))
+                # Обходим баг Pillow с отрицательными координатами:
+                # Делаем полноэкранный снимок виртуального экрана и вырезаем Canvas по координатам
+                vx, vy = get_virtual_screen_origin()
+                full_screenshot = ImageGrab.grab(all_screens=True)
+                
+                crop_x1 = canvas_x - vx
+                crop_y1 = canvas_y - vy
+                crop_x2 = crop_x1 + canvas_w
+                crop_y2 = crop_y1 + canvas_h
+                
+                screenshot = full_screenshot.crop((crop_x1, crop_y1, crop_x2, crop_y2))
         except Exception as e:
+            log_debug(f"Error capturing screen in translate_area: {e}")
             print(f"Error capturing screen in translate_area: {e}")
-        finally:
-            self.deiconify()
-            self.attributes("-topmost", True)
-            self.update()
+            
+        # Восстанавливаем видимость окна переводчика на экране
+        self.deiconify()
+        self.attributes("-topmost", True)
+        self.focus_force()
+        self.update()
         
         if screenshot is None:
             self.is_translating = False
@@ -611,7 +781,20 @@ class ScreenTranslatorFrame(tk.Toplevel):
             
         self.current_screenshot = screenshot
         
-        # Запускаем фоновый поток только для тяжелых вычислений (OCR и перевод)
+        # Рисуем индикатор загрузки после снятия скриншота
+        canvas_w = max(self.canvas.winfo_width(), self.winfo_width() - 2 * self.border_width)
+        canvas_h = max(self.canvas.winfo_height(), self.winfo_height() - 2 * self.border_width - 28)
+        self.canvas.create_text(
+            canvas_w / 2, 
+            canvas_h / 2, 
+            text="⏳ Перевод...", 
+            font=("Segoe UI", 24, "bold"), 
+            fill="#007AFF", 
+            justify="center",
+            tags="loading"
+        )
+        self.update()
+        
         threading.Thread(target=self._run_translation_thread, args=(screenshot,), daemon=True).start()
 
     def _run_translation_thread(self, screenshot):
@@ -621,13 +804,18 @@ class ScreenTranslatorFrame(tk.Toplevel):
             engine_type = getattr(self.master, "translation_engine", "google_cache")
             ollama_model = getattr(self.master, "ollama_model", "gemma2")
             ollama_url = getattr(self.master, "ollama_url", "http://localhost:11434")
+            msty_model = getattr(self.master, "msty_model", "local-model")
+            msty_url = getattr(self.master, "msty_url", "http://localhost:8080")
+            
             data = loop.run_until_complete(
                 ocr_translation.perform_ocr_and_translation(
                     screenshot, 
                     self.translate_to,
                     engine_type=engine_type,
                     ollama_model=ollama_model,
-                    ollama_url=ollama_url
+                    ollama_url=ollama_url,
+                    msty_model=msty_model,
+                    msty_url=msty_url
                 )
             )
             self.after(0, lambda: self.finish_translation(data))
@@ -638,135 +826,284 @@ class ScreenTranslatorFrame(tk.Toplevel):
             loop.close()
 
     def finish_translation(self, data):
+        log_debug(f"finish_translation: received data: {data}")
         self.is_translating = False
         self.btn_translate.configure(text="🔄")
         if data is not None:
             self.last_translated_data = data
             self.show_translation = True
             self.draw_translations()
+        else:
+            log_debug("finish_translation: data is None!")
 
     def draw_translations(self):
+        log_debug(f"draw_translations: show_translation={self.show_translation}, data size={len(self.last_translated_data) if self.last_translated_data else 0}")
         self.canvas.delete("all")
         self.canvas_images.clear()
         
         if not self.show_translation or not self.last_translated_data:
             self.last_screen_hash = None
+            log_debug("draw_translations: show_translation is False or data is empty. Exiting.")
             return
             
-        for item in self.last_translated_data:
+        # Так как процесс полностью DPI-aware, координаты Canvas 1:1 соответствуют физическим пикселям
+        scale = 1.0
+        canvas_h_phys = self.canvas.winfo_height()
+        canvas_w = self.canvas.winfo_width()
+        
+        for i, item in enumerate(self.last_translated_data):
             text = item["text"]
             original_text = item.get("original_text", "")
+            log_debug(f"Block {i}: original='{original_text}', translated='{text}'")
             
             if not text or text.strip().lower() == original_text.strip().lower():
+                log_debug(f"Block {i}: text matches original (or empty). Skipping.")
                 continue
                 
             x1, y1, x2, y2 = item["bbox"]
+            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
             w = x2 - x1
             h = y2 - y1
+            orig_line_h = item.get("line_height", h)
+            log_debug(f"Block {i} coordinates: bbox={item['bbox']}, w={w}, h={h}, orig_line_h={orig_line_h}")
             
-            # Анализируем цвет фона и оригинального текста
+            if w <= 0 or h <= 0:
+                log_debug(f"Block {i}: invalid width/height. Skipping.")
+                continue
+                
+            # --- Умный расчет свободного пространства (Smart Padding) ---
+            min_dist_right = max(0, canvas_w - x2) # до правого края Canvas
+            
+            for idx, other_item in enumerate(self.last_translated_data):
+                if idx == i:
+                    continue
+                ox1, oy1, ox2, oy2 = other_item["bbox"]
+                ox1, oy1, ox2, oy2 = int(ox1), int(oy1), int(ox2), int(oy2)
+                
+                # Проверяем пересечение по вертикали (на той же высоте)
+                y_overlap = not (oy2 + 2 <= y1 or oy1 - 2 >= y2)
+                if y_overlap:
+                    if ox1 >= x2:
+                        dist = ox1 - x2
+                        if dist < min_dist_right:
+                            min_dist_right = dist
+                            
+            # Безопасный зазор справа 4 пикселя
+            extra_w_right = max(0, min_dist_right - 4)
+            
+            # Ограничиваем расширение вправо: до 45% от ширины, но не менее 40px
+            max_ext_r = max(40, int(w * 0.45))
+            extra_w_right = min(extra_w_right, max_ext_r)
+            
+            draw_x1 = x1
+            draw_x2 = x2 + extra_w_right
+            draw_w = draw_x2 - draw_x1
+            
+            # Ищем свободное пространство снизу в новых границах draw_x1..draw_x2
+            min_dist_to_next = max(0, canvas_h_phys - y2)
+            for idx, other_item in enumerate(self.last_translated_data):
+                if idx == i:
+                    continue
+                ox1, oy1, ox2, oy2 = other_item["bbox"]
+                ox1, oy1, ox2, oy2 = int(ox1), int(oy1), int(ox2), int(oy2)
+                
+                if oy1 >= y2:
+                    # Проверяем пересечение по горизонтали в расширенных границах
+                    x_overlap = not (ox2 <= draw_x1 or ox1 >= draw_x2)
+                    if x_overlap:
+                        dist = oy1 - y2
+                        if dist < min_dist_to_next:
+                            min_dist_to_next = dist
+                            
+            # Безопасный зазор снизу 6 пикселей
+            extra_h_down = max(0, min_dist_to_next - 6)
+            
+            # Ограничиваем вертикальное расширение
+            if h > 40:
+                max_ext_d = int(h * 1.5)
+            else:
+                max_ext_d = max(30, h)
+            extra_h_down = min(extra_h_down, max_ext_d)
+            
+            draw_h = h + extra_h_down
+            log_debug(f"Block {i}: draw_x1={draw_x1}, draw_x2={draw_x2}, draw_w={draw_w}, extra_h_down={extra_h_down}, draw_h={draw_h}")
+            
             bg_color = "#FFFFFF"
             fg_color = "#000000"
             if hasattr(self, "current_screenshot") and self.current_screenshot:
                 bg_color, fg_color = analyze_colors(self.current_screenshot, (x1, y1, x2, y2))
+                log_debug(f"Block {i} colors: bg={bg_color}, fg={fg_color}")
+            else:
+                log_debug(f"Block {i}: current_screenshot missing!")
             
-            draw_w = max(w + 30, int(w * 1.35))
-            
-            # Создаем блок с переводом
             block_img = None
+            text_box_coords = None
             if hasattr(self, "current_screenshot") and self.current_screenshot:
                 try:
                     sc_w, sc_h = self.current_screenshot.size
-                    crop_x2 = min(sc_w, x1 + draw_w)
+                    crop_x2 = max(0, min(sc_w, draw_x2))
+                    crop_y2 = max(0, min(sc_h, y2 + extra_h_down))
                     
-                    if crop_x2 > x1 and y2 > y1:
-                        block = self.current_screenshot.crop((x1, y1, crop_x2, y2))
+                    if crop_x2 > x1 and crop_y2 > y1:
+                        # Вырезаем область плашки
+                        block = self.current_screenshot.crop((x1, y1, crop_x2, crop_y2))
+                        log_debug(f"Block {i}: cropped successfully. size={block.size}")
                         
                         if opencv_available:
-                            # OpenCV inpainting для стирания оригинального текста в границах (0, 0, w, h)
                             block_cv = cv2.cvtColor(np.array(block), cv2.COLOR_RGB2BGR)
-                            
-                            # Парсим bg_color в RGB
                             bg_rgb = tuple(int(bg_color[i:i+2], 16) for i in (1, 3, 5))
                             bg_b, bg_g, bg_r = bg_rgb[2], bg_rgb[1], bg_rgb[0]
                             
-                            # Маска для текста: пиксели, отличающиеся от фона
+                            # Маска только для оригинальной области текста (от 0 до w)
                             mask = np.zeros(block_cv.shape[:2], dtype=np.uint8)
-                            diff = np.abs(block_cv[:, :w].astype(np.int32) - [bg_b, bg_g, bg_r])
+                            diff = np.abs(block_cv[:h, :w].astype(np.int32) - [bg_b, bg_g, bg_r])
                             mask_text = np.any(diff > 35, axis=-1).astype(np.uint8) * 255
-                            mask[:, :w] = mask_text
+                            mask[:h, :w] = mask_text
                             
-                            # Слегка расширяем маску
                             kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
                             mask = cv2.dilate(mask, kernel, iterations=1)
                             
                             inpainted = cv2.inpaint(block_cv, mask, 3, cv2.INPAINT_TELEA)
                             block_clean = Image.fromarray(cv2.cvtColor(inpainted, cv2.COLOR_BGR2RGB))
                         else:
-                            # Fallback без OpenCV: просто заливаем цветом фона
-                            block_clean = Image.new("RGB", (crop_x2 - x1, y2 - y1), bg_color)
+                            block_clean = Image.new("RGB", (crop_x2 - x1, draw_h), bg_color)
                             
-                        # Рисуем переведенный текст на очищенном фоне
                         draw = ImageDraw.Draw(block_clean)
-                        font_size = max(8, int(h * 0.72))
                         
-                        try:
-                            font = ImageFont.truetype("segoeui.ttf", font_size)
-                        except IOError:
+                        # Динамически подбираем шрифт, чтобы текст влез с учетом переносов
+                        font_size = max(10, int(orig_line_h * 1.15))
+                        wrapped_lines = []
+                        line_height = 0
+                        total_text_h = 0
+                        line_spacing = 0
+                        y_pos_start = 0
+                        
+                        while font_size > 8:
                             try:
-                                font = ImageFont.truetype("arial.ttf", font_size)
+                                font = ImageFont.truetype("segoeui.ttf", font_size)
                             except IOError:
-                                font = ImageFont.load_default()
-                                
-                        # Центрируем текст по вертикали
-                        try:
-                            left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
-                            text_h = bottom - top
-                            y_pos = (h - text_h) // 2 - top
-                        except AttributeError:
+                                try:
+                                    font = ImageFont.truetype("arial.ttf", font_size)
+                                except IOError:
+                                    font = ImageFont.load_default()
+                                    break
+                                    
+                            wrapped_lines = wrap_text(text, font, draw_w - 6)
+                            
                             try:
-                                _, text_h = font.getsize(text)
-                                y_pos = (h - text_h) // 2
+                                left_t, top_t, right_t, bottom_t = draw.textbbox((0, 0), "Abc", font=font)
+                                single_line_h = bottom_t - top_t
                             except:
-                                y_pos = (h - font_size) // 2
-                                
-                        draw.text((2, y_pos), text, fill=fg_color, font=font)
+                                try:
+                                    _, single_line_h = font.getsize("Abc")
+                                except:
+                                    single_line_h = font_size
+                                    
+                            line_spacing = int(single_line_h * 0.15)
+                            line_height = single_line_h + line_spacing
+                            total_text_h = len(wrapped_lines) * line_height - line_spacing
+                            
+                            # Вычисляем Y-координату начала первой строки перевода
+                            # Первая строка перевода выравнивается по центру оригинальной строки
+                            y_pos_start = max(0, (orig_line_h - single_line_h) // 2)
+                            
+                            # Если по высоте текст помещается в draw_h, выходим из цикла
+                            if y_pos_start + total_text_h <= draw_h - 2:
+                                break
+                            font_size -= 1
+                            
+                        y_pos = y_pos_start
+                        left_min = draw_w
+                        right_max = 0
+                        
+                        for line in wrapped_lines:
+                            # Рисуем с отступом в 3 пикселя слева
+                            draw.text((3, y_pos), line, fill=fg_color, font=font)
+                            try:
+                                l_b, t_b, r_b, b_b = draw.textbbox((3, y_pos), line, font=font)
+                                if l_b < left_min: left_min = l_b
+                                if r_b > right_max: right_max = r_b
+                            except:
+                                pass
+                            y_pos += line_height
+                            
+                        text_box_coords = (left_min, y_pos_start, right_max, y_pos - line_spacing)
                         block_img = block_clean
+                        log_debug(f"Block {i}: PIL rendering completed. font_size={font_size}, lines={len(wrapped_lines)}")
                 except Exception as e:
+                    log_debug(f"Block {i}: Error rendering block: {e}")
                     print(f"Error rendering block: {e}")
                     
             if block_img is not None:
+                log_debug(f"Block {i}: block_img is valid, drawing Image on Canvas")
+                if self.show_highlight and text_box_coords is not None:
+                    block_rgba = block_img.convert("RGBA")
+                    glow = Image.new("RGBA", block_rgba.size, (0, 0, 0, 0))
+                    draw_glow = ImageDraw.Draw(glow)
+                    
+                    try:
+                        left, top, right, bottom = text_box_coords
+                        # Мягкое градиентное неоновое свечение (4 слоя)
+                        for r_offset, alpha in [(4, 8), (3, 16), (2, 32), (1, 64)]:
+                            draw_glow.rounded_rectangle(
+                                [left - r_offset, top - r_offset, right + r_offset, bottom + r_offset],
+                                radius=4 + r_offset,
+                                fill=(0, 122, 255, alpha // 4),
+                                outline=(0, 122, 255, alpha),
+                                width=1
+                            )
+                    except AttributeError:
+                        for r_offset, alpha in [(4, 8), (3, 16), (2, 32), (1, 64)]:
+                            draw_glow.rounded_rectangle(
+                                [0 - r_offset, 0 - r_offset, glow.width - 1 + r_offset, glow.height - 1 + r_offset],
+                                radius=4 + r_offset,
+                                fill=(0, 122, 255, alpha // 4),
+                                outline=(0, 122, 255, alpha),
+                                width=1
+                            )
+                        
+                    block_img = Image.alpha_composite(block_rgba, glow).convert("RGB")
+                    
                 img_tk = ImageTk.PhotoImage(block_img)
                 self.canvas_images.append(img_tk)
-                self.canvas.create_image(x1, y1, image=img_tk, anchor="nw")
+                log_x1 = draw_x1 / scale
+                log_y1 = y1 / scale
+                self.canvas.create_image(log_x1, log_y1, image=img_tk, anchor="nw")
             else:
-                # Абсолютный fallback: стандартный Tkinter текст, если PIL-рисунок не удался
+                # Fallback: стандартный Tkinter текст
+                log_debug(f"Block {i}: block_img is None! Using Tkinter fallback.")
+                log_x1 = x1 / scale
+                log_y1 = y1 / scale
+                log_x2 = draw_x2 / scale
+                log_y2 = (y1 + draw_h) / scale
+                log_draw_w = draw_w / scale
+                
                 self.canvas.create_rectangle(
-                    x1 - 3, y1 - 2, x1 + draw_w + 3, y2 + 2,
+                    log_x1, log_y1, log_x2, log_y2,
                     fill=bg_color,
                     outline="",
                     width=0
                 )
-                font_size = max(8, int(h * 0.72))
+                
+                font_size_px = max(10, int(orig_line_h * 1.15))
+                log_font_size_px = int(font_size_px / scale)
+                
                 self.canvas.create_text(
-                    x1,
-                    (y1 + y2) / 2,
+                    log_x1 + 3,
+                    log_y1 + (orig_line_h / 2) / scale,
                     text=text,
                     fill=fg_color,
-                    font=("Segoe UI", -font_size, "bold"),
-                    width=draw_w,
+                    font=("Segoe UI", -log_font_size_px, "bold"),
+                    width=log_draw_w - 6,
                     anchor="w"
                 )
+                if self.show_highlight:
+                    self.canvas.create_rectangle(
+                        log_x1 - 2, log_y1 - 2, log_x2 + 2, log_y2 + 2,
+                        outline="#007AFF",
+                        width=1.5
+                    )
                 
-            # Если включена подсветка, рисуем синюю рамку вокруг оригинальной области текста
-            if self.show_highlight:
-                self.canvas.create_rectangle(
-                    x1 - 2, y1 - 2, x2 + 2, y2 + 2,
-                    outline="#007AFF",
-                    width=1.5
-                )
-                
-        # Сбрасываем хэш изменений
         self.last_screen_hash = None
 
     def toggle_visibility(self):

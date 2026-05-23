@@ -15,3 +15,17 @@ dist/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Project logs, settings and DBs
+debug.log
+test_run.log
+settings.json
+translation_cache.db
+test_input.png
+test_grouping_input.png
+test_tr.txt
+test_tr2.txt
+test_*.py
+test_*.log
+test_*.png
+test_*.txt
