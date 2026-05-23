@@ -517,7 +517,7 @@ class ScreenTranslatorFrame(tk.Toplevel):
         new_h = max(self.min_height, self.resize_start_h + dy)
         self.geometry(f"{new_w}x{new_h}+{self.resize_win_x}+{self.resize_win_y}")
 
-    # --- Процесс перевода ---
+    # --- Процесс перевода (Потокобезопасная реализация) ---
     def translate_precropped(self, cropped_image):
         if self.is_translating:
             return
@@ -535,15 +535,12 @@ class ScreenTranslatorFrame(tk.Toplevel):
             data = loop.run_until_complete(
                 ocr_translation.perform_ocr_and_translation(cropped_image, self.translate_to)
             )
-            self.last_translated_data = data
-            self.show_translation = True
-            self.after(0, self.draw_translations)
+            self.after(0, lambda: self.finish_translation(data))
         except Exception as e:
             print(f"Error during translation process: {e}")
+            self.after(0, lambda: self.finish_translation(None))
         finally:
             loop.close()
-            self.is_translating = False
-            self.after(0, lambda: self.btn_translate.configure(text="🔄"))
 
     def translate_area(self):
         if self.is_translating:
@@ -553,50 +550,58 @@ class ScreenTranslatorFrame(tk.Toplevel):
         self.btn_translate.configure(text="⌛")
         self.canvas.delete("all")
         
-        threading.Thread(target=self._run_translation_thread, daemon=True).start()
-
-    def _run_translation_thread(self):
+        # Все операции с GUI (скрытие, координаты, скриншот, показ) выполняются СТРОГО в главном потоке
         self.update_idletasks()
+        self.withdraw()
+        self.update() # Принудительно скрываем окно в менеджере окон
+        time.sleep(0.15) # Даем DWM время гарантированно скрыть окно перед захватом
         
-        # Скрываем рамку для чистого захвата экрана под ней
-        self.attributes("-alpha", 0.0)
-        time.sleep(0.08)
-        
+        screenshot = None
         try:
             canvas_x = self.canvas.winfo_rootx()
             canvas_y = self.canvas.winfo_rooty()
             canvas_w = self.canvas.winfo_width()
             canvas_h = self.canvas.winfo_height()
             
-            screenshot = ImageGrab.grab(bbox=(canvas_x, canvas_y, canvas_x + canvas_w, canvas_y + canvas_h))
+            if canvas_w > 10 and canvas_h > 10:
+                screenshot = ImageGrab.grab(bbox=(canvas_x, canvas_y, canvas_x + canvas_w, canvas_y + canvas_h))
         except Exception as e:
-            screenshot = None
             print(f"Error capturing screen: {e}")
             
-        self.attributes("-alpha", 1.0)
+        self.deiconify()
+        self.attributes("-topmost", True)
         
         if screenshot is None:
             self.is_translating = False
-            self.after(0, lambda: self.btn_translate.configure(text="🔄"))
+            self.btn_translate.configure(text="🔄")
             return
             
         self.current_screenshot = screenshot
         
+        # Запускаем фоновый поток только для тяжелых вычислений (OCR и перевод)
+        threading.Thread(target=self._run_translation_thread, args=(screenshot,), daemon=True).start()
+
+    def _run_translation_thread(self, screenshot):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
             data = loop.run_until_complete(
                 ocr_translation.perform_ocr_and_translation(screenshot, self.translate_to)
             )
-            self.last_translated_data = data
-            self.show_translation = True
-            self.after(0, self.draw_translations)
+            self.after(0, lambda: self.finish_translation(data))
         except Exception as e:
             print(f"Error during translation process: {e}")
+            self.after(0, lambda: self.finish_translation(None))
         finally:
             loop.close()
-            self.is_translating = False
-            self.after(0, lambda: self.btn_translate.configure(text="🔄"))
+
+    def finish_translation(self, data):
+        self.is_translating = False
+        self.btn_translate.configure(text="🔄")
+        if data is not None:
+            self.last_translated_data = data
+            self.show_translation = True
+            self.draw_translations()
 
     def draw_translations(self):
         self.canvas.delete("all")
@@ -610,35 +615,49 @@ class ScreenTranslatorFrame(tk.Toplevel):
             w = x2 - x1
             h = y2 - y1
             
-            # Анализируем цвет фона и текста
+            # Анализируем цвет фона и оригинального текста
             bg_color = "#FFFFFF"
             fg_color = "#000000"
             if hasattr(self, "current_screenshot") and self.current_screenshot:
                 bg_color, fg_color = analyze_colors(self.current_screenshot, (x1, y1, x2, y2))
             
-            # Рисуем подложку точного цвета фона без каёмок (эффект «закрашивания»)
+            # Динамически вычисляем базовый размер шрифта под высоту строки (в пикселях!)
+            font_size = max(6, int(h * 0.65))
+            
+            # Если перевод длиннее оригинального текста, уменьшаем шрифт для лучшей читаемости
+            orig_text = item.get("original_text", "")
+            if orig_text:
+                len_orig = len(orig_text)
+                len_trans = len(text)
+                if len_trans > len_orig and len_orig > 0:
+                    ratio = len_trans / len_orig
+                    if ratio > 1.2:
+                        font_size = max(6, int(font_size * 0.8))
+            
+            # Разрешаем тексту быть немного шире оригинального бокса, чтобы избежать некрасивых переносов
+            draw_w = max(w + 30, int(w * 1.3))
+            
+            # Рисуем подложку точного цвета фона без каёмок (эффект полного закрашивания)
+            half_diff = (draw_w - w) / 2
             self.canvas.create_rectangle(
-                x1 - 1, y1 - 1, x2 + 1, y2 + 1,
+                x1 - half_diff - 2, y1 - 2, x2 + half_diff + 2, y2 + 2,
                 fill=bg_color,
                 outline="",
                 width=0
             )
             
-            # Динамически вычисляем размер шрифта под высоту строки (Google Lens style)
-            font_size = max(6, int(h * 0.65))
-            
-            # Отрисовываем перевод оригинальным цветом текста
+            # Отрисовываем перевод (отрицательный font_size задает размер шрифта в пикселях!)
             self.canvas.create_text(
                 (x1 + x2) / 2,
                 (y1 + y2) / 2,
                 text=text,
                 fill=fg_color,
-                font=("Segoe UI", font_size, "bold"),
-                width=w + 10,
+                font=("Segoe UI", -font_size, "bold"),
+                width=draw_w,
                 anchor="center"
             )
             
-        # Сбрасываем хэш, чтобы избежать ложных детекций изменений от только что нарисованного перевода
+        # Сбрасываем хэш изменений, чтобы следующая проверка началась с нового стабильного кадра
         self.last_screen_hash = None
 
     def toggle_visibility(self):
