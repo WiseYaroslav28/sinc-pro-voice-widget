@@ -11,7 +11,7 @@
 
 ### ✨ Ключевые возможности
 
-*   **Перевод экрана в реальном времени [В стадии доработки / WIP] (v3.3.0):** Интерактивная рамка `⛶ A文` для перевода любой области экрана. Рамку можно перемещать и растягивать. Она полностью прозрачна для кликов (click-through) — вы можете продолжать работать с элементами под ней. Переведенный текст накладывается плашками поверх оригинала. По кнопке 🔊 перевод мгновенно передается в основной плеер и озвучивается.
+*   **Перевод экрана в реальном времени [В стадии доработки / WIP] (v3.3.0):** Интерактивная рамка `⛶ A文` для перевода любой области экрана. Рамку можно перемещать и растягивать. Она полностью прозрачна для кликов (click-through) — вы можете продолжать работать с элементами под ней. Распознанный текст подсвечивается при наведении, перевод показывается во всплывающих подсказках (ПКМ) или быстро озвучивается (ЛКМ).
 *   **Контекстное меню быстрого доступа (v3.0.0):** Клик правой кнопкой мыши по виджету в режимах Mini и Micro opens удобное меню для переключения режимов или закрытия приложения.
 *   **Глобальный доступ отовсюду:** Выделите текст в **любой** программе, нажмите комбинацию клавиш — и программа мгновенно начнет его читать.
 *   **Нейросетевые голоса:** Использование Microsoft Edge TTS обеспечивает премиальное естественное звучание. Поддерживаются русский, английский, немецкий, французский, испанский, китайский и другие языки. Вы можете легко добавлять новые языки и голоса в словари программы.
@@ -31,16 +31,14 @@
 
 #### Что реализовано на данный момент:
 1.  **Офлайн-распознавание текста (OCR):** Быстрый захват и распознавание текста на базе встроенного в Windows 10/11 WinRT API (работает без подключения к интернету).
-2.  **Объединение строк в абзацы (Connected Components):** Продвинутый алгоритм на основе графа смежности. Он автоматически связывает строки одного абзаца даже в многоколоночных макетах (например, списки, блоки кода, меню), предотвращая некорректное склеивание соседних колонок.
-3.  **Бесшовная подмена текста:** Автоматическое определение цвета шрифта и фона оригинального текста для создания плашки с переводом, которая сливается с фоном страницы.
-4.  **Умный расчет свободного места (Smart Padding):** Плашка перевода может безопасно расширяться вправо и вниз в свободные зоны экрана, чтобы вместить более длинный русский перевод.
-5.  **Фильтрация графического мусора:** Автоматическая очистка OCR-текста от мусорных одиночных символов на границах строк (например, убираются буквы-иконки вроде "R", "C", распознанные вместо графических элементов).
+2.  **Объединение строк в абзацы (Connected Components):** Продвинутый алгоритм на основе графа смежности. Он автоматически связывает строки одного абзаца даже в многоколоночных макетах, предотвращая некорректное склеивание соседних колонок.
+3.  **Интерактивный оверлей чтения:** Вместо ресурсоемкого замазывания оригинального текста плашками реализована легкая неоновая обводка предложений. Цвет рамок автоматически адаптируется под яркость фона (светлый/темный) для комфортного чтения.
+4.  **Всплывающий перевод (Tooltips):** Клик правой кнопкой мыши по предложению открывает стильное всплывающее окно у курсора с переводом на русский язык.
+5.  **Быстрая озвучка перевода:** Клик левой кнопкой мыши по предложению мгновенно озвучивает его перевод, а `Ctrl` + клик ЛКМ — читает оригинальный английский текст.
 6.  **Поддержка мультимониторных систем:** Точный захват и калибровка координат окна Canvas (1:1 физические пиксели) на нескольких экранах, включая мониторы с отрицательными координатами.
 
-#### Известные проблемы и ограничения (будут исправлены в следующей версии):
-*   **Вписывание текста в мелкие объекты:** Русский перевод часто длиннее английского оригинала. Алгоритм вписывания текста в кнопки и узкие элементы интерфейса еще не идеален — текст внутри плашки может смещаться вниз или вправо, предложения могут компоноваться не вполне эстетично.
-*   **Магнитирование плашек:** В некоторых сложных интерфейсах плашки перевода могут «магнититься» со смещением относительно оригинальных слов.
-*   **Нахлесты на иконки:** Если иконка кнопки расположена слишком близко к тексту, возможен частичный нахлест фона плашки на иконку.
+#### Известные проблемы и ограничения:
+*   **Игнорирование графических элементов:** Некоторые сложные иконки интерфейсов с текстом могут распознаваться как буквы-символы, однако большинство таких случаев отсекается встроенной фильтрацией.
 
 ---
 
@@ -66,7 +64,7 @@ This project was developed with special care and attention to people with **dysl
 
 ### ✨ Key Features
 
-*   **Real-time Screen Translator [Work In Progress / WIP] (v3.3.0):** An interactive crop frame `⛶ A文` to translate any screen region. The frame is resizable and moveable. It is completely click-through — you can scroll and click elements underneath it. Translated text is overlaid on patches. Click 🔊 to instantly forward and speak the translation.
+*   **Real-time Screen Translator [Work In Progress / WIP] (v3.3.0):** An interactive crop frame `⛶ A文` to translate any screen region. The frame is resizable and moveable. It is completely click-through — you can scroll and click elements underneath it. Recognized text is adaptively highlighted on hover; the translation is displayed in a tooltip (Right Click) or spoken aloud (Left Click).
 *   **Quick Access Context Menu (v3.0.0):** Right-click the widget in Mini and Micro modes to toggle UI modes or exit the app.
 *   **Global Access Everywhere:** Highlight text in **any** application, press the hotkey, and the program will instantly start reading it aloud.
 *   **Premium Neural Voices:** Powered by Microsoft Edge TTS for natural, human-like sound. It supports English, Russian, German, French, Spanish, Chinese, and many more. You can easily add new voices to the dictionary.
@@ -86,16 +84,14 @@ The Screen Translator feature is currently in active development and refinement.
 
 #### What is implemented so far:
 1.  **Offline Text Recognition (OCR):** High-speed, internet-free text capture powered by Windows 10/11 WinRT OCR API.
-2.  **Paragraph Merging (Connected Components):** Advanced adjacency-graph-based merging. Automatically groups lines of the same paragraph, even in multi-column layouts (e.g. lists, menus, code blocks), preventing columns from blending together.
-3.  **Seamless Text Overlay:** Automatic color detection for text and background to match the style of the page.
-4.  **Smart Padding:** The translation patches can safely expand to the right and down to accommodate longer Russian text.
-5.  **OCR Noise Filtering:** Cleans recognized text of single-letter noise at the edges of strings (e.g. removes "R" or "C" captured instead of button icons).
+2.  **Paragraph Merging (Connected Components):** Advanced adjacency-graph-based merging. Automatically groups lines of the same paragraph, even in multi-column layouts, preventing columns from blending together.
+3.  **Interactive Reading Overlay:** Instead of heavy overlay patches, a lightweight neon border is drawn around recognized sentences. The border color adaptively changes depending on background brightness.
+4.  **Pop-up Translation (Tooltips):** Right-click any sentence to open a sleek pop-up window with the Russian translation near the cursor.
+5.  **Quick Voice Reading:** Left-click any sentence to instantly speak its translation, or `Ctrl` + Left Click to read the original English text.
 6.  **Multi-Monitor Support:** Precise canvas coordinate calibration (1:1 physical pixels) on secondary screens, including screens with negative coordinates.
 
-#### Known Issues and Limitations (to be fixed in the next version):
-*   **Text fitting in small objects:** Russian translation is often longer than English. Text layout inside buttons and narrow elements is not yet perfect — text can shift down or right, and line wrapping can look uneven.
-*   **Patch snap offset:** In complex interfaces, translation patches might snap with a slight offset relative to the original text.
-*   **Icon overlaps:** Background patches may occasionally overlap adjacent icons if the OCR bounding box borders are close to the icon.
+#### Known Issues and Limitations:
+*   **Graphical element noise:** Certain complex UI icons containing text characters might be misidentified by OCR as single letters, though most of these are cleared by the built-in filtering.
 
 ---
 
