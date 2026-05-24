@@ -126,45 +126,41 @@ def analyze_colors(image, bbox):
 # --- Glow Underline Palettes ---
 # Каждый слой: (dy — смещение вниз, width — толщина линии, color — цвет, stipple — паттерн прозрачности)
 PALETTE_EN_DARK = [   # 🔵 Английские слова — тёмный фон
-    (4, 8,  "#007CFF", "gray12"),   # outer glow (почти прозрачный)
-    (2, 5,  "#16F2FF", "gray25"),   # near glow (мягкий)
-    (0, 2,  "#00D7FF", ""),         # core (яркий)
+    (1, 3.0, "#004C80", ""),   # Мягкое темное свечение-подложка
+    (0, 1.5, "#00B2FF", ""),   # Четкое ядро приглушенного голубого цвета
 ]
 PALETTE_EN_LIGHT = [  # 🔵 Английские слова — светлый фон
-    (4, 6,  "#8CEBFF", "gray12"),
-    (2, 4,  "#0088C8", "gray25"),
-    (0, 2,  "#005DFF", ""),
+    (1, 3.0, "#8CEBFF", ""),
+    (0, 1.5, "#0077D6", ""),
 ]
 PALETTE_RU_DARK = [   # 🟣 Русские слова — тёмный фон
-    (4, 8,  "#6F45D6", "gray12"),
-    (2, 5,  "#D2B6FF", "gray25"),
-    (0, 2,  "#A875FF", ""),
+    (1, 3.0, "#3C2080", ""),   # Мягкое темно-фиолетовое свечение
+    (0, 1.5, "#8E52FF", ""),   # Четкое ядро приглушенного фиолетового цвета
 ]
 PALETTE_RU_LIGHT = [  # 🟣 Русские слова — светлый фон
-    (4, 6,  "#C7B5FF", "gray12"),
-    (2, 4,  "#7D55E8", "gray25"),
-    (0, 2,  "#5B35C8", ""),
+    (1, 3.0, "#E0D8FF", ""),
+    (0, 1.5, "#6A3ED6", ""),
 ]
-# Hover — усиленные палитры (ярче и толще)
+# Hover — усиленные палитры (ярче и толще, без stipple)
 PALETTE_EN_HOVER_DARK = [
-    (5, 12, "#007CFF", "gray25"),
-    (3, 7,  "#16F2FF", "gray50"),
-    (0, 3,  "#FFFFFF", ""),
+    (2, 7.0, "#0059B3", ""),   # Широкая подложка глубокого синего цвета
+    (1, 4.0, "#00D9FF", ""),   # Яркий голубой переход
+    (0, 2.0, "#FFFFFF", ""),   # Белое ядро фокуса
 ]
 PALETTE_EN_HOVER_LIGHT = [
-    (5, 10, "#8CEBFF", "gray25"),
-    (3, 6,  "#0088C8", "gray50"),
-    (0, 3,  "#003399", ""),
+    (2, 6.0, "#8CEBFF", ""),
+    (1, 4.0, "#0088C8", ""),
+    (0, 2.0, "#002B80", ""),
 ]
 PALETTE_RU_HOVER_DARK = [
-    (5, 12, "#6F45D6", "gray25"),
-    (3, 7,  "#D2B6FF", "gray50"),
-    (0, 3,  "#FFFFFF", ""),
+    (2, 7.0, "#5027A3", ""),   # Широкая подложка глубокого фиолетового цвета
+    (1, 4.0, "#B880FF", ""),   # Яркий фиолетовый переход
+    (0, 2.0, "#FFFFFF", ""),   # Белое ядро фокуса
 ]
 PALETTE_RU_HOVER_LIGHT = [
-    (5, 10, "#C7B5FF", "gray25"),
-    (3, 6,  "#7D55E8", "gray50"),
-    (0, 3,  "#3A1D8E", ""),
+    (2, 6.0, "#C7B5FF", ""),
+    (1, 4.0, "#7D55E8", ""),
+    (0, 2.0, "#2E1575", ""),
 ]
 
 def _is_latin_word(text):
@@ -296,8 +292,8 @@ class TranslationTooltip(tk.Toplevel):
         
         # Вычисляем размеры тултипа
         self.update_idletasks()
-        w = 420  # Фиксированная ширина для размещения всех кнопок в ряд
-        h = 150  # Фиксированная высота для текстового поля и кнопок
+        w = 430  # Чуть увеличим ширину для свободного размещения кнопок в ряд
+        h = max(170, self.border_frame.winfo_reqheight() + 12)  # Адаптивная высота с учетом DPI
         
         # Positioning
         self.geometry(f"{w}x{h}+{x + 15}+{y + 10}")
@@ -632,6 +628,9 @@ class ScreenTranslatorFrame(tk.Toplevel):
         # State
         self.click_lock_active = False # Режим интерактива/блокировки кликов
         self.show_highlight = True # Показывать ли подсветку вообще
+        self.show_word_lines = True
+        self.show_flow_threads = True
+        self.hovered_sentence = None
         self.last_translated_data = []
         self.is_translating = False
         self.need_update_translation = False
@@ -683,7 +682,7 @@ class ScreenTranslatorFrame(tk.Toplevel):
         self.toolbar.pack_propagate(False)
         
         # Canvas
-        self.canvas = tk.Canvas(self.center_container, bg="#000001", highlightthickness=0)
+        self.canvas = tk.Canvas(self.center_container, bg="#000001", highlightthickness=0, borderwidth=0)
         self.canvas.pack(fill="both", expand=True)
         
         self.setup_toolbar()
@@ -769,6 +768,20 @@ class ScreenTranslatorFrame(tk.Toplevel):
         self.btn_highlight.pack(side="right", padx=3, pady=3)
         self.btn_highlight.bind("<Enter>", lambda e: self.lbl_title.configure(text="Показать/скрыть рамки распознавания (✨)"))
         self.btn_highlight.bind("<Leave>", lambda e: self.lbl_title.configure(text=" ⛶ SINC READ & TRANSLATE"))
+
+        self.btn_words = ctk.CTkButton(self.toolbar, text="Aa", width=24, height=22, corner_radius=4,
+                                       fg_color="#007AFF", text_color="#ffffff", font=ctk.CTkFont(size=11, weight="bold"),
+                                       command=self.toggle_word_lines)
+        self.btn_words.pack(side="right", padx=3, pady=3)
+        self.btn_words.bind("<Enter>", lambda e: self.lbl_title.configure(text="Показать/скрыть подчеркивание слов (Aa)"))
+        self.btn_words.bind("<Leave>", lambda e: self.lbl_title.configure(text=" ⛶ SINC READ & TRANSLATE"))
+
+        self.btn_flow = ctk.CTkButton(self.toolbar, text="〰", width=24, height=22, corner_radius=4,
+                                      fg_color="#007AFF", text_color="#ffffff", font=ctk.CTkFont(size=12),
+                                      command=self.toggle_flow_threads)
+        self.btn_flow.pack(side="right", padx=3, pady=3)
+        self.btn_flow.bind("<Enter>", lambda e: self.lbl_title.configure(text="Показать/скрыть ниточки предложений (〰)"))
+        self.btn_flow.bind("<Leave>", lambda e: self.lbl_title.configure(text=" ⛶ SINC READ & TRANSLATE"))
         
         self.btn_auto = ctk.CTkButton(self.toolbar, text="⚡", width=24, height=22, corner_radius=4,
                                       fg_color="transparent", hover_color="#333", text_color="#aaa", font=ctk.CTkFont(size=12),
@@ -802,6 +815,7 @@ class ScreenTranslatorFrame(tk.Toplevel):
             # Reset hover states
             self.last_hovered_word = None
             self.last_hovered_idx = None
+            self.hovered_sentence = None
             self.canvas.configure(cursor="")
             
         self.draw_translations()
@@ -812,6 +826,22 @@ class ScreenTranslatorFrame(tk.Toplevel):
             self.btn_highlight.configure(fg_color="#007AFF", text_color="#ffffff")
         else:
             self.btn_highlight.configure(fg_color="transparent", text_color="#aaa")
+        self.draw_translations()
+
+    def toggle_word_lines(self):
+        self.show_word_lines = not self.show_word_lines
+        if self.show_word_lines:
+            self.btn_words.configure(fg_color="#007AFF", text_color="#ffffff")
+        else:
+            self.btn_words.configure(fg_color="transparent", text_color="#aaa")
+        self.draw_translations()
+
+    def toggle_flow_threads(self):
+        self.show_flow_threads = not self.show_flow_threads
+        if self.show_flow_threads:
+            self.btn_flow.configure(fg_color="#007AFF", text_color="#ffffff")
+        else:
+            self.btn_flow.configure(fg_color="transparent", text_color="#aaa")
         self.draw_translations()
 
     def setup_drag_and_resize(self):
@@ -1186,6 +1216,68 @@ class ScreenTranslatorFrame(tk.Toplevel):
                 tags="error"
             )
 
+    def prepare_sentence_data(self):
+        if not self.last_translated_data:
+            return
+        for block_idx, item in enumerate(self.last_translated_data):
+            words = item.get("words", [])
+            if not words:
+                continue
+            
+            # 1. Объединяем слова в единый текст с сохранением границ слов
+            full_text = ""
+            word_spans = []
+            for w in words:
+                start = len(full_text)
+                full_text += w["text"]
+                end = len(full_text)
+                word_spans.append((start, end))
+                full_text += " " # пробел между словами
+            
+            # 2. Сегментируем текст на предложения
+            sentence_ranges = []
+            try:
+                import pysbd
+                # Определяем язык
+                latin_chars = sum(1 for c in full_text if ('a' <= c.lower() <= 'z'))
+                cyrillic_chars = sum(1 for c in full_text if ('а' <= c.lower() <= 'я' or c.lower() == 'ё'))
+                lang = "ru" if cyrillic_chars > latin_chars else "en"
+                
+                segmenter = pysbd.Segmenter(language=lang, clean=False, char_span=True)
+                spans = segmenter.segment(full_text)
+                sentence_ranges = [(span.start, span.end) for span in spans]
+            except Exception as e:
+                print(f"Error using pysbd in screen_translator: {e}")
+                import re
+                for m in re.finditer(r'[^.!?]+[.!?]*', full_text):
+                    sentence_ranges.append((m.start(), m.end()))
+            
+            if not sentence_ranges:
+                sentence_ranges = [(0, len(full_text))]
+                
+            # 3. Распределяем слова по предложениям
+            sentences = [[] for _ in range(len(sentence_ranges))]
+            for w_idx, (w_start, w_end) in enumerate(word_spans):
+                w_mid = (w_start + w_end) / 2.0
+                matched = False
+                for s_idx, (s_start, s_end) in enumerate(sentence_ranges):
+                    if s_start <= w_mid <= s_end:
+                        sentences[s_idx].append(w_idx)
+                        matched = True
+                        break
+                if not matched:
+                    sentences[-1].append(w_idx)
+            
+            # Убираем пустые списки
+            sentences = [s for s in sentences if s]
+            
+            # 4. Записываем индексы предложений
+            for sent_idx, sent_words in enumerate(sentences):
+                for w_idx in sent_words:
+                    words[w_idx]["sentence_idx"] = sent_idx
+                    words[w_idx]["sentence_words"] = sent_words
+            item["sentences"] = sentences
+
     def draw_translations(self):
         self.canvas.delete("all")
         self.canvas_word_items.clear()
@@ -1194,7 +1286,18 @@ class ScreenTranslatorFrame(tk.Toplevel):
         if not self.show_highlight or not self.last_translated_data:
             return
             
+        self.prepare_sentence_data()
+        
         screenshot = getattr(self, "current_screenshot", None)
+        
+        SENTENCE_COLORS = [
+            "#FF2D55",  # Neon pink
+            "#007AFF",  # Neon blue
+            "#34C759",  # Neon green
+            "#FF9500",  # Neon orange
+            "#AF52DE",  # Neon purple
+            "#00C7BE"   # Neon teal
+        ]
         
         for block_idx, item in enumerate(self.last_translated_data):
             words = item.get("words", [])
@@ -1219,44 +1322,160 @@ class ScreenTranslatorFrame(tk.Toplevel):
                 self.canvas_word_items[(block_idx, 0)] = items
                 continue
             
-            for word_idx, word in enumerate(words):
-                wx1, wy1, wx2, wy2 = [int(v) for v in word["bbox"]]
-                w = wx2 - wx1
-                h = wy2 - wy1
-                if w <= 0 or h <= 0:
-                    continue
+            # --- 1. Группировка слов блока по визуальным строкам ---
+            block_lines = []
+            for w in words:
+                wx1, wy1, wx2, wy2 = [int(v) for v in w["bbox"]]
+                w_h = wy2 - wy1
+                w_mid = (wy1 + wy2) / 2.0
                 
-                # Определяем: латинское слово или кириллическое
-                is_latin = _is_latin_word(word["text"])
+                placed = False
+                for line in block_lines:
+                    ref_w = line[0]
+                    rx1, ry1, rx2, ry2 = [int(v) for v in ref_w["bbox"]]
+                    r_h = ry2 - ry1
+                    r_mid = (ry1 + ry2) / 2.0
+                    h_ref = max(w_h, r_h)
+                    
+                    if abs(w_mid - r_mid) < h_ref * 0.45:
+                        line.append(w)
+                        placed = True
+                        break
+                if not placed:
+                    block_lines.append([w])
+            
+            for line in block_lines:
+                line.sort(key=lambda w: w["bbox"][0])
+                max_wy2 = max(int(w["bbox"][3]) for w in line)
+                min_wy1 = min(int(w["bbox"][1]) for w in line)
+                mean_h = sum(int(w["bbox"][3]) - int(w["bbox"][1]) for w in line) / len(line)
+                line_y_base = max_wy2 + max(1, int(mean_h * 0.06))
+                line_y_top = min_wy1 - max(2, int(mean_h * 0.12))
+                line_y_mid = (min_wy1 + max_wy2) / 2.0
+                for w in line:
+                    w["y_base"] = line_y_base
+                    w["y_top"] = line_y_top
+                    w["y_mid"] = line_y_mid
+            
+            # --- 2. Отрисовка подчеркиваний слов ---
+            if self.show_word_lines:
+                for word_idx, word in enumerate(words):
+                    wx1, wy1, wx2, wy2 = [int(v) for v in word["bbox"]]
+                    w = wx2 - wx1
+                    h = wy2 - wy1
+                    if w <= 0 or h <= 0:
+                        continue
+                    
+                    is_latin = _is_latin_word(word["text"])
+                    brightness = _get_bg_brightness(screenshot, (wx1, wy1, wx2, wy2))
+                    
+                    if is_latin:
+                        palette = PALETTE_EN_DARK if brightness < 128 else PALETTE_EN_LIGHT
+                    else:
+                        palette = PALETTE_RU_DARK if brightness < 128 else PALETTE_RU_LIGHT
+                    
+                    y_base = word["y_base"]
+                    word_key = (block_idx, word_idx)
+                    tag = f"w_{block_idx}_{word_idx}"
+                    items = []
+                    
+                    for dy, width, color, stipple in palette:
+                        opts = {"fill": color, "width": width, "capstyle": tk.ROUND, "tags": tag}
+                        if stipple:
+                            opts["stipple"] = stipple
+                        item_id = self.canvas.create_line(
+                            wx1 - 2, y_base + dy,
+                            wx2 + 2, y_base + dy,
+                            **opts
+                        )
+                        items.append(item_id)
+                    
+                    self.canvas_word_items[word_key] = items
+            
+            # --- 3. Отрисовка штрихпунктирных нитей предложений ---
+            if self.show_flow_threads and "sentences" in item:
+                bx1, by1, bx2, by2 = [int(v) for v in item["bbox"]]
                 
-                # Определяем яркость фона
-                brightness = _get_bg_brightness(screenshot, (wx1, wy1, wx2, wy2))
-                
-                # Выбираем палитру
-                if is_latin:
-                    palette = PALETTE_EN_DARK if brightness < 128 else PALETTE_EN_LIGHT
-                else:
-                    palette = PALETTE_RU_DARK if brightness < 128 else PALETTE_RU_LIGHT
-                
-                # Позиция underline — чуть ниже нижней границы слова
-                y_base = wy2 + max(1, int(h * 0.06))
-                
-                word_key = (block_idx, word_idx)
-                tag = f"w_{block_idx}_{word_idx}"
-                items = []
-                
-                for dy, width, color, stipple in palette:
-                    opts = {"fill": color, "width": width, "capstyle": tk.ROUND, "tags": tag}
-                    if stipple:
-                        opts["stipple"] = stipple
-                    item_id = self.canvas.create_line(
-                        wx1 - 2, y_base + dy,
-                        wx2 + 2, y_base + dy,
-                        **opts
+                for sent_idx, sent_words_indices in enumerate(item["sentences"]):
+                    words_in_sent = [words[w_idx] for w_idx in sent_words_indices]
+                    if not words_in_sent:
+                        continue
+                        
+                    color = SENTENCE_COLORS[sent_idx % len(SENTENCE_COLORS)]
+                    tag_line = f"flow_line_{block_idx}_{sent_idx}"
+                    tag_marker = f"flow_marker_{block_idx}_{sent_idx}"
+                    
+                    # Рисуем стартовый кружок
+                    first_word = words_in_sent[0]
+                    fx1 = int(first_word["bbox"][0]) - 2
+                    fy = first_word["y_mid"]
+                    self.canvas.create_oval(
+                        fx1 - 3, fy - 3,
+                        fx1 + 3, fy + 3,
+                        fill=color, outline=color, width=1,
+                        tags=(tag_marker, "flow_marker")
                     )
-                    items.append(item_id)
-                
-                self.canvas_word_items[word_key] = items
+                    
+                    # Рисуем сегменты между последовательными словами
+                    for i in range(1, len(words_in_sent)):
+                        w_prev = words_in_sent[i-1]
+                        w_curr = words_in_sent[i]
+                        
+                        if w_prev["y_base"] == w_curr["y_base"]:
+                            # Слова на одной строке -> рисуем горизонтальный сегмент в пробеле
+                            x1 = int(w_prev["bbox"][2]) + 2
+                            x2 = int(w_curr["bbox"][0]) - 2
+                            y = w_curr["y_mid"]
+                            
+                            if x2 > x1:
+                                self.canvas.create_line(
+                                    x1, y, x2, y,
+                                    fill=color, width=2.0, dash=(4, 3),
+                                    capstyle=tk.ROUND, joinstyle=tk.ROUND,
+                                    tags=(tag_line, "flow_line")
+                                )
+                        else:
+                            # Переход на следующую строку
+                            x_end = int(w_prev["bbox"][2]) + 2
+                            y_end = w_prev["y_mid"]
+                            x_start = int(w_curr["bbox"][0]) - 2
+                            y_start = w_curr["y_mid"]
+                            
+                            y_top_next = w_curr.get("y_top", w_curr["y_base"] - 15)
+                            y_mid_gap = (w_prev["y_base"] + y_top_next) / 2.0
+                            
+                            x_right = bx2 + 10
+                            x_left = bx1 - 10
+                            
+                            coords = [
+                                x_end, y_end,
+                                x_right, y_end,
+                                x_right, y_mid_gap,
+                                x_left, y_mid_gap,
+                                x_left, y_start,
+                                x_start, y_start
+                            ]
+                            self.canvas.create_line(
+                                *coords,
+                                fill=color, width=2.0, dash=(4, 3),
+                                capstyle=tk.ROUND, joinstyle=tk.ROUND,
+                                tags=(tag_line, "flow_line")
+                            )
+                    
+                    # Рисуем конечный маркер-квадратик
+                    last_word = words_in_sent[-1]
+                    lx2 = int(last_word["bbox"][2]) + 2
+                    ly = last_word["y_mid"]
+                    self.canvas.create_rectangle(
+                        lx2 - 3, ly - 3,
+                        lx2 + 3, ly + 3,
+                        fill=color, outline=color, width=1,
+                        tags=(tag_marker, "flow_marker")
+                    )
+
+        # Поднимаем все нити на самый верхний слой Z-order
+        self.canvas.tag_raise("flow_line")
+        self.canvas.tag_raise("flow_marker")
 
         # Подсказка внизу canvas
         if self.last_translated_data:
@@ -1272,7 +1491,7 @@ class ScreenTranslatorFrame(tk.Toplevel):
                 
             self.canvas.create_text(
                 canvas_w / 2, 
-                canvas_h - 15, 
+                canvas_h - 26, 
                 text=hint_text, 
                 font=("Segoe UI", 9, "bold"), 
                 fill=hint_color, 
@@ -1317,10 +1536,30 @@ class ScreenTranslatorFrame(tk.Toplevel):
             if self.last_hovered_word is not None:
                 self._reset_word_hover(self.last_hovered_word)
             
+            # Сброс подсветки ниточки предложения
+            if getattr(self, "hovered_sentence", None) is not None:
+                old_block, old_sent = self.hovered_sentence
+                self.canvas.itemconfigure(f"flow_line_{old_block}_{old_sent}", width=2.0, dash=(4, 3))
+                self.canvas.itemconfigure(f"flow_marker_{old_block}_{old_sent}", width=1)
+                self.hovered_sentence = None
+            
             # Установка нового hover
             if word_hit is not None:
                 self._set_word_hover(word_hit)
                 self.canvas.configure(cursor="hand2")
+                
+                # Подсветка ниточки предложения
+                block_idx, word_idx = word_hit
+                item = self.last_translated_data[block_idx]
+                words = item.get("words", [])
+                if word_idx < len(words):
+                    sent_idx = words[word_idx].get("sentence_idx")
+                    if sent_idx is not None:
+                        self.canvas.itemconfigure(f"flow_line_{block_idx}_{sent_idx}", width=3.5, dash=())
+                        self.canvas.itemconfigure(f"flow_marker_{block_idx}_{sent_idx}", width=2)
+                        self.canvas.tag_raise(f"flow_line_{block_idx}_{sent_idx}")
+                        self.canvas.tag_raise(f"flow_marker_{block_idx}_{sent_idx}")
+                        self.hovered_sentence = (block_idx, sent_idx)
             else:
                 self.canvas.configure(cursor="")
             
@@ -1342,7 +1581,7 @@ class ScreenTranslatorFrame(tk.Toplevel):
         word = words[word_idx]
         wx1, wy1, wx2, wy2 = [int(v) for v in word["bbox"]]
         h = max(10, wy2 - wy1)
-        y_base = wy2 + max(1, int(h * 0.06))
+        y_base = word.get("y_base", wy2 + max(1, int(h * 0.06)))
         
         is_latin = _is_latin_word(word["text"])
         screenshot = getattr(self, "current_screenshot", None)
@@ -1367,9 +1606,12 @@ class ScreenTranslatorFrame(tk.Toplevel):
             item_id = self.canvas.create_line(wx1 - 2, y_base + dy, wx2 + 2, y_base + dy, **opts)
             items.append(item_id)
         self.canvas_word_items[word_key] = items
+        # Гарантируем, что нити предложений лежат поверх подсветки слов
+        self.canvas.tag_raise("flow_line")
+        self.canvas.tag_raise("flow_marker")
     
     def _reset_word_hover(self, word_key):
-        """Возвращает слово к обычному glow подчёркиванию."""
+        """Возвращает слово к обычному glow подчёркиванию или удаляет, если линии скрыты."""
         block_idx, word_idx = word_key
         if block_idx >= len(self.last_translated_data):
             return
@@ -1379,10 +1621,21 @@ class ScreenTranslatorFrame(tk.Toplevel):
         if word_idx >= len(words):
             return
         
+        # Если постоянные линии скрыты, при уходе мыши просто удаляем временную ховер-линию
+        if not self.show_word_lines:
+            if word_key in self.canvas_word_items:
+                for cid in self.canvas_word_items[word_key]:
+                    self.canvas.delete(cid)
+                del self.canvas_word_items[word_key]
+            # Даже если удалили ховер-линию, гарантируем Z-order нитей
+            self.canvas.tag_raise("flow_line")
+            self.canvas.tag_raise("flow_marker")
+            return
+            
         word = words[word_idx]
         wx1, wy1, wx2, wy2 = [int(v) for v in word["bbox"]]
         h = max(10, wy2 - wy1)
-        y_base = wy2 + max(1, int(h * 0.06))
+        y_base = word.get("y_base", wy2 + max(1, int(h * 0.06)))
         
         is_latin = _is_latin_word(word["text"])
         screenshot = getattr(self, "current_screenshot", None)
@@ -1407,6 +1660,9 @@ class ScreenTranslatorFrame(tk.Toplevel):
             item_id = self.canvas.create_line(wx1 - 2, y_base + dy, wx2 + 2, y_base + dy, **opts)
             items.append(item_id)
         self.canvas_word_items[word_key] = items
+        # Гарантируем, что нити предложений лежат поверх подсветки слов
+        self.canvas.tag_raise("flow_line")
+        self.canvas.tag_raise("flow_marker")
 
     # Legacy compatibility shims
     def set_hover_effect(self, idx):

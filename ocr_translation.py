@@ -294,42 +294,37 @@ async def run_ocr_on_file(file_path: str) -> list:
     median_word_height = statistics.median(all_word_heights) if all_word_heights else 18
     H = median_word_height
 
-    # 5. Группируем все слова по визуальным строкам с использованием вертикальной кластеризации
-    sorted_words = sorted(merged_words, key=lambda w: w["bbox"][1])
+    # 5. Группируем все слова по визуальным строкам с использованием соосности центров (виртуальных линий строк)
+    # Сортируем слова сначала по Y, а при равенстве - по X
+    sorted_words = sorted(merged_words, key=lambda w: (w["bbox"][1], w["bbox"][0]))
     lines_of_words = []
     
     for w in sorted_words:
-        wy = w["bbox"][1]
-        wh = w["bbox"][3] - w["bbox"][1]
-        if wh <= 0:
-            wh = H
-            
-        placed = False
-        for line in lines_of_words:
-            anchor = line[0]
-            ay = anchor["bbox"][1]
-            ah = anchor["bbox"][3] - anchor["bbox"][1]
-            if ah <= 0:
-                ah = H
+        w_x1, w_y1, w_x2, w_y2 = w["bbox"]
+        w_y_center = (w_y1 + w_y2) / 2.0
+        
+        best_line_idx = -1
+        min_dist = float('inf')
+        
+        for idx, line in enumerate(lines_of_words):
+            # Вычисляем текущий средний вертикальный центр виртуальной линии строки
+            line_y_center = sum((words_in_line["bbox"][1] + words_in_line["bbox"][3]) / 2.0 for words_in_line in line) / len(line)
+            dist = abs(line_y_center - w_y_center)
+            if dist < min_dist:
+                min_dist = dist
+                best_line_idx = idx
                 
-            overlap_y = max(0, min(ay + ah, wy + wh) - max(ay, wy))
-            min_h = min(ah, wh)
-            
-            if min_h > 0 and (overlap_y / min_h) > 0.4:
-                # Если один из символов очень низкий (например, подчеркивание) и полностью перекрывается по Y
-                is_sub_line = (overlap_y / min_h) > 0.9 and min_h <= 4
-                if is_sub_line or abs(wy - ay) < H * 0.8:
-                    line.append(w)
-                    placed = True
-                    break
-                    
-        if not placed:
+        # Порог H * 0.6 надежно захватывает мелкие символы (запятые, кавычки) в их строки,
+        # но не позволяет объединять слова с соседних строк (где расстояние > 1.3 * H)
+        if best_line_idx != -1 and min_dist < H * 0.6:
+            lines_of_words[best_line_idx].append(w)
+        else:
             lines_of_words.append([w])
             
     for line in lines_of_words:
         line.sort(key=lambda w: w["bbox"][0])
         
-    lines_of_words.sort(key=lambda r: sum(w["bbox"][1] for w in r) / len(r))
+    lines_of_words.sort(key=lambda r: sum((w["bbox"][1] + w["bbox"][3]) / 2.0 for w in r) / len(r))
 
     # 6. Формируем исходные геометрические строки и слова в них
     lines_data = []
@@ -460,73 +455,86 @@ async def run_ocr_on_file(file_path: str) -> list:
     # Табличный режим включается, если много горизонтальных колонок и высота колонок мала (сетка)
     is_table = (pct_horiz > 0.35 and max_col_height <= 3) or (pct_horiz > 0.5 and mean_col_height < 2.5)
 
-    # --- Шаг 1.5: Горизонтальное слияние фрагментов строк (только если не таблица) ---
-    if not is_table:
-        h_adj = {i: [] for i in range(len(lines_data))}
-        for i in range(len(lines_data)):
-            for j in range(i + 1, len(lines_data)):
-                a = lines_data[i]
-                b = lines_data[j]
-                ax1, ay1, ax2, ay2 = a["bbox"]
-                bx1, by1, bx2, by2 = b["bbox"]
+    # --- Шаг 1.5: Горизонтальное слияние фрагментов строк ---
+    h_adj = {i: [] for i in range(len(lines_data))}
+    for i in range(len(lines_data)):
+        for j in range(i + 1, len(lines_data)):
+            a = lines_data[i]
+            b = lines_data[j]
+            ax1, ay1, ax2, ay2 = a["bbox"]
+            bx1, by1, bx2, by2 = b["bbox"]
+            
+            # Перекрытие по Y более 30%
+            overlap_y = max(0, min(ay2, by2) - max(ay1, by1))
+            min_h = min(ay2 - ay1, by2 - by1)
+            if min_h <= 0 or (overlap_y / min_h) <= 0.3:
+                continue
                 
-                # Перекрытие по Y более 30% (было 60%)
-                overlap_y = max(0, min(ay2, by2) - max(ay1, by1))
-                min_h = min(ay2 - ay1, by2 - by1)
-                if min_h <= 0 or (overlap_y / min_h) <= 0.3:
-                    continue
-                    
-                # Допускаем большее различие по высоте шрифта (до 1.0 * H вместо 0.4 * H)
-                if abs((ay2 - ay1) - (by2 - by1)) >= H * 1.0:
-                    continue
-                    
-                # Зазор по X (кто-то должен быть левее, либо перекрываться)
-                if ax2 <= bx1:
-                    gap_x = bx1 - ax2
-                elif bx2 <= ax1:
-                    gap_x = ax1 - bx2
-                else:
-                    gap_x = 0
-                    
-                # Максимальный зазор слияния по X увеличен до H * 2.5 (было 2.2)
-                if gap_x < H * 2.5:
-                    h_adj[i].append(j)
-                    h_adj[j].append(i)
-                    
-        h_visited = set()
-        merged_lines_data = []
-        for i in range(len(lines_data)):
-            if i not in h_visited:
-                comp = []
-                q = [i]
-                h_visited.add(i)
-                while q:
-                    curr = q.pop(0)
-                    comp.append(curr)
-                    for neighbor in h_adj[curr]:
-                        if neighbor not in h_visited:
-                            h_visited.add(neighbor)
-                            q.append(neighbor)
-                            
-                if len(comp) == 1:
-                    merged_lines_data.append(lines_data[i])
-                else:
-                    comp_sorted = sorted(comp, key=lambda idx: lines_data[idx]["bbox"][0])
-                    words_all = []
-                    for idx in comp_sorted:
-                        words_all.extend(lines_data[idx]["words"])
+            # Проверка разницы вертикальных центров для предотвращения ложного захвата символов с соседних строк
+            y_mid_a = (ay1 + ay2) / 2.0
+            y_mid_b = (by1 + by2) / 2.0
+            if abs(y_mid_a - y_mid_b) >= H * 0.45:
+                continue
+                
+            # Допускаем большее различие по высоте шрифта (до 1.0 * H)
+            if abs((ay2 - ay1) - (by2 - by1)) >= H * 1.0:
+                continue
+                
+            # Зазор по X (кто-то должен быть левее, либо перекрываться)
+            if ax2 <= bx1:
+                gap_x = bx1 - ax2
+            elif bx2 <= ax1:
+                gap_x = ax1 - bx2
+            else:
+                gap_x = 0
+                
+            # Адаптивный порог зазора по X:
+            # Если включен табличный режим, и хотя бы одна из строк имеет других соседей
+            # (то есть это реальная колонка таблицы)
+            if is_table and (has_horiz_neighbor[i] or has_horiz_neighbor[j]):
+                max_gap_x = H * 1.2
+            else:
+                max_gap_x = H * 5.0
+                
+            if gap_x < max_gap_x:
+                h_adj[i].append(j)
+                h_adj[j].append(i)
+                
+    h_visited = set()
+    merged_lines_data = []
+    for i in range(len(lines_data)):
+        if i not in h_visited:
+            comp = []
+            q = [i]
+            h_visited.add(i)
+            while q:
+                curr = q.pop(0)
+                comp.append(curr)
+                for neighbor in h_adj[curr]:
+                    if neighbor not in h_visited:
+                        h_visited.add(neighbor)
+                        q.append(neighbor)
                         
-                    min_x = min(lines_data[idx]["bbox"][0] for idx in comp)
-                    min_y = min(lines_data[idx]["bbox"][1] for idx in comp)
-                    max_x = max(lines_data[idx]["bbox"][2] for idx in comp)
-                    max_y = max(lines_data[idx]["bbox"][3] for idx in comp)
+            if len(comp) == 1:
+                merged_lines_data.append(lines_data[i])
+            else:
+                comp_sorted = sorted(comp, key=lambda idx: lines_data[idx]["bbox"][0])
+                words_all = []
+                for idx in comp_sorted:
+                    words_all.extend(lines_data[idx]["words"])
                     
-                    merged_lines_data.append({
-                        "text": " ".join(lines_data[idx]["text"] for idx in comp_sorted),
-                        "bbox": (min_x, min_y, max_x, max_y),
-                        "words": words_all
-                    })
-        lines_data = merged_lines_data
+                min_x = min(lines_data[idx]["bbox"][0] for idx in comp)
+                min_y = min(lines_data[idx]["bbox"][1] for idx in comp)
+                max_x = max(lines_data[idx]["bbox"][2] for idx in comp)
+                max_y = max(lines_data[idx]["bbox"][3] for idx in comp)
+                
+                merged_lines_data.append({
+                    "text": " ".join(lines_data[idx]["text"] for idx in comp_sorted),
+                    "bbox": (min_x, min_y, max_x, max_y),
+                    "words": words_all
+                })
+    lines_data = merged_lines_data
+
 
     # 2. Алгоритм связных компонент для объединения строк в логические блоки (абзацы/колонки)
     def should_merge(a, b):
@@ -535,9 +543,9 @@ async def run_ocr_on_file(file_path: str) -> list:
         a_h = ay2 - ay1
         b_h = by2 - by1
         
-        # B должна быть ниже A, но не слишком далеко по Y (не больше 2.2 * H для поддержки большого line-spacing)
+        # B должна быть ниже A, но не слишком далеко по Y (не больше 2.5 * H для поддержки большого line-spacing)
         vertical_gap = by1 - ay2
-        if not (-5 <= vertical_gap < H * 2.2):
+        if not (-5 <= vertical_gap < H * 2.5):
             return False
             
         # Близость размеров шрифта (высоты строки)
@@ -604,6 +612,26 @@ async def run_ocr_on_file(file_path: str) -> list:
 
     n = len(lines_data)
     adj = {i: [] for i in range(n)}
+    
+    def has_neighbor(box):
+        # Возвращает True, если на высоте Y этого box есть другие неперекрывающиеся по X блоки
+        y1, y2 = box[1], box[3]
+        h = y2 - y1
+        for item in lines_data:
+            if item["bbox"] == box:
+                continue
+            iy1, iy2 = item["bbox"][1], item["bbox"][3]
+            ih = iy2 - iy1
+            overlap_y = max(0, min(y2, iy2) - max(y1, iy1))
+            min_h = min(h, ih)
+            if min_h > 0 and (overlap_y / min_h) > 0.3:
+                ix1, ix2 = item["bbox"][0], item["bbox"][2]
+                if ix2 < box[0] and (box[0] - ix2) >= H * 2.0:
+                    return True
+                if box[2] < ix1 and (ix1 - box[2]) >= H * 2.0:
+                    return True
+        return False
+
     for i in range(n):
         for j in range(i + 1, n):
             a = lines_data[i]
@@ -617,10 +645,22 @@ async def run_ocr_on_file(file_path: str) -> list:
             if is_table and merge:
                 top_box = a["bbox"] if a["bbox"][1] <= b["bbox"][1] else b["bbox"]
                 bot_box = b["bbox"] if a["bbox"][1] <= b["bbox"][1] else a["bbox"]
-                v_gap = bot_box[1] - top_box[3]
-                h_offset = abs(top_box[0] - bot_box[0])
-                if not (v_gap < H * 1.1 and h_offset < H * 1.2):
-                    merge = False
+                
+                # Проверяем, есть ли горизонтальные соседи у этих блоков (находятся ли они в табличной зоне)
+                is_in_table_zone = has_neighbor(top_box) or has_neighbor(bot_box)
+                
+                # Исключение: если нижняя строка начинается со строчной буквы, это продолжение предложения
+                bot_item = b if a["bbox"][1] <= b["bbox"][1] else a
+                bot_text = bot_item["text"].strip()
+                first_word = bot_text.split()[0] if bot_text.split() else ""
+                starts_with_lowercase = bool(re.match(r'^[a-zа-яё]', first_word))
+                
+                # Если мы в табличной зоне, и это не продолжение предложения, то применяем строгие ограничения
+                if is_in_table_zone and not starts_with_lowercase:
+                    v_gap = bot_box[1] - top_box[3]
+                    h_offset = abs(top_box[0] - bot_box[0])
+                    if not (v_gap < H * 1.1 and h_offset < H * 1.2):
+                        merge = False
                 
             if merge:
                 adj[i].append(j)
@@ -724,16 +764,52 @@ async def perform_ocr_and_translation(image: Image.Image, target_lang: str, engi
             latin_alpha = sum(1 for c in text if ('A' <= c <= 'Z') or ('a' <= c <= 'z'))
             # Переводим, если в блоке есть хотя бы одно полноценное английское слово (3+ букв латиницы)
             return latin_alpha >= 3
+
+        def is_mixed_text(text):
+            # Содержит ли текст кириллицу?
+            return bool(re.search(r'[а-яА-ЯёЁ]', text))
+
+        def get_translatable_latin_words(text):
+            # Находим латинские слова длиной от 3 символов
+            words = re.findall(r'\b[a-zA-Z]{3,}\b', text)
+            valid_words = {}
+            for w in words:
+                # Игнорируем технические наименования (с подчеркиваниями или цифрами)
+                if '_' in w or any(c.isdigit() for c in w):
+                    continue
+                # Игнорируем расширения файлов и пути (если в тексте вокруг слова есть точки или слэши)
+                pattern = r'(?<![\./\\])\b' + re.escape(w) + r'\b(?![\./\\])'
+                if not re.search(pattern, text):
+                    continue
+                # Разделяем CamelCase
+                prepared = re.sub(r'(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])', ' ', w)
+                valid_words[w] = prepared
+            return valid_words
         
         texts_to_translate = []
-        translate_indices = []
+        # Задачи на обратную сборку: ('full', block_idx, orig_text) или ('word', block_idx, raw_w, prep_w)
+        tasks = []
         translated_texts = [None] * len(ocr_blocks)
+        translate_indices = []
         
         for i, block in enumerate(ocr_blocks):
             text = block["text"]
             if needs_translation(text, target_lang):
-                texts_to_translate.append(text)
                 translate_indices.append(i)
+                if is_mixed_text(text):
+                    # Смешанный текст -> переводим только отдельные термины
+                    latin_map = get_translatable_latin_words(text)
+                    if latin_map:
+                        for raw_w, prep_w in latin_map.items():
+                            if prep_w not in texts_to_translate:
+                                texts_to_translate.append(prep_w)
+                            tasks.append(('word', i, raw_w, prep_w))
+                    # Изначально записываем оригинал (будем менять его по частям)
+                    translated_texts[i] = text
+                else:
+                    # Чистый английский текст -> переводим целиком
+                    texts_to_translate.append(text)
+                    tasks.append(('full', i, text))
             else:
                 translated_texts[i] = text
         
@@ -744,8 +820,24 @@ async def perform_ocr_and_translation(image: Image.Image, target_lang: str, engi
             func = functools.partial(translate_batch_texts, texts_to_translate, target_lang, engine_type, **kwargs)
             batch_results = await loop.run_in_executor(None, func)
             
-            for idx, trans_text in zip(translate_indices, batch_results):
-                translated_texts[idx] = trans_text
+            # Строим словарь переведенных строк
+            trans_map = {}
+            for orig, trans in zip(texts_to_translate, batch_results):
+                trans_map[orig] = trans
+                
+            # Применяем переводы к блокам
+            for task_info in tasks:
+                task_type = task_info[0]
+                if task_type == 'full':
+                    block_idx, orig_text = task_info[1], task_info[2]
+                    translated_texts[block_idx] = trans_map.get(orig_text, orig_text)
+                elif task_type == 'word':
+                    block_idx, raw_w, prep_w = task_info[1], task_info[2], task_info[3]
+                    word_trans = trans_map.get(prep_w)
+                    if word_trans and word_trans.lower() != prep_w.lower():
+                        current_text = translated_texts[block_idx]
+                        pattern = r'\b' + re.escape(raw_w) + r'\b'
+                        translated_texts[block_idx] = re.sub(pattern, word_trans, current_text)
         
         # Combine back
         translate_set = set(translate_indices)

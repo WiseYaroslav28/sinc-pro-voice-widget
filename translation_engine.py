@@ -246,6 +246,13 @@ class TranslationEngine:
                    OR translated_text LIKE '%[ТR%' 
                    OR translated_text LIKE '%[ТР%'
             """)
+            # Очистка записей, где перевод совпал с оригиналом (для латиницы)
+            cursor.execute("""
+                DELETE FROM translations 
+                WHERE LOWER(source_text) = LOWER(translated_text) 
+                  AND custom_translated_text IS NULL
+                  AND (source_text GLOB '*[a-zA-Z]*')
+            """)
             conn.commit()
             conn.close()
         except Exception as e:
@@ -381,7 +388,7 @@ class TranslationEngine:
             return re.sub(r'9999\d+', lambda m: d[int(m.group(0))-99990] if 0<=int(m.group(0))-99990<len(d) else m.group(0), t)
 
         results = [None] * len(texts)
-        missing_map = {} 
+        missing_map = {}
         abstracted_data = {}
 
         for i, text in enumerate(texts):
@@ -390,20 +397,29 @@ class TranslationEngine:
                 results[i] = ""
                 continue
             
+            # 1. Сначала пробуем точное совпадение (вдруг есть пользовательский кастомный перевод)
             cached_data = self._get_cached_translation(cleaned, target_lang)
-            if cached_data is not None:
-                if cached_data.get('custom_translated_text') is not None:
-                    results[i] = cached_data['custom_translated_text']
-                else:
-                    results[i] = cached_data['translated_text']
+            if cached_data is not None and cached_data.get('custom_translated_text') is not None:
+                results[i] = cached_data['custom_translated_text']
+                continue
                 
-                self._check_and_queue_for_refresh(cleaned, target_lang, cached_data)
-            else:
-                abs_text, digits = abstract_digits(cleaned)
-                abstracted_data[i] = (abs_text, digits)
-                if abs_text not in missing_map:
-                    missing_map[abs_text] = []
-                missing_map[abs_text].append(i)
+            # 2. Абстрагируем цифры для работы с шаблоном
+            abs_text, digits = abstract_digits(cleaned)
+            abstracted_data[i] = (abs_text, digits)
+            
+            # 3. Ищем шаблон в кэше
+            cached_abs_data = self._get_cached_translation(abs_text, target_lang)
+            if cached_abs_data is not None:
+                trans_template = cached_abs_data.get('custom_translated_text') or cached_abs_data.get('translated_text')
+                if trans_template:
+                    results[i] = restore_digits(trans_template, digits)
+                    self._check_and_queue_for_refresh(abs_text, target_lang, cached_abs_data)
+                    continue
+                    
+            # 4. Если в кэше нет, отправляем в очередь на перевод
+            if abs_text not in missing_map:
+                missing_map[abs_text] = []
+            missing_map[abs_text].append(i)
 
         unique_abs_texts = list(missing_map.keys())
         if not unique_abs_texts:
@@ -460,14 +476,14 @@ class TranslationEngine:
                         print(f"Individual translation error for {abs_text}: {e}")
                         trans_abs_text = abs_text
                 
+                # Сохраняем абстрагированный шаблон в кэш
+                if trans_abs_text.strip().lower() != abs_text.lower():
+                    self._save_to_cache(abs_text, target_lang, trans_abs_text)
+                
                 for orig_idx in missing_map[abs_text]:
-                    orig_text = texts[orig_idx].strip()
                     _, digits = abstracted_data[orig_idx]
                     final_trans_text = restore_digits(trans_abs_text, digits)
-                    
                     results[orig_idx] = final_trans_text
-                    if final_trans_text.strip().lower() != orig_text.lower():
-                        self._save_to_cache(orig_text, target_lang, final_trans_text)
 
         for i in range(len(results)):
             if results[i] is None:

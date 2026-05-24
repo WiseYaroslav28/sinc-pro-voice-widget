@@ -11,7 +11,7 @@
 
 ### ✨ Ключевые возможности
 
-*   **Перевод экрана в реальном времени [В стадии доработки / WIP] (v3.3.0):** Интерактивная рамка `⛶ A文` для перевода любой области экрана. Рамку можно перемещать и растягивать. Она полностью прозрачна для кликов (click-through) — вы можете продолжать работать с элементами под ней. Распознанный текст подсвечивается при наведении, перевод показывается во всплывающих подсказках (ПКМ) или быстро озвучивается (ЛКМ).
+*   **Перевод экрана в реальном времени [В стадии доработки / WIP] (v3.3.2):** Интерактивная рамка `⛶ A文` для перевода любой области экрана. Рамку можно перемещать и растягивать. Она полностью прозрачна для кликов (click-through) — вы можете продолжать работать с элементами под ней. Распознанный текст подсвечивается при наведении, перевод показывается во всплывающих подсказках (ПКМ) или быстро озвучивается (ЛКМ).
 *   **Контекстное меню быстрого доступа (v3.0.0):** Клик правой кнопкой мыши по виджету в режимах Mini и Micro opens удобное меню для переключения режимов или закрытия приложения.
 *   **Глобальный доступ отовсюду:** Выделите текст в **любой** программе, нажмите комбинацию клавиш — и программа мгновенно начнет его читать.
 *   **Нейросетевые голоса:** Использование Microsoft Edge TTS обеспечивает премиальное естественное звучание. Поддерживаются русский, английский, немецкий, французский, испанский, китайский и другие языки. Вы можете легко добавлять новые языки и голоса в словари программы.
@@ -64,7 +64,7 @@ This project was developed with special care and attention to people with **dysl
 
 ### ✨ Key Features
 
-*   **Real-time Screen Translator [Work In Progress / WIP] (v3.3.0):** An interactive crop frame `⛶ A文` to translate any screen region. The frame is resizable and moveable. It is completely click-through — you can scroll and click elements underneath it. Recognized text is adaptively highlighted on hover; the translation is displayed in a tooltip (Right Click) or spoken aloud (Left Click).
+*   **Real-time Screen Translator [Work In Progress / WIP] (v3.3.2):** An interactive crop frame `⛶ A文` to translate any screen region. The frame is resizable and moveable. It is completely click-through — you can scroll and click elements underneath it. Recognized text is adaptively highlighted on hover; the translation is displayed in a tooltip (Right Click) or spoken aloud (Left Click).
 *   **Quick Access Context Menu (v3.0.0):** Right-click the widget in Mini and Micro modes to toggle UI modes or exit the app.
 *   **Global Access Everywhere:** Highlight text in **any** application, press the hotkey, and the program will instantly start reading it aloud.
 *   **Premium Neural Voices:** Powered by Microsoft Edge TTS for natural, human-like sound. It supports English, Russian, German, French, Spanish, Chinese, and many more. You can easily add new voices to the dictionary.
