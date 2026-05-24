@@ -95,13 +95,122 @@ try_import_argos()
 
 DB_PATH = os.path.join(APP_DIR, "translation_cache.db")
 
+import queue
+import threading
+import time
+from datetime import datetime
+
+_refresh_queue = queue.Queue()
+_refresh_worker_started = False
+_refresh_lock = threading.Lock()
+
+def is_translation_valid(original: str, translated: str, target_lang: str) -> bool:
+    if not translated or not translated.strip():
+        return False
+        
+    orig_clean = original.strip().lower()
+    trans_clean = translated.strip().lower()
+    
+    # 1. Если перевод совпадает с оригиналом
+    if orig_clean == trans_clean:
+        return False
+        
+    # 2. Если в переводе остались сырые маркеры @@ или [TR/TP/ТР
+    if '@' in trans_clean or '[' in trans_clean:
+        if re.search(r'(@\s*@|\[\s*[tTтТ][rRpPрР])', translated):
+            return False
+            
+    # 3. Если переводим на русский, и в оригинале была латиница, а в переводе нет кириллицы
+    if target_lang == "ru" and re.search(r'[a-zA-Z]', original):
+        if not re.search(r'[а-яА-ЯёЁ]', translated):
+            return False
+            
+    # 4. Аномальная разница в длине
+    len_orig = len(original)
+    len_trans = len(translated)
+    if len_orig > 15:
+        if len_trans > len_orig * 4 or len_trans < max(3, len_orig // 4):
+            return False
+            
+    return True
+
+def _start_refresh_worker():
+    global _refresh_worker_started
+    with _refresh_lock:
+        if _refresh_worker_started:
+            return
+        _refresh_worker_started = True
+        t = threading.Thread(target=_refresh_worker_loop, daemon=True, name="SINC_Cache_Refresher")
+        t.start()
+
+def _refresh_worker_loop():
+    from deep_translator import GoogleTranslator
+    translator = GoogleTranslator(source='auto', target='ru')
+    
+    processed = set()
+    
+    while True:
+        try:
+            item = _refresh_queue.get()
+            if item is None:
+                break
+                
+            text, target_lang = item
+            key = (text, target_lang)
+            if key in processed:
+                continue
+            processed.add(key)
+            
+            translator.target = target_lang
+            
+            try:
+                translated_text = translator.translate(text)
+                if is_translation_valid(text, translated_text, target_lang):
+                    _update_auto_translation_in_db(text, target_lang, translated_text, "google_cache")
+            except Exception as e:
+                print(f"Background translation failed for '{text}': {e}")
+                
+            time.sleep(12.0) # Защита от банов (12 секунд пауза)
+        except Exception as e:
+            print(f"Error in refresh worker loop: {e}")
+            time.sleep(5.0)
+
+def _update_auto_translation_in_db(text: str, target_lang: str, translated_text: str, engine: str):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM translations WHERE LOWER(source_text) = LOWER(?) AND target_lang = ?",
+            (text.strip(), target_lang)
+        )
+        exists = cursor.fetchone()
+        
+        if exists:
+            cursor.execute("""
+                UPDATE translations 
+                SET translated_text = ?, 
+                    engine = ?, 
+                    last_verified = CURRENT_TIMESTAMP
+                WHERE LOWER(source_text) = LOWER(?) AND target_lang = ?
+            """, (translated_text.strip(), engine, text.strip(), target_lang))
+        else:
+            cursor.execute("""
+                INSERT INTO translations (source_text, target_lang, translated_text, engine, last_verified)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, (text.strip(), target_lang, translated_text.strip(), engine))
+            
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Cache background update error: {e}")
+
 class TranslationEngine:
     def translate_batch(self, texts: list, target_lang: str) -> list:
         raise NotImplementedError("Subclasses must implement translate_batch")
 
-
     def __init__(self):
         self._init_db()
+        _start_refresh_worker()
 
     def _init_db(self):
         try:
@@ -116,39 +225,145 @@ class TranslationEngine:
                     PRIMARY KEY (source_text, target_lang)
                 )
             """)
+            
+            # Миграция схемы для поддержки истории, пользовательских переводов и версий
+            cursor.execute("PRAGMA table_info(translations)")
+            columns = [row[1] for row in cursor.fetchall()]
+            
+            if "custom_translated_text" not in columns:
+                cursor.execute("ALTER TABLE translations ADD COLUMN custom_translated_text TEXT DEFAULT NULL")
+            if "engine" not in columns:
+                cursor.execute("ALTER TABLE translations ADD COLUMN engine TEXT DEFAULT 'unknown'")
+            if "last_verified" not in columns:
+                cursor.execute("ALTER TABLE translations ADD COLUMN last_verified DATETIME DEFAULT NULL")
+                cursor.execute("UPDATE translations SET last_verified = CURRENT_TIMESTAMP")
+                
+            # Очистка испорченных записей со старыми маркерами
+            cursor.execute("""
+                DELETE FROM translations 
+                WHERE translated_text LIKE '%[TR%' 
+                   OR translated_text LIKE '%[TP%' 
+                   OR translated_text LIKE '%[ТR%' 
+                   OR translated_text LIKE '%[ТР%'
+            """)
             conn.commit()
             conn.close()
         except Exception as e:
             print(f"Error initializing translation database: {e}")
 
-    def _get_cached_translation(self, text: str, target_lang: str) -> str:
+    def _get_cached_translation(self, text: str, target_lang: str) -> dict:
         try:
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT translated_text FROM translations WHERE LOWER(source_text) = LOWER(?) AND target_lang = ?",
+                "SELECT translated_text, custom_translated_text, engine, last_verified FROM translations WHERE LOWER(source_text) = LOWER(?) AND target_lang = ?",
                 (text.strip(), target_lang)
             )
             row = cursor.fetchone()
             conn.close()
             if row:
-                return row[0]
+                return {
+                    'translated_text': row[0],
+                    'custom_translated_text': row[1],
+                    'engine': row[2],
+                    'last_verified': row[3]
+                }
         except Exception as e:
             print(f"Cache read error: {e}")
         return None
 
-    def _save_to_cache(self, text: str, target_lang: str, translated_text: str):
+    def _save_to_cache(self, text: str, target_lang: str, translated_text: str, engine_name: str = None):
+        if engine_name is None:
+            if isinstance(self, GoogleCacheEngine):
+                engine_name = "google_cache"
+            elif isinstance(self, ArgosEngine):
+                engine_name = "argos"
+            elif isinstance(self, OllamaEngine):
+                engine_name = "ollama"
+            elif isinstance(self, MstyEngine):
+                engine_name = "msty"
+            else:
+                engine_name = "unknown"
+                
         try:
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
+            
             cursor.execute(
-                "INSERT OR REPLACE INTO translations (source_text, target_lang, translated_text) VALUES (?, ?, ?)",
-                (text.strip(), target_lang, translated_text.strip())
+                "SELECT 1 FROM translations WHERE LOWER(source_text) = LOWER(?) AND target_lang = ?",
+                (text.strip(), target_lang)
             )
+            row = cursor.fetchone()
+            
+            if row:
+                cursor.execute("""
+                    UPDATE translations 
+                    SET translated_text = ?, 
+                        engine = ?, 
+                        last_verified = CURRENT_TIMESTAMP
+                    WHERE LOWER(source_text) = LOWER(?) AND target_lang = ?
+                """, (translated_text.strip(), engine_name, text.strip(), target_lang))
+            else:
+                cursor.execute("""
+                    INSERT INTO translations (source_text, target_lang, translated_text, engine, last_verified)
+                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """, (text.strip(), target_lang, translated_text.strip(), engine_name))
+                
             conn.commit()
             conn.close()
         except Exception as e:
             print(f"Cache write error: {e}")
+
+    def save_custom_translation(self, text: str, target_lang: str, custom_text: str):
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            
+            cursor.execute(
+                "SELECT 1 FROM translations WHERE LOWER(source_text) = LOWER(?) AND target_lang = ?",
+                (text.strip(), target_lang)
+            )
+            row = cursor.fetchone()
+            
+            custom_val = custom_text.strip() if custom_text and custom_text.strip() else None
+            
+            if row:
+                cursor.execute("""
+                    UPDATE translations 
+                    SET custom_translated_text = ?
+                    WHERE LOWER(source_text) = LOWER(?) AND target_lang = ?
+                """, (custom_val, text.strip(), target_lang))
+            else:
+                cursor.execute("""
+                    INSERT INTO translations (source_text, target_lang, translated_text, custom_translated_text, engine, last_verified)
+                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """, (text.strip(), target_lang, "", custom_val, "custom"))
+                
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"Save custom translation error: {e}")
+
+    def _check_and_queue_for_refresh(self, text: str, target_lang: str, cached_data: dict):
+        if not isinstance(self, GoogleCacheEngine):
+            return
+            
+        need_refresh = False
+        if cached_data.get('engine') in ('unknown', 'argos', 'argos_offline'):
+            need_refresh = True
+            
+        if not need_refresh and cached_data.get('last_verified'):
+            try:
+                lv_str = cached_data['last_verified']
+                lv_date = datetime.strptime(lv_str.split()[0], "%Y-%m-%d")
+                delta = datetime.now() - lv_date
+                if delta.days >= 7:
+                    need_refresh = True
+            except:
+                need_refresh = True
+                
+        if need_refresh:
+            _refresh_queue.put((text, target_lang))
 
     def translate_batch(self, texts: list, target_lang: str) -> list:
         if not texts:
@@ -175,9 +390,14 @@ class TranslationEngine:
                 results[i] = ""
                 continue
             
-            cached = self._get_cached_translation(cleaned, target_lang)
-            if cached is not None:
-                results[i] = cached
+            cached_data = self._get_cached_translation(cleaned, target_lang)
+            if cached_data is not None:
+                if cached_data.get('custom_translated_text') is not None:
+                    results[i] = cached_data['custom_translated_text']
+                else:
+                    results[i] = cached_data['translated_text']
+                
+                self._check_and_queue_for_refresh(cleaned, target_lang, cached_data)
             else:
                 abs_text, digits = abstract_digits(cleaned)
                 abstracted_data[i] = (abs_text, digits)
@@ -207,7 +427,7 @@ class TranslationEngine:
         for chunk in chunks:
             payload_parts = []
             for i, (idx, text) in enumerate(chunk):
-                payload_parts.append(f"[TR{i}] {text}")
+                payload_parts.append(f"@@{i}@@ {text}")
             
             payload = "\n".join(payload_parts)
             translated_payload = None
@@ -219,7 +439,7 @@ class TranslationEngine:
             translated_map = {}
             if translated_payload:
                 try:
-                    pattern = r'(?:^|\n)\s*\[\s*tr\s*(\d+)\s*\]\s*(.*?)(?=\n\s*\[\s*tr\s*\d+\s*\]|$)'
+                    pattern = r'@\s*@\s*(\d+)\s*@\s*@\s*(.*?)(?=@\s*@\s*\d+\s*@\s*@|$)'
                     matches = re.findall(pattern, translated_payload, re.DOTALL | re.IGNORECASE)
                     for idx_str, text_val in matches:
                         try:
@@ -436,7 +656,7 @@ class OllamaEngine(TranslationEngine):
             return result.get("response", "").strip()
 
     def _translate_payload(self, payload: str, target_lang: str) -> str:
-        prompt = f"You are a professional translator. Translate the following list of phrases to {target_lang}. Keep the exact same layout and formatting, including the [TRn] markers. Do not add any conversational text or markdown formatting.\n\n{payload}"
+        prompt = f"You are a professional translator. Translate the following list of phrases to {target_lang}. Keep the exact same layout and formatting, including the @@n@@ markers. Do not add any conversational text or markdown formatting.\n\n{payload}"
         return self._call_ollama(prompt)
 
     def _translate_individual(self, text: str, target_lang: str) -> str:
@@ -482,7 +702,7 @@ class MstyEngine(TranslationEngine):
             return ""
 
     def _translate_payload(self, payload: str, target_lang: str) -> str:
-        prompt = f"You are a professional translator. Translate the following list of phrases to {target_lang}. Keep the exact same layout and formatting, including the [TRn] markers. Do not add any conversational text or markdown formatting.\n\n{payload}"
+        prompt = f"You are a professional translator. Translate the following list of phrases to {target_lang}. Keep the exact same layout and formatting, including the @@n@@ markers. Do not add any conversational text or markdown formatting.\n\n{payload}"
         return self._call_msty(prompt)
 
     def _translate_individual(self, text: str, target_lang: str) -> str:

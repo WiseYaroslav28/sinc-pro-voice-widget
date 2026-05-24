@@ -1,16 +1,21 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_all
 
+datas_pysbd, binaries_pysbd, hiddenimports_pysbd = collect_all('pysbd')
 
 a = Analysis(
     ['voice_widget.py'],
     pathex=[],
-    binaries=[],
-    datas=[('sinc_icon.ico', '.')],
-    hiddenimports=['customtkinter', 'edge_tts', 'pyperclip', 'keyboard', 'winrt', 'deep_translator', 'winrt.windows.storage.streams', 'winrt.windows.foundation.collections', 'packaging', 'yaml', 'requests', 'urllib3', 'idna', 'certifi', 'charset_normalizer', 'pysbd'],
+    binaries=binaries_pysbd,
+    datas=[('sinc_icon.ico', '.'), ('translation_engine.py', '.'), ('ocr_translation.py', '.'), ('screen_translator.py', '.')] + datas_pysbd,
+    hiddenimports=['pyttsx3.drivers', 'pyttsx3.drivers.sapi5', 'winrt.windows.media.ocr', 'winrt.windows.storage', 'winrt.windows.graphics.imaging', 'winrt.windows.storage.streams', 'winrt.windows.globalization', 'comtypes', 'comtypes.stream'] + hiddenimports_pysbd,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['torch', 'tensorflow', 'onnxruntime', 'argostranslate', 'ctranslate2', 'spacy', 'thinc', 'tensorboard'],
+    excludes=[
+        'matplotlib', 'scipy', 'pandas', 'pytest', 'notebook', 'IPython', 'docutils', 'sphinx',
+        'torch', 'tensorflow', 'onnxruntime', 'argostranslate', 'ctranslate2', 'spacy', 'thinc', 'tensorboard', 'lxml'
+    ],
     noarchive=False,
     optimize=0,
 )

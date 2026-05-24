@@ -7,15 +7,7 @@ import sys
 import time
 from PIL import ImageGrab, ImageEnhance, ImageTk, Image, ImageDraw, ImageFont
 
-try:
-    import cv2
-    import numpy as np
-    opencv_available = True
-except ImportError:
-    opencv_available = False
-
-
-# Принудительная установка DPI-awareness для сопоставления координат Tkinter и скриншотов 1:1
+# Принудительная установка DPI-awareness
 if sys.platform.startswith("win"):
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2) # PROCESS_PER_MONITOR_DPI_AWARE
@@ -24,8 +16,6 @@ if sys.platform.startswith("win"):
             ctypes.windll.user32.SetProcessDPIAware()
         except:
             pass
-
-from ctypes import wintypes
 
 def get_virtual_screen_origin():
     try:
@@ -37,38 +27,6 @@ def get_virtual_screen_origin():
         print(f"Error in get_virtual_screen_origin: {e}")
         return 0, 0
 
-def wrap_text(text, font, max_width):
-    words = text.split(' ')
-    lines = []
-    current_line = []
-    
-    for word in words:
-        test_line = ' '.join(current_line + [word])
-        try:
-            # Pillow 10+
-            draw_temp = ImageDraw.Draw(Image.new("RGB", (1,1)))
-            left, top, right, bottom = draw_temp.textbbox((0, 0), test_line, font=font)
-            w = right - left
-        except:
-            try:
-                w, _ = font.getsize(test_line)
-            except:
-                w = len(test_line) * (font.size * 0.55)
-                
-        if w <= max_width:
-            current_line.append(word)
-        else:
-            if current_line:
-                lines.append(' '.join(current_line))
-                current_line = [word]
-            else:
-                lines.append(word)
-                current_line = []
-                
-    if current_line:
-        lines.append(' '.join(current_line))
-    return lines
-
 def get_canvas_physical_pos(canvas):
     try:
         hwnd = canvas.winfo_id()
@@ -78,7 +36,6 @@ def get_canvas_physical_pos(canvas):
         ctypes.windll.user32.ClientToScreen(hwnd, ctypes.byref(pt))
         return pt.x, pt.y
     except Exception as e:
-        # Так как log_debug определен ниже, выведем в консоль
         print(f"Error in get_canvas_physical_pos: {e}")
         return canvas.winfo_rootx(), canvas.winfo_rooty()
 
@@ -86,7 +43,6 @@ import ocr_translation
 
 def log_debug(message):
     try:
-        import os
         log_path = r"c:\Antigravity projects\voice-server\debug.log"
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}\n")
@@ -94,11 +50,13 @@ def log_debug(message):
         print(f"Log error: {e}")
 
 def analyze_colors(image, bbox):
+    """Simple color analysis: calculates average background color around the bbox
+    and text color (furthest from background) inside the bbox.
+    """
     try:
         w, h = image.size
         x1, y1, x2, y2 = bbox
         
-        # Расширяем bbox для поиска чистого фона вокруг букв
         pad = 4
         bg_x1 = max(0, min(w - 1, int(x1 - pad)))
         bg_y1 = max(0, min(h - 1, int(y1 - pad)))
@@ -116,7 +74,6 @@ def analyze_colors(image, bbox):
         cropped_bg = image.crop((bg_x1, bg_y1, bg_x2, bg_y2))
         cw, ch = cropped_bg.size
         
-        # Анализируем пиксели по краям рамки для определения фона
         edge_pixels = []
         for x in range(cw):
             edge_pixels.append(cropped_bg.getpixel((x, 0)))
@@ -133,7 +90,6 @@ def analyze_colors(image, bbox):
         else:
             bg_rgb = (255, 255, 255)
             
-        # Определяем цвет текста из исходной области (не расширенной)
         if tx2 > tx1 and ty2 > ty1:
             cropped_txt = image.crop((tx1, ty1, tx2, ty2))
             pixels = list(cropped_txt.getdata())
@@ -158,7 +114,6 @@ def analyze_colors(image, bbox):
         bg_hex = f"#{bg_rgb[0]:02x}{bg_rgb[1]:02x}{bg_rgb[2]:02x}"
         fg_hex = f"#{fg_rgb[0]:02x}{fg_rgb[1]:02x}{fg_rgb[2]:02x}"
         
-        # Обходим прозрачный цвет окна (tk transparentcolor)
         if bg_hex == "#000001":
             bg_hex = "#000002"
             
@@ -168,9 +123,251 @@ def analyze_colors(image, bbox):
         return "#FFFFFF", "#000000"
 
 
+# --- Glow Underline Palettes ---
+# Каждый слой: (dy — смещение вниз, width — толщина линии, color — цвет, stipple — паттерн прозрачности)
+PALETTE_EN_DARK = [   # 🔵 Английские слова — тёмный фон
+    (4, 8,  "#007CFF", "gray12"),   # outer glow (почти прозрачный)
+    (2, 5,  "#16F2FF", "gray25"),   # near glow (мягкий)
+    (0, 2,  "#00D7FF", ""),         # core (яркий)
+]
+PALETTE_EN_LIGHT = [  # 🔵 Английские слова — светлый фон
+    (4, 6,  "#8CEBFF", "gray12"),
+    (2, 4,  "#0088C8", "gray25"),
+    (0, 2,  "#005DFF", ""),
+]
+PALETTE_RU_DARK = [   # 🟣 Русские слова — тёмный фон
+    (4, 8,  "#6F45D6", "gray12"),
+    (2, 5,  "#D2B6FF", "gray25"),
+    (0, 2,  "#A875FF", ""),
+]
+PALETTE_RU_LIGHT = [  # 🟣 Русские слова — светлый фон
+    (4, 6,  "#C7B5FF", "gray12"),
+    (2, 4,  "#7D55E8", "gray25"),
+    (0, 2,  "#5B35C8", ""),
+]
+# Hover — усиленные палитры (ярче и толще)
+PALETTE_EN_HOVER_DARK = [
+    (5, 12, "#007CFF", "gray25"),
+    (3, 7,  "#16F2FF", "gray50"),
+    (0, 3,  "#FFFFFF", ""),
+]
+PALETTE_EN_HOVER_LIGHT = [
+    (5, 10, "#8CEBFF", "gray25"),
+    (3, 6,  "#0088C8", "gray50"),
+    (0, 3,  "#003399", ""),
+]
+PALETTE_RU_HOVER_DARK = [
+    (5, 12, "#6F45D6", "gray25"),
+    (3, 7,  "#D2B6FF", "gray50"),
+    (0, 3,  "#FFFFFF", ""),
+]
+PALETTE_RU_HOVER_LIGHT = [
+    (5, 10, "#C7B5FF", "gray25"),
+    (3, 6,  "#7D55E8", "gray50"),
+    (0, 3,  "#3A1D8E", ""),
+]
+
+def _is_latin_word(text):
+    """Возвращает True если слово содержит латинские буквы (вероятно, английское)."""
+    import re
+    latin = sum(1 for c in text if ('A' <= c <= 'Z') or ('a' <= c <= 'z'))
+    total_alpha = latin + sum(1 for c in text if ('А' <= c <= 'я') or c in 'ёЁ')
+    if total_alpha == 0:
+        return False
+    return latin / total_alpha > 0.5
+
+def _get_bg_brightness(screenshot, bbox):
+    """Определяем яркость фона под bbox."""
+    if screenshot:
+        bg_color, _ = analyze_colors(screenshot, bbox)
+        try:
+            bg_rgb = tuple(int(bg_color[i:i+2], 16) for i in (1, 3, 5))
+            return (bg_rgb[0] * 299 + bg_rgb[1] * 587 + bg_rgb[2] * 114) / 1000
+        except:
+            pass
+    return 128  # default: средняя яркость
+
+
+class TranslationTooltip(tk.Toplevel):
+    """A beautiful, dark-themed popup that displays translation of a sentence 
+    right next to the cursor, automatically destroying itself on focus loss/leave,
+    with custom translation editing capabilities.
+    """
+    def __init__(self, master, item, x, y):
+        super().__init__(master)
+        self.overrideredirect(True)
+        self.attributes("-topmost", True)
+        self.configure(bg="#181818")
+        
+        self.item = item
+        text = item["text"]
+        
+        self.border_frame = ctk.CTkFrame(
+            self, 
+            fg_color="#181818", 
+            border_width=1, 
+            border_color="#007AFF", 
+            corner_radius=6
+        )
+        self.border_frame.pack(fill="both", expand=True, padx=1, pady=1)
+        
+        # Заголовок-подсказка
+        self.lbl_title = ctk.CTkLabel(
+            self.border_frame,
+            text="✍️ РЕДАКТИРОВАНИЕ ПЕРЕВОДА",
+            font=ctk.CTkFont(family="Segoe UI", size=9, weight="bold"),
+            text_color="#007AFF"
+        )
+        self.lbl_title.pack(anchor="w", padx=12, pady=(6, 2))
+        
+        # Текстовое поле для редактирования
+        self.textbox = ctk.CTkTextbox(
+            self.border_frame,
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            fg_color="#222222",
+            text_color="#FFFFFF",
+            border_width=1,
+            border_color="#333333",
+            corner_radius=4,
+            height=70
+        )
+        self.textbox.pack(fill="x", padx=12, pady=(0, 4))
+        self.textbox.insert("0.0", text)
+        
+        # Горизонтальный фрейм для кнопок
+        self.btn_frame = ctk.CTkFrame(self.border_frame, fg_color="transparent")
+        self.btn_frame.pack(fill="x", padx=12, pady=(4, 8))
+        
+        # Кнопка Сохранить
+        self.btn_save = ctk.CTkButton(
+            self.btn_frame,
+            text="Сохранить 💾",
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            height=20,
+            width=90,
+            fg_color="#34C759",
+            hover_color="#28A745",
+            text_color="#FFFFFF",
+            command=self.save_translation
+        )
+        self.btn_save.pack(side="left", padx=(0, 4))
+        
+        # Кнопка Сбросить
+        self.btn_reset = ctk.CTkButton(
+            self.btn_frame,
+            text="Сбросить ↩",
+            font=ctk.CTkFont(family="Segoe UI", size=10),
+            height=20,
+            width=90,
+            fg_color="#FF9500",
+            hover_color="#E08500",
+            text_color="#FFFFFF",
+            command=self.reset_translation
+        )
+        self.btn_reset.pack(side="left", padx=4)
+
+        # Кнопка Обновить
+        self.btn_refresh = ctk.CTkButton(
+            self.btn_frame,
+            text="Обновить 🔄",
+            font=ctk.CTkFont(family="Segoe UI", size=10),
+            height=20,
+            width=90,
+            fg_color="#007AFF",
+            hover_color="#0056B3",
+            text_color="#FFFFFF",
+            command=self.refresh_translation
+        )
+        self.btn_refresh.pack(side="left", padx=4)
+
+        # Кнопка Закрыть
+        self.btn_close = ctk.CTkButton(
+            self.btn_frame,
+            text="Закрыть ✕",
+            font=ctk.CTkFont(family="Segoe UI", size=10),
+            height=20,
+            width=80,
+            fg_color="#555555",
+            hover_color="#333333",
+            text_color="#FFFFFF",
+            command=self.safe_destroy
+        )
+        self.btn_close.pack(side="right", padx=(4, 0))
+        
+        # Вычисляем размеры тултипа
+        self.update_idletasks()
+        w = 420  # Фиксированная ширина для размещения всех кнопок в ряд
+        h = 150  # Фиксированная высота для текстового поля и кнопок
+        
+        # Positioning
+        self.geometry(f"{w}x{h}+{x + 15}+{y + 10}")
+        
+        self.bind("<Escape>", lambda e: self.safe_destroy())
+        self.textbox.bind("<FocusIn>", self.on_text_focus_in)
+        
+        # Биндим автоматическое закрытие при потере фокуса всем окном.
+        # Событие Leave (уход мыши) больше не биндится во избежание закрытия при наведении на кнопки.
+        self.bind("<FocusOut>", self.on_focus_out)
+        
+        # Таймер автоматического закрытия (на случай, если пользователь забыл закрыть тултип)
+        self._auto_close_id = self.after(15000, self.safe_destroy)
+        
+        # Фокусируемся на окне при старте
+        self.focus_force()
+
+    def on_focus_out(self, event):
+        # Небольшая задержка, чтобы Tkinter успел обновить сфокусированный виджет
+        self.after(100, self._check_focus_and_destroy)
+
+    def _check_focus_and_destroy(self):
+        try:
+            if not self.winfo_exists():
+                return
+            focused = self.focus_get()
+            if focused is not None:
+                # Если фокус перешел на дочерний элемент этого же окна, не уничтожаем
+                if str(focused).startswith(str(self)):
+                    return
+            self.safe_destroy()
+        except:
+            pass
+
+    def on_text_focus_in(self, event):
+        # Отключаем автозакрытие по таймеру, так как пользователь начал редактирование
+        if hasattr(self, "_auto_close_id"):
+            try:
+                self.after_cancel(self._auto_close_id)
+            except:
+                pass
+
+    def save_translation(self):
+        custom_text = self.textbox.get("1.0", "end-1c").strip()
+        orig_text = self.item["original_text"]
+        if hasattr(self.master, "save_custom_sentence_translation"):
+            self.master.save_custom_sentence_translation(orig_text, custom_text)
+        self.safe_destroy()
+        
+    def reset_translation(self):
+        orig_text = self.item["original_text"]
+        if hasattr(self.master, "reset_custom_sentence_translation"):
+            self.master.reset_custom_sentence_translation(orig_text)
+        self.safe_destroy()
+
+    def refresh_translation(self):
+        orig_text = self.item["original_text"]
+        if hasattr(self.master, "force_refresh_sentence"):
+            self.master.force_refresh_sentence(orig_text)
+        self.safe_destroy()
+
+    def safe_destroy(self):
+        try:
+            self.destroy()
+        except:
+            pass
+
+
 class AreaSelector(tk.Toplevel):
     def __init__(self, master, on_selected):
-        # Проверяем, является ли master корректным виджетом tkinter, иначе передаем None
         tcl_master = master if isinstance(master, (tk.Misc, ctk.CTk, ctk.CTkToplevel)) else None
         super().__init__(tcl_master)
         self.master = master
@@ -180,13 +377,12 @@ class AreaSelector(tk.Toplevel):
         self.attributes("-topmost", True)
         self.configure(bg="#000000")
         
-        # Получаем метрики виртуального экрана
         try:
             user32 = ctypes.windll.user32
-            self.vx = user32.GetSystemMetrics(76) # SM_XVIRTUALSCREEN
-            self.vy = user32.GetSystemMetrics(77) # SM_YVIRTUALSCREEN
-            self.vw = user32.GetSystemMetrics(78) # SM_CXVIRTUALSCREEN
-            self.vh = user32.GetSystemMetrics(79) # SM_CYVIRTUALSCREEN
+            self.vx = user32.GetSystemMetrics(76)
+            self.vy = user32.GetSystemMetrics(77)
+            self.vw = user32.GetSystemMetrics(78)
+            self.vh = user32.GetSystemMetrics(79)
             if self.vw <= 0 or self.vh <= 0:
                 raise Exception()
         except:
@@ -195,19 +391,15 @@ class AreaSelector(tk.Toplevel):
             self.vw = self.winfo_screenwidth()
             self.vh = self.winfo_screenheight()
             
-        # Устанавливаем абсолютную геометрию под виртуальный экран
         self.geometry(f"{self.vw}x{self.vh}+{self.vx}+{self.vy}")
         
-        # Снимок экрана
         self.original_screenshot = ImageGrab.grab(all_screens=True)
         
-        # Затемненная версия для фона
         enhancer = ImageEnhance.Brightness(self.original_screenshot)
         self.dark_screenshot = enhancer.enhance(0.4)
         
         self.photo_dark = ImageTk.PhotoImage(self.dark_screenshot)
         
-        # Холст выбора области
         self.canvas = tk.Canvas(self, cursor="cross", highlightthickness=0, bg="#000000")
         self.canvas.pack(fill="both", expand=True)
         self.canvas.create_image(0, 0, anchor="nw", image=self.photo_dark)
@@ -286,6 +478,129 @@ class AreaSelector(tk.Toplevel):
         self.on_selected(None, None, None, None, None)
 
 
+class WordTooltip(tk.Toplevel):
+    """Компактный тултип для перевода одного слова (двойной клик)."""
+    def __init__(self, master, word_text, x, y):
+        super().__init__(master)
+        self.overrideredirect(True)
+        self.attributes("-topmost", True)
+        self.configure(bg="#1a1a2e")
+        
+        self.word_text = word_text
+        self.master_ref = master
+        
+        self.border_frame = ctk.CTkFrame(
+            self,
+            fg_color="#1a1a2e",
+            border_width=1,
+            border_color="#00D7FF",
+            corner_radius=8
+        )
+        self.border_frame.pack(fill="both", expand=True, padx=1, pady=1)
+        
+        # Оригинальное слово
+        self.lbl_word = ctk.CTkLabel(
+            self.border_frame,
+            text=f"📖  {word_text}",
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            text_color="#00D7FF"
+        )
+        self.lbl_word.pack(anchor="w", padx=12, pady=(8, 2))
+        
+        # Перевод (сначала «загрузка...»)
+        self.lbl_translation = ctk.CTkLabel(
+            self.border_frame,
+            text="⏳ ...",
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            text_color="#FFFFFF",
+            wraplength=250
+        )
+        self.lbl_translation.pack(anchor="w", padx=12, pady=(0, 4))
+        
+        # Кнопки
+        self.btn_frame = ctk.CTkFrame(self.border_frame, fg_color="transparent")
+        self.btn_frame.pack(fill="x", padx=12, pady=(2, 8))
+        
+        self.btn_speak = ctk.CTkButton(
+            self.btn_frame,
+            text="🔊",
+            font=ctk.CTkFont(size=12),
+            width=32, height=22,
+            fg_color="#007AFF",
+            hover_color="#0056b3",
+            command=self._speak_word
+        )
+        self.btn_speak.pack(side="left", padx=(0, 4))
+        
+        self.btn_close = ctk.CTkButton(
+            self.btn_frame,
+            text="✕",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            width=32, height=22,
+            fg_color="transparent",
+            hover_color="#c0392b",
+            text_color="#888",
+            command=self.destroy
+        )
+        self.btn_close.pack(side="right")
+        
+        # Позиционирование
+        self.update_idletasks()
+        w = max(self.winfo_reqwidth(), 200)
+        h = self.winfo_reqheight()
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        
+        pos_x = min(x + 10, screen_w - w - 10)
+        pos_y = min(y + 10, screen_h - h - 10)
+        self.geometry(f"{w}x{h}+{pos_x}+{pos_y}")
+        
+        # Закрытие по клику вне тултипа
+        self.bind("<FocusOut>", lambda e: self.destroy())
+        self.after(100, lambda: self.focus_force())
+        
+        # Запускаем перевод в фоне
+        self.after(10, self._translate_word)
+    
+    def _translate_word(self):
+        """Переводит слово через translation_engine."""
+        import threading
+        def do_translate():
+            try:
+                import translation_engine
+                engine_type = getattr(self.master_ref.master, "translation_engine", "google_cache")
+                engine = translation_engine.get_engine(engine_type)
+                result = engine.translate_batch([self.word_text], "ru")
+                translated = result[0] if result else self.word_text
+                # Обновляем UI из главного потока
+                self.after(0, lambda: self._set_translation(translated))
+            except Exception as e:
+                self.after(0, lambda: self._set_translation(f"⚠ {e}"))
+        
+        threading.Thread(target=do_translate, daemon=True).start()
+    
+    def _set_translation(self, text):
+        """Устанавливает перевод в лейбл."""
+        if self.winfo_exists():
+            self.lbl_translation.configure(text=f"→  {text}")
+            self.update_idletasks()
+            # Обновляем размер
+            w = max(self.winfo_reqwidth(), 200)
+            h = self.winfo_reqheight()
+            self.geometry(f"{w}x{h}")
+    
+    def _speak_word(self):
+        """Озвучивает слово через TTS."""
+        try:
+            master = self.master_ref  # ScreenTranslatorFrame
+            if hasattr(master, 'master') and hasattr(master.master, 'update_text_and_play'):
+                master.master.update_text_and_play(self.word_text)
+            elif hasattr(master, 'update_text_and_play'):
+                master.update_text_and_play(self.word_text)
+        except Exception as e:
+            print(f"WordTooltip TTS error: {e}")
+
+
 class ScreenTranslatorFrame(tk.Toplevel):
     def get_scale_factor(self):
         try:
@@ -298,7 +613,6 @@ class ScreenTranslatorFrame(tk.Toplevel):
         return 1.0
 
     def __init__(self, master, translate_to="ru", target_x=None, target_y=None):
-        # Проверяем, является ли master корректным виджетом tkinter, иначе передаем None
         tcl_master = master if isinstance(master, (tk.Misc, ctk.CTk, ctk.CTkToplevel)) else None
         super().__init__(tcl_master)
         self.master = master
@@ -315,20 +629,25 @@ class ScreenTranslatorFrame(tk.Toplevel):
         self.min_height = 100
         self.border_width = 5
         
-        self.show_translation = True
-        self.show_highlight = False
-        self.canvas_images = []
+        # State
+        self.click_lock_active = False # Режим интерактива/блокировки кликов
+        self.show_highlight = True # Показывать ли подсветку вообще
         self.last_translated_data = []
         self.is_translating = False
         self.need_update_translation = False
+        self.active_tooltip = None
+        self.last_hovered_idx = None
+        self.last_hovered_word = None  # (block_idx, word_idx)
+        self.canvas_word_items = {}    # (block_idx, word_idx) → [canvas item IDs]
+        self._click_after_id = None    # debounce для одинарного клика
         
-        # Параметры автоматического отслеживания изменений экрана
+        # Auto scan (left for backwards compatibility)
         self.auto_scan = False
         self.last_screen_hash = None
         self.stabilize_counter = 0
         self.screen_changed = False
         
-        # 4 Границы изменения размера с правильными курсорами
+        # 4 Borders for resizing
         self.left_border = tk.Frame(self, bg="#007AFF", cursor="size_we")
         self.left_border.place(x=0, y=self.border_width, width=self.border_width, relheight=1.0, height=-2*self.border_width)
         
@@ -341,7 +660,7 @@ class ScreenTranslatorFrame(tk.Toplevel):
         self.bottom_border = tk.Frame(self, bg="#007AFF", cursor="size_ns")
         self.bottom_border.place(x=self.border_width, rely=1.0, y=-self.border_width, relwidth=1.0, width=-2*self.border_width, height=self.border_width)
         
-        # 4 Угла изменения размера с диагональными курсорами
+        # 4 Corners
         self.top_left_corner = tk.Frame(self, bg="#007AFF", cursor="size_nw_se")
         self.top_left_corner.place(x=0, y=0, width=self.border_width, height=self.border_width)
         
@@ -354,30 +673,36 @@ class ScreenTranslatorFrame(tk.Toplevel):
         self.bottom_right_corner = tk.Frame(self, bg="#007AFF", cursor="size_nw_se")
         self.bottom_right_corner.place(relx=1.0, x=-self.border_width, rely=1.0, y=-self.border_width, width=self.border_width, height=self.border_width)
         
-        # Внутренний контейнер для контента
+        # Container
         self.center_container = tk.Frame(self, bg="#000001")
         self.center_container.place(x=self.border_width, y=self.border_width, relwidth=1.0, relheight=1.0, width=-2*self.border_width, height=-2*self.border_width)
         
-        # Панель инструментов
+        # Toolbar
         self.toolbar = ctk.CTkFrame(self.center_container, height=28, fg_color="#181818", corner_radius=0)
         self.toolbar.pack(side="top", fill="x")
         self.toolbar.pack_propagate(False)
         
-        # Прозрачный холст перевода
+        # Canvas
         self.canvas = tk.Canvas(self.center_container, bg="#000001", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
         
         self.setup_toolbar()
         self.setup_drag_and_resize()
         
+        # Shortcuts
         self.bind("<Escape>", lambda e: self.destroy())
+        self.bind("<space>", lambda e: self.toggle_click_lock())
+        
         self.bind("<ButtonRelease-1>", self.on_global_release)
         self.canvas.bind("<ButtonRelease-1>", self.on_global_release)
         
-        # Запуск фонового отслеживания изменений экрана
-        self.after(800, self.check_screen_changes)
+        # Canvas mouse event bindings
+        self.canvas.bind("<Button-1>", self.on_canvas_click)
+        self.canvas.bind("<Double-Button-1>", self.on_canvas_double_click)
+        self.canvas.bind("<Button-3>", self.on_canvas_right_click)
+        self.canvas.bind("<Motion>", self.on_canvas_motion)
         
-        # Запуск калибровки положения окна
+        self.after(800, self.check_screen_changes)
         self.after(50, self.align_canvas)
 
     def align_canvas(self):
@@ -387,10 +712,7 @@ class ScreenTranslatorFrame(tk.Toplevel):
         self.update_idletasks()
         self.update()
         
-        # Получаем реальные физические координаты Canvas на экране
         real_x, real_y = get_canvas_physical_pos(self.canvas)
-        
-        # Вычисляем разницу в физических пикселях
         dx_phys = self.target_x - real_x
         dy_phys = self.target_y - real_y
         
@@ -403,28 +725,24 @@ class ScreenTranslatorFrame(tk.Toplevel):
                 cur_x = self.winfo_x()
                 cur_y = self.winfo_y()
             
-            # Так как процесс DPI-aware, geometry() принимает физические пиксели напрямую.
             dx = dx_phys
             dy = dy_phys
             
             self.geometry(f"+{int(cur_x + dx)}+{int(cur_y + dy)}")
             self.update()
-            log_debug(f"align_canvas: aligned by dx={dx}, dy={dy}. Target: {self.target_x},{self.target_y}. Real was: {real_x},{real_y}")
+            log_debug(f"align_canvas: aligned by dx={dx}, dy={dy}. Target: {self.target_x},{self.target_y}.")
 
     def setup_toolbar(self):
-        self.lbl_title = ctk.CTkLabel(self.toolbar, text=" ⛶ SINC TRANSLATE", font=ctk.CTkFont(size=10, weight="bold"), text_color="#007AFF")
+        self.lbl_title = ctk.CTkLabel(self.toolbar, text=" ⛶ SINC READ & TRANSLATE", font=ctk.CTkFont(size=10, weight="bold"), text_color="#007AFF")
         self.lbl_title.pack(side="left", padx=5)
         
-        # Перетаскивание за тулбар
         self.toolbar.bind("<ButtonPress-1>", self.start_drag)
         self.toolbar.bind("<B1-Motion>", self.do_drag)
         self.toolbar.bind("<ButtonRelease-1>", self.on_global_release)
-        
         self.lbl_title.bind("<ButtonPress-1>", self.start_drag)
         self.lbl_title.bind("<B1-Motion>", self.do_drag)
         self.lbl_title.bind("<ButtonRelease-1>", self.on_global_release)
         
-        # Кнопки
         self.btn_close = ctk.CTkButton(self.toolbar, text="✕", width=24, height=22, corner_radius=4,
                                        fg_color="transparent", hover_color="#c0392b", text_color="#aaa", font=ctk.CTkFont(size=12, weight="bold"),
                                        command=self.destroy)
@@ -434,26 +752,59 @@ class ScreenTranslatorFrame(tk.Toplevel):
                                        fg_color="transparent", hover_color="#333", text_color="#aaa", font=ctk.CTkFont(size=12),
                                        command=self.speak_translated_text)
         self.btn_speak.pack(side="right", padx=3, pady=3)
+        self.btn_speak.bind("<Enter>", lambda e: self.lbl_title.configure(text="Озвучить весь перевод (🔊)"))
+        self.btn_speak.bind("<Leave>", lambda e: self.lbl_title.configure(text=" ⛶ SINC READ & TRANSLATE"))
+
+        # Click lock toggle button (Lock / Interactive Mode)
+        self.btn_lock = ctk.CTkButton(self.toolbar, text="🔊/A", width=42, height=22, corner_radius=4,
+                                      fg_color="transparent", hover_color="#333", text_color="#aaa", font=ctk.CTkFont(size=11, weight="bold"),
+                                      command=self.toggle_click_lock)
+        self.btn_lock.pack(side="right", padx=3, pady=3)
+        self.btn_lock.bind("<Enter>", lambda e: self.lbl_title.configure(text="Режим чтения: клик по фразам (Пробел)"))
+        self.btn_lock.bind("<Leave>", lambda e: self.lbl_title.configure(text=" ⛶ SINC READ & TRANSLATE"))
         
-        self.btn_visibility = ctk.CTkButton(self.toolbar, text="👁", width=24, height=22, corner_radius=4,
-                                            fg_color="transparent", hover_color="#333", text_color="#aaa", font=ctk.CTkFont(size=12),
-                                            command=self.toggle_visibility)
-        self.btn_visibility.pack(side="right", padx=3, pady=3)
+        self.btn_highlight = ctk.CTkButton(self.toolbar, text="✨", width=24, height=22, corner_radius=4,
+                                           fg_color="#007AFF", text_color="#ffffff", font=ctk.CTkFont(size=12),
+                                           command=self.toggle_highlight)
+        self.btn_highlight.pack(side="right", padx=3, pady=3)
+        self.btn_highlight.bind("<Enter>", lambda e: self.lbl_title.configure(text="Показать/скрыть рамки распознавания (✨)"))
+        self.btn_highlight.bind("<Leave>", lambda e: self.lbl_title.configure(text=" ⛶ SINC READ & TRANSLATE"))
         
         self.btn_auto = ctk.CTkButton(self.toolbar, text="⚡", width=24, height=22, corner_radius=4,
                                       fg_color="transparent", hover_color="#333", text_color="#aaa", font=ctk.CTkFont(size=12),
                                       command=self.toggle_auto_scan)
         self.btn_auto.pack(side="right", padx=3, pady=3)
-        
-        self.btn_translate = ctk.CTkButton(self.toolbar, text="🔄", width=24, height=22, corner_radius=4,
-                                           fg_color="transparent", hover_color="#333", text_color="#aaa", font=ctk.CTkFont(size=12),
-                                           command=self.translate_area)
-        self.btn_translate.pack(side="right", padx=3, pady=3)
-        
-        self.btn_highlight = ctk.CTkButton(self.toolbar, text="✨", width=24, height=22, corner_radius=4,
-                                           fg_color="transparent", hover_color="#333", text_color="#aaa", font=ctk.CTkFont(size=12),
-                                           command=self.toggle_highlight)
-        self.btn_highlight.pack(side="right", padx=3, pady=3)
+        self.btn_auto.bind("<Enter>", lambda e: self.lbl_title.configure(text="Автосканирование изменений (⚡)"))
+        self.btn_auto.bind("<Leave>", lambda e: self.lbl_title.configure(text=" ⛶ SINC READ & TRANSLATE"))
+
+        self.btn_help = ctk.CTkButton(self.toolbar, text="❓", width=24, height=22, corner_radius=4,
+                                      fg_color="transparent", hover_color="#333", text_color="#aaa", font=ctk.CTkFont(size=12),
+                                      command=self.show_help_overlay)
+        self.btn_help.pack(side="right", padx=3, pady=3)
+        self.btn_help.bind("<Enter>", lambda e: self.lbl_title.configure(text="Инструкция и легенда переводчика (❓)"))
+        self.btn_help.bind("<Leave>", lambda e: self.lbl_title.configure(text=" ⛶ SINC READ & TRANSLATE"))
+
+    def toggle_click_lock(self):
+        self.click_lock_active = not self.click_lock_active
+        if self.click_lock_active:
+            self.attributes("-transparentcolor", "")
+            self.attributes("-alpha", 0.35)
+            self.canvas.configure(bg="#0c0c0c")
+            self.btn_lock.configure(fg_color="#007AFF", text_color="#ffffff")
+            self.lbl_title.configure(text=" 🔒 РЕЖИМ ЧТЕНИЯ АКТИВЕН", text_color="#34C759")
+        else:
+            self.attributes("-alpha", 1.0)
+            self.canvas.configure(bg="#000001")
+            self.attributes("-transparentcolor", "#000001")
+            self.btn_lock.configure(fg_color="transparent", text_color="#aaa")
+            self.lbl_title.configure(text=" ⛶ SINC READ & TRANSLATE", text_color="#007AFF")
+            
+            # Reset hover states
+            self.last_hovered_word = None
+            self.last_hovered_idx = None
+            self.canvas.configure(cursor="")
+            
+        self.draw_translations()
 
     def toggle_highlight(self):
         self.show_highlight = not self.show_highlight
@@ -464,7 +815,6 @@ class ScreenTranslatorFrame(tk.Toplevel):
         self.draw_translations()
 
     def setup_drag_and_resize(self):
-        # Настройка 4 границ
         self.left_border.bind("<ButtonPress-1>", self.start_resize)
         self.left_border.bind("<B1-Motion>", self.do_resize_left)
         self.left_border.bind("<ButtonRelease-1>", self.on_global_release)
@@ -481,7 +831,7 @@ class ScreenTranslatorFrame(tk.Toplevel):
         self.bottom_border.bind("<B1-Motion>", self.do_resize_bottom)
         self.bottom_border.bind("<ButtonRelease-1>", self.on_global_release)
         
-        # Настройка 4 углов
+        # Corners
         self.top_left_corner.bind("<ButtonPress-1>", self.start_resize)
         self.top_left_corner.bind("<B1-Motion>", self.do_resize_top_left)
         self.top_left_corner.bind("<ButtonRelease-1>", self.on_global_release)
@@ -506,22 +856,18 @@ class ScreenTranslatorFrame(tk.Toplevel):
         else:
             self.btn_auto.configure(fg_color="transparent", text_color="#aaa")
 
-    # --- Фоновый мониторинг изменений экрана ---
     def check_screen_changes(self):
         if not self.winfo_exists():
             return
             
         if self.auto_scan and not self.is_translating and not getattr(self, "need_update_translation", False):
             try:
-                # Обрабатываем все события перемещения окна, чтобы получить свежие координаты
                 self.update()
                 canvas_x, canvas_y = get_canvas_physical_pos(self.canvas)
                 canvas_w = self.canvas.winfo_width()
                 canvas_h = self.canvas.winfo_height()
                 
                 if canvas_w > 10 and canvas_h > 10:
-                    # Обходим баг Pillow с отрицательными координатами:
-                    # Делаем полноэкранный снимок виртуального экрана и вырезаем Canvas по координатам
                     vx, vy = get_virtual_screen_origin()
                     full_screenshot = ImageGrab.grab(all_screens=True)
                     
@@ -531,23 +877,18 @@ class ScreenTranslatorFrame(tk.Toplevel):
                     crop_y2 = crop_y1 + canvas_h
                     
                     current_img = full_screenshot.crop((crop_x1, crop_y1, crop_x2, crop_y2))
-                    # Даунсэмплинг для быстрой обработки и исключения шумов
                     small_img = current_img.resize((32, 32)).convert("L")
                     pixels = list(small_img.getdata())
                     
                     if self.last_screen_hash is not None:
                         diff = sum(abs(p1 - p2) for p1, p2 in zip(pixels, self.last_screen_hash)) / len(pixels)
-                        
                         if diff > 3.0:
-                            # Экран изменился
                             self.screen_changed = True
                             self.stabilize_counter = 0
                             self.last_screen_hash = pixels
                         else:
-                            # Экран стабилен
                             if getattr(self, "screen_changed", False):
                                 self.stabilize_counter += 1
-                                # Если стабилен более 800 мс (1 цикла) после изменений, переводим
                                 if self.stabilize_counter >= 1:
                                     self.screen_changed = False
                                     self.stabilize_counter = 0
@@ -561,13 +902,11 @@ class ScreenTranslatorFrame(tk.Toplevel):
                 
         self.after(800, self.check_screen_changes)
 
-    # --- Перевод при отпускании мыши ---
     def on_global_release(self, event):
         if getattr(self, "need_update_translation", False):
             self.need_update_translation = False
             self.translate_area()
 
-    # --- Перетаскивание за тулбар ---
     def start_drag(self, event):
         self.drag_start_x = event.x_root
         self.drag_start_y = event.y_root
@@ -578,9 +917,10 @@ class ScreenTranslatorFrame(tk.Toplevel):
         self.need_update_translation = True
         dx = event.x_root - self.drag_start_x
         dy = event.y_root - self.drag_start_y
-        self.geometry(f"+{self.win_start_x + dx}+{self.win_start_y + dy}")
+        new_x = self.win_start_x + dx
+        new_y = max(0, self.win_start_y + dy)
+        self.geometry(f"+{new_x}+{new_y}")
 
-    # --- Классический ресайз (Фиксированные стартовые переменные) ---
     def start_resize(self, event):
         self.resize_start_x = event.x_root
         self.resize_start_y = event.y_root
@@ -614,11 +954,9 @@ class ScreenTranslatorFrame(tk.Toplevel):
     def do_resize_top(self, event):
         self.need_update_translation = True
         dy = event.y_root - self.resize_start_y
-        new_h = max(self.min_height, self.resize_start_h - dy)
-        if new_h > self.min_height:
-            new_y = self.resize_win_y + dy
-        else:
-            new_y = self.resize_win_y + (self.resize_start_h - self.min_height)
+        new_y = max(0, self.resize_win_y + dy)
+        actual_dy = new_y - self.resize_win_y
+        new_h = max(self.min_height, self.resize_start_h - actual_dy)
         self.geometry(f"{self.resize_start_w}x{new_h}+{self.resize_win_x}+{new_y}")
 
     def do_resize_top_left(self, event):
@@ -626,15 +964,15 @@ class ScreenTranslatorFrame(tk.Toplevel):
         dx = event.x_root - self.resize_start_x
         dy = event.y_root - self.resize_start_y
         new_w = max(self.min_width, self.resize_start_w - dx)
-        new_h = max(self.min_height, self.resize_start_h - dy)
         if new_w > self.min_width:
             new_x = self.resize_win_x + dx
         else:
             new_x = self.resize_win_x + (self.resize_start_w - self.min_width)
-        if new_h > self.min_height:
-            new_y = self.resize_win_y + dy
-        else:
-            new_y = self.resize_win_y + (self.resize_start_h - self.min_height)
+            
+        requested_y = self.resize_win_y + dy
+        new_y = max(0, requested_y)
+        actual_dy = new_y - self.resize_win_y
+        new_h = max(self.min_height, self.resize_start_h - actual_dy)
         self.geometry(f"{new_w}x{new_h}+{new_x}+{new_y}")
 
     def do_resize_top_right(self, event):
@@ -642,11 +980,11 @@ class ScreenTranslatorFrame(tk.Toplevel):
         dx = event.x_root - self.resize_start_x
         dy = event.y_root - self.resize_start_y
         new_w = max(self.min_width, self.resize_start_w + dx)
-        new_h = max(self.min_height, self.resize_start_h - dy)
-        if new_h > self.min_height:
-            new_y = self.resize_win_y + dy
-        else:
-            new_y = self.resize_win_y + (self.resize_start_h - self.min_height)
+        
+        requested_y = self.resize_win_y + dy
+        new_y = max(0, requested_y)
+        actual_dy = new_y - self.resize_win_y
+        new_h = max(self.min_height, self.resize_start_h - actual_dy)
         self.geometry(f"{new_w}x{new_h}+{self.resize_win_x}+{new_y}")
 
     def do_resize_bottom_left(self, event):
@@ -669,15 +1007,13 @@ class ScreenTranslatorFrame(tk.Toplevel):
         new_h = max(self.min_height, self.resize_start_h + dy)
         self.geometry(f"{new_w}x{new_h}+{self.resize_win_x}+{self.resize_win_y}")
 
-    # --- Процесс перевода (Потокобезопасная реализация) ---
     def translate_precropped(self, cropped_image):
         if self.is_translating:
             return
         self.is_translating = True
-        self.btn_translate.configure(text="⌛")
+        self.btn_speak.configure(text="⌛")
         self.canvas.delete("all")
         
-        # Принудительно обновляем геометрию окна, чтобы winfo_width() вернул реальные размеры
         self.update_idletasks()
         self.update()
         
@@ -686,8 +1022,8 @@ class ScreenTranslatorFrame(tk.Toplevel):
         self.canvas.create_text(
             canvas_w / 2, 
             canvas_h / 2, 
-            text="⏳ Перевод...", 
-            font=("Segoe UI", 24, "bold"), 
+            text="⏳ Распознавание...", 
+            font=("Segoe UI", 16, "bold"), 
             fill="#007AFF", 
             justify="center",
             tags="loading"
@@ -720,7 +1056,7 @@ class ScreenTranslatorFrame(tk.Toplevel):
             )
             self.after(0, lambda: self.finish_translation(data))
         except Exception as e:
-            print(f"Error during translation process: {e}")
+            print(f"Error during OCR process: {e}")
             self.after(0, lambda: self.finish_translation(None))
         finally:
             loop.close()
@@ -730,14 +1066,11 @@ class ScreenTranslatorFrame(tk.Toplevel):
             return
         
         self.is_translating = True
-        self.btn_translate.configure(text="⌛")
+        self.btn_speak.configure(text="⌛")
         
-        # Делаем холст прозрачным и очищаем
         self.canvas.delete("all")
-        self.canvas_images.clear()
+        self.canvas_word_items.clear()
         
-        # Получаем координаты и размеры холста Canvas ДО скрытия окна!
-        # Сначала принудительно обновляем события Tkinter, чтобы применить перемещение
         self.update()
         canvas_x, canvas_y = get_canvas_physical_pos(self.canvas)
         canvas_w = self.canvas.winfo_width()
@@ -745,16 +1078,13 @@ class ScreenTranslatorFrame(tk.Toplevel):
         
         log_debug(f"translate_area: physical pos = ({canvas_x}, {canvas_y}), size = {canvas_w}x{canvas_h}")
         
-        # Скрываем окно переводчика гарантированным способом
         self.withdraw()
         self.update()
-        time.sleep(0.18) # Даем DWM время скрыть окно перед скриншотом
+        time.sleep(0.18)
         
         screenshot = None
         try:
             if canvas_w > 10 and canvas_h > 10:
-                # Обходим баг Pillow с отрицательными координатами:
-                # Делаем полноэкранный снимок виртуального экрана и вырезаем Canvas по координатам
                 vx, vy = get_virtual_screen_origin()
                 full_screenshot = ImageGrab.grab(all_screens=True)
                 
@@ -766,9 +1096,7 @@ class ScreenTranslatorFrame(tk.Toplevel):
                 screenshot = full_screenshot.crop((crop_x1, crop_y1, crop_x2, crop_y2))
         except Exception as e:
             log_debug(f"Error capturing screen in translate_area: {e}")
-            print(f"Error capturing screen in translate_area: {e}")
             
-        # Восстанавливаем видимость окна переводчика на экране
         self.deiconify()
         self.attributes("-topmost", True)
         self.focus_force()
@@ -776,19 +1104,18 @@ class ScreenTranslatorFrame(tk.Toplevel):
         
         if screenshot is None:
             self.is_translating = False
-            self.btn_translate.configure(text="🔄")
+            self.btn_speak.configure(text="🔊")
             return
             
         self.current_screenshot = screenshot
         
-        # Рисуем индикатор загрузки после снятия скриншота
         canvas_w = max(self.canvas.winfo_width(), self.winfo_width() - 2 * self.border_width)
         canvas_h = max(self.canvas.winfo_height(), self.winfo_height() - 2 * self.border_width - 28)
         self.canvas.create_text(
             canvas_w / 2, 
             canvas_h / 2, 
-            text="⏳ Перевод...", 
-            font=("Segoe UI", 24, "bold"), 
+            text="⏳ Распознавание...", 
+            font=("Segoe UI", 16, "bold"), 
             fill="#007AFF", 
             justify="center",
             tags="loading"
@@ -821,35 +1148,33 @@ class ScreenTranslatorFrame(tk.Toplevel):
                 )
             )
         except Exception as e:
-            print(f"Error during translation process: {e}")
-            # Извлекаем более дружелюбный текст ошибки, если это возможно
+            print(f"Error during OCR process: {e}")
             raw_err = str(e)
             if "Локальный переводчик не установлен" in raw_err:
                 error_msg = "Локальный переводчик не установлен.\nСкачайте модель в настройках."
             elif "Argos Translate" in raw_err:
                 error_msg = "Ошибка движка Argos.\nПожалуйста, установите модель в настройках."
             else:
-                error_msg = f"Ошибка перевода: {raw_err[:60]}"
+                error_msg = f"Ошибка: {raw_err[:60]}"
             data = None
         finally:
             loop.close()
         self.after(0, lambda: self.finish_translation(data, error_msg))
 
     def finish_translation(self, data, error_msg=None):
-        log_debug(f"finish_translation: received data: {data}, error: {error_msg}")
+        log_debug(f"finish_translation: received data: {len(data) if data else 0} items, error: {error_msg}")
         self.is_translating = False
-        self.btn_translate.configure(text="🔄")
+        self.btn_speak.configure(text="🔊")
         self.canvas.delete("loading")
         
         if data is not None:
             self.last_translated_data = data
-            self.show_translation = True
             self.draw_translations()
         else:
             self.canvas.delete("all")
             canvas_w = max(self.canvas.winfo_width(), self.winfo_width() - 2 * self.border_width)
             canvas_h = max(self.canvas.winfo_height(), self.winfo_height() - 2 * self.border_width - 28)
-            msg = error_msg if error_msg else "Ошибка распознавания или перевода"
+            msg = error_msg if error_msg else "Ошибка распознавания"
             self.canvas.create_text(
                 canvas_w / 2, 
                 canvas_h / 2, 
@@ -862,289 +1187,460 @@ class ScreenTranslatorFrame(tk.Toplevel):
             )
 
     def draw_translations(self):
-        log_debug(f"draw_translations: show_translation={self.show_translation}, data size={len(self.last_translated_data) if self.last_translated_data else 0}")
         self.canvas.delete("all")
-        self.canvas_images.clear()
+        self.canvas_word_items.clear()
+        self.last_hovered_word = None
         
-        if not self.show_translation or not self.last_translated_data:
-            self.last_screen_hash = None
-            log_debug("draw_translations: show_translation is False or data is empty. Exiting.")
+        if not self.show_highlight or not self.last_translated_data:
             return
             
-        # Так как процесс полностью DPI-aware, координаты Canvas 1:1 соответствуют физическим пикселям
-        scale = 1.0
-        canvas_h_phys = self.canvas.winfo_height()
-        canvas_w = self.canvas.winfo_width()
+        screenshot = getattr(self, "current_screenshot", None)
         
-        for i, item in enumerate(self.last_translated_data):
-            text = item["text"]
-            original_text = item.get("original_text", "")
-            log_debug(f"Block {i}: original='{original_text}', translated='{text}'")
+        for block_idx, item in enumerate(self.last_translated_data):
+            words = item.get("words", [])
+            was_translated = item.get("was_translated", False)
             
-            if not text or text.strip().lower() == original_text.strip().lower():
-                log_debug(f"Block {i}: text matches original (or empty). Skipping.")
-                continue
-                
-            x1, y1, x2, y2 = item["bbox"]
-            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-            w = x2 - x1
-            h = y2 - y1
-            orig_line_h = item.get("line_height", h)
-            log_debug(f"Block {i} coordinates: bbox={item['bbox']}, w={w}, h={h}, orig_line_h={orig_line_h}")
-            
-            if w <= 0 or h <= 0:
-                log_debug(f"Block {i}: invalid width/height. Skipping.")
-                continue
-                
-            # --- Умный расчет свободного пространства (Smart Padding) ---
-            min_dist_right = max(0, canvas_w - x2) # до правого края Canvas
-            
-            for idx, other_item in enumerate(self.last_translated_data):
-                if idx == i:
+            if not words:
+                # Fallback: если нет слов, рисуем одну линию под весь блок
+                x1, y1, x2, y2 = [int(v) for v in item["bbox"]]
+                if x2 - x1 <= 0 or y2 - y1 <= 0:
                     continue
-                ox1, oy1, ox2, oy2 = other_item["bbox"]
-                ox1, oy1, ox2, oy2 = int(ox1), int(oy1), int(ox2), int(oy2)
-                
-                # Проверяем пересечение по вертикали (на той же высоте)
-                y_overlap = not (oy2 + 2 <= y1 or oy1 - 2 >= y2)
-                if y_overlap:
-                    if ox1 >= x2:
-                        dist = ox1 - x2
-                        if dist < min_dist_right:
-                            min_dist_right = dist
-                            
-            # Безопасный зазор справа 4 пикселя
-            extra_w_right = max(0, min_dist_right - 4)
+                brightness = _get_bg_brightness(screenshot, (x1, y1, x2, y2))
+                palette = PALETTE_EN_DARK if brightness < 128 else PALETTE_EN_LIGHT
+                y_base = y2 + max(1, int((y2 - y1) * 0.06))
+                tag = f"block_{block_idx}"
+                items = []
+                for dy, width, color, stipple in palette:
+                    opts = {"fill": color, "width": width, "capstyle": tk.ROUND, "tags": tag}
+                    if stipple:
+                        opts["stipple"] = stipple
+                    item_id = self.canvas.create_line(x1 - 2, y_base + dy, x2 + 2, y_base + dy, **opts)
+                    items.append(item_id)
+                self.canvas_word_items[(block_idx, 0)] = items
+                continue
             
-            # Ограничиваем расширение вправо: до 45% от ширины, но не менее 40px
-            max_ext_r = max(40, int(w * 0.45))
-            extra_w_right = min(extra_w_right, max_ext_r)
-            
-            draw_x1 = x1
-            draw_x2 = x2 + extra_w_right
-            draw_w = draw_x2 - draw_x1
-            
-            # Ищем свободное пространство снизу в новых границах draw_x1..draw_x2
-            min_dist_to_next = max(0, canvas_h_phys - y2)
-            for idx, other_item in enumerate(self.last_translated_data):
-                if idx == i:
+            for word_idx, word in enumerate(words):
+                wx1, wy1, wx2, wy2 = [int(v) for v in word["bbox"]]
+                w = wx2 - wx1
+                h = wy2 - wy1
+                if w <= 0 or h <= 0:
                     continue
-                ox1, oy1, ox2, oy2 = other_item["bbox"]
-                ox1, oy1, ox2, oy2 = int(ox1), int(oy1), int(ox2), int(oy2)
                 
-                if oy1 >= y2:
-                    # Проверяем пересечение по горизонтали в расширенных границах
-                    x_overlap = not (ox2 <= draw_x1 or ox1 >= draw_x2)
-                    if x_overlap:
-                        dist = oy1 - y2
-                        if dist < min_dist_to_next:
-                            min_dist_to_next = dist
-                            
-            # Безопасный зазор снизу 6 пикселей
-            extra_h_down = max(0, min_dist_to_next - 6)
-            
-            # Ограничиваем вертикальное расширение
-            if h > 40:
-                max_ext_d = int(h * 1.5)
-            else:
-                max_ext_d = max(30, h)
-            extra_h_down = min(extra_h_down, max_ext_d)
-            
-            draw_h = h + extra_h_down
-            log_debug(f"Block {i}: draw_x1={draw_x1}, draw_x2={draw_x2}, draw_w={draw_w}, extra_h_down={extra_h_down}, draw_h={draw_h}")
-            
-            bg_color = "#FFFFFF"
-            fg_color = "#000000"
-            if hasattr(self, "current_screenshot") and self.current_screenshot:
-                bg_color, fg_color = analyze_colors(self.current_screenshot, (x1, y1, x2, y2))
-                log_debug(f"Block {i} colors: bg={bg_color}, fg={fg_color}")
-            else:
-                log_debug(f"Block {i}: current_screenshot missing!")
-            
-            block_img = None
-            text_box_coords = None
-            if hasattr(self, "current_screenshot") and self.current_screenshot:
-                try:
-                    sc_w, sc_h = self.current_screenshot.size
-                    crop_x2 = max(0, min(sc_w, draw_x2))
-                    crop_y2 = max(0, min(sc_h, y2 + extra_h_down))
-                    
-                    if crop_x2 > x1 and crop_y2 > y1:
-                        # Вырезаем область плашки
-                        block = self.current_screenshot.crop((x1, y1, crop_x2, crop_y2))
-                        log_debug(f"Block {i}: cropped successfully. size={block.size}")
-                        
-                        if opencv_available:
-                            block_cv = cv2.cvtColor(np.array(block), cv2.COLOR_RGB2BGR)
-                            bg_rgb = tuple(int(bg_color[i:i+2], 16) for i in (1, 3, 5))
-                            bg_b, bg_g, bg_r = bg_rgb[2], bg_rgb[1], bg_rgb[0]
-                            
-                            # Маска только для оригинальной области текста (от 0 до w)
-                            mask = np.zeros(block_cv.shape[:2], dtype=np.uint8)
-                            diff = np.abs(block_cv[:h, :w].astype(np.int32) - [bg_b, bg_g, bg_r])
-                            mask_text = np.any(diff > 35, axis=-1).astype(np.uint8) * 255
-                            mask[:h, :w] = mask_text
-                            
-                            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-                            mask = cv2.dilate(mask, kernel, iterations=1)
-                            
-                            inpainted = cv2.inpaint(block_cv, mask, 3, cv2.INPAINT_TELEA)
-                            block_clean = Image.fromarray(cv2.cvtColor(inpainted, cv2.COLOR_BGR2RGB))
-                        else:
-                            block_clean = Image.new("RGB", (crop_x2 - x1, draw_h), bg_color)
-                            
-                        draw = ImageDraw.Draw(block_clean)
-                        
-                        # Динамически подбираем шрифт, чтобы текст влез с учетом переносов
-                        font_size = max(10, int(orig_line_h * 1.15))
-                        wrapped_lines = []
-                        line_height = 0
-                        total_text_h = 0
-                        line_spacing = 0
-                        y_pos_start = 0
-                        
-                        while font_size > 8:
-                            try:
-                                font = ImageFont.truetype("segoeui.ttf", font_size)
-                            except IOError:
-                                try:
-                                    font = ImageFont.truetype("arial.ttf", font_size)
-                                except IOError:
-                                    font = ImageFont.load_default()
-                                    break
-                                    
-                            wrapped_lines = wrap_text(text, font, draw_w - 6)
-                            
-                            try:
-                                left_t, top_t, right_t, bottom_t = draw.textbbox((0, 0), "Abc", font=font)
-                                single_line_h = bottom_t - top_t
-                            except:
-                                try:
-                                    _, single_line_h = font.getsize("Abc")
-                                except:
-                                    single_line_h = font_size
-                                    
-                            line_spacing = int(single_line_h * 0.15)
-                            line_height = single_line_h + line_spacing
-                            total_text_h = len(wrapped_lines) * line_height - line_spacing
-                            
-                            # Вычисляем Y-координату начала первой строки перевода
-                            # Первая строка перевода выравнивается по центру оригинальной строки
-                            y_pos_start = max(0, (orig_line_h - single_line_h) // 2)
-                            
-                            # Если по высоте текст помещается в draw_h, выходим из цикла
-                            if y_pos_start + total_text_h <= draw_h - 2:
-                                break
-                            font_size -= 1
-                            
-                        y_pos = y_pos_start
-                        left_min = draw_w
-                        right_max = 0
-                        
-                        for line in wrapped_lines:
-                            # Рисуем с отступом в 3 пикселя слева
-                            draw.text((3, y_pos), line, fill=fg_color, font=font)
-                            try:
-                                l_b, t_b, r_b, b_b = draw.textbbox((3, y_pos), line, font=font)
-                                if l_b < left_min: left_min = l_b
-                                if r_b > right_max: right_max = r_b
-                            except:
-                                pass
-                            y_pos += line_height
-                            
-                        text_box_coords = (left_min, y_pos_start, right_max, y_pos - line_spacing)
-                        block_img = block_clean
-                        log_debug(f"Block {i}: PIL rendering completed. font_size={font_size}, lines={len(wrapped_lines)}")
-                except Exception as e:
-                    log_debug(f"Block {i}: Error rendering block: {e}")
-                    print(f"Error rendering block: {e}")
-                    
-            if block_img is not None:
-                log_debug(f"Block {i}: block_img is valid, drawing Image on Canvas")
-                if self.show_highlight and text_box_coords is not None:
-                    block_rgba = block_img.convert("RGBA")
-                    glow = Image.new("RGBA", block_rgba.size, (0, 0, 0, 0))
-                    draw_glow = ImageDraw.Draw(glow)
-                    
-                    try:
-                        left, top, right, bottom = text_box_coords
-                        # Мягкое градиентное неоновое свечение (4 слоя)
-                        for r_offset, alpha in [(4, 8), (3, 16), (2, 32), (1, 64)]:
-                            draw_glow.rounded_rectangle(
-                                [left - r_offset, top - r_offset, right + r_offset, bottom + r_offset],
-                                radius=4 + r_offset,
-                                fill=(0, 122, 255, alpha // 4),
-                                outline=(0, 122, 255, alpha),
-                                width=1
-                            )
-                    except AttributeError:
-                        for r_offset, alpha in [(4, 8), (3, 16), (2, 32), (1, 64)]:
-                            draw_glow.rounded_rectangle(
-                                [0 - r_offset, 0 - r_offset, glow.width - 1 + r_offset, glow.height - 1 + r_offset],
-                                radius=4 + r_offset,
-                                fill=(0, 122, 255, alpha // 4),
-                                outline=(0, 122, 255, alpha),
-                                width=1
-                            )
-                        
-                    block_img = Image.alpha_composite(block_rgba, glow).convert("RGB")
-                    
-                img_tk = ImageTk.PhotoImage(block_img)
-                self.canvas_images.append(img_tk)
-                log_x1 = draw_x1 / scale
-                log_y1 = y1 / scale
-                self.canvas.create_image(log_x1, log_y1, image=img_tk, anchor="nw")
-            else:
-                # Fallback: стандартный Tkinter текст
-                log_debug(f"Block {i}: block_img is None! Using Tkinter fallback.")
-                log_x1 = x1 / scale
-                log_y1 = y1 / scale
-                log_x2 = draw_x2 / scale
-                log_y2 = (y1 + draw_h) / scale
-                log_draw_w = draw_w / scale
+                # Определяем: латинское слово или кириллическое
+                is_latin = _is_latin_word(word["text"])
                 
-                self.canvas.create_rectangle(
-                    log_x1, log_y1, log_x2, log_y2,
-                    fill=bg_color,
-                    outline="",
-                    width=0
-                )
+                # Определяем яркость фона
+                brightness = _get_bg_brightness(screenshot, (wx1, wy1, wx2, wy2))
                 
-                font_size_px = max(10, int(orig_line_h * 1.15))
-                log_font_size_px = int(font_size_px / scale)
+                # Выбираем палитру
+                if is_latin:
+                    palette = PALETTE_EN_DARK if brightness < 128 else PALETTE_EN_LIGHT
+                else:
+                    palette = PALETTE_RU_DARK if brightness < 128 else PALETTE_RU_LIGHT
                 
-                self.canvas.create_text(
-                    log_x1 + 3,
-                    log_y1 + (orig_line_h / 2) / scale,
-                    text=text,
-                    fill=fg_color,
-                    font=("Segoe UI", -log_font_size_px, "bold"),
-                    width=log_draw_w - 6,
-                    anchor="w"
-                )
-                if self.show_highlight:
-                    self.canvas.create_rectangle(
-                        log_x1 - 2, log_y1 - 2, log_x2 + 2, log_y2 + 2,
-                        outline="#007AFF",
-                        width=1.5
+                # Позиция underline — чуть ниже нижней границы слова
+                y_base = wy2 + max(1, int(h * 0.06))
+                
+                word_key = (block_idx, word_idx)
+                tag = f"w_{block_idx}_{word_idx}"
+                items = []
+                
+                for dy, width, color, stipple in palette:
+                    opts = {"fill": color, "width": width, "capstyle": tk.ROUND, "tags": tag}
+                    if stipple:
+                        opts["stipple"] = stipple
+                    item_id = self.canvas.create_line(
+                        wx1 - 2, y_base + dy,
+                        wx2 + 2, y_base + dy,
+                        **opts
                     )
+                    items.append(item_id)
                 
-        self.last_screen_hash = None
+                self.canvas_word_items[word_key] = items
 
-    def toggle_visibility(self):
-        self.show_translation = not self.show_translation
-        if self.show_translation:
-            self.btn_visibility.configure(text="👁", fg_color="transparent")
-            self.draw_translations()
+        # Подсказка внизу canvas
+        if self.last_translated_data:
+            canvas_w = max(self.canvas.winfo_width(), self.winfo_width() - 2 * self.border_width)
+            canvas_h = max(self.canvas.winfo_height(), self.winfo_height() - 2 * self.border_width - 28)
+            
+            if not self.click_lock_active:
+                hint_text = "💡 Нажмите [Space] или 🔊/A для кликов по словам"
+                hint_color = "#888888"
+            else:
+                hint_text = "🖱️ ЛКМ: озвучка | 2xЛКМ: перевод слова | ПКМ: редактор | ❓: справка"
+                hint_color = "#34C759"
+                
+            self.canvas.create_text(
+                canvas_w / 2, 
+                canvas_h - 15, 
+                text=hint_text, 
+                font=("Segoe UI", 9, "bold"), 
+                fill=hint_color, 
+                justify="center",
+                tags="hint"
+            )
+
+    # --- Helper: поиск слова по координатам ---
+    def _find_word_at(self, x, y):
+        """Возвращает (block_idx, word_idx) или None."""
+        if not self.last_translated_data:
+            return None
+        for block_idx, item in enumerate(self.last_translated_data):
+            words = item.get("words", [])
+            for word_idx, word in enumerate(words):
+                wx1, wy1, wx2, wy2 = word["bbox"]
+                # Расширяем зону попадания на 4px во все стороны
+                if (wx1 - 4 <= x <= wx2 + 4) and (wy1 - 4 <= y <= wy2 + 8):
+                    return (block_idx, word_idx)
+        return None
+    
+    def _find_block_at(self, x, y):
+        """Возвращает block_idx или None."""
+        if not self.last_translated_data:
+            return None
+        for block_idx, item in enumerate(self.last_translated_data):
+            x1, y1, x2, y2 = item["bbox"]
+            if (x1 - 5 <= x <= x2 + 5) and (y1 - 5 <= y <= y2 + 10):
+                return block_idx
+        return None
+
+    # --- Interactive Hover & Click Events ---
+    def on_canvas_motion(self, event):
+        if not self.click_lock_active or not self.last_translated_data or not self.show_highlight:
+            return
+            
+        x, y = event.x, event.y
+        word_hit = self._find_word_at(x, y)
+        
+        if word_hit != self.last_hovered_word:
+            # Сброс предыдущего hover
+            if self.last_hovered_word is not None:
+                self._reset_word_hover(self.last_hovered_word)
+            
+            # Установка нового hover
+            if word_hit is not None:
+                self._set_word_hover(word_hit)
+                self.canvas.configure(cursor="hand2")
+            else:
+                self.canvas.configure(cursor="")
+            
+            self.last_hovered_word = word_hit
+            # Обновляем last_hovered_idx для совместимости
+            self.last_hovered_idx = word_hit[0] if word_hit else None
+    
+    def _set_word_hover(self, word_key):
+        """Усиливает glow подчёркивание конкретного слова."""
+        block_idx, word_idx = word_key
+        if block_idx >= len(self.last_translated_data):
+            return
+            
+        item = self.last_translated_data[block_idx]
+        words = item.get("words", [])
+        if word_idx >= len(words):
+            return
+        
+        word = words[word_idx]
+        wx1, wy1, wx2, wy2 = [int(v) for v in word["bbox"]]
+        h = max(10, wy2 - wy1)
+        y_base = wy2 + max(1, int(h * 0.06))
+        
+        is_latin = _is_latin_word(word["text"])
+        screenshot = getattr(self, "current_screenshot", None)
+        brightness = _get_bg_brightness(screenshot, (wx1, wy1, wx2, wy2))
+        
+        if is_latin:
+            palette = PALETTE_EN_HOVER_DARK if brightness < 128 else PALETTE_EN_HOVER_LIGHT
         else:
-            self.btn_visibility.configure(text="👁‍🗨", fg_color="#007AFF")
-            self.canvas.delete("all")
+            palette = PALETTE_RU_HOVER_DARK if brightness < 128 else PALETTE_RU_HOVER_LIGHT
+        
+        # Удаляем старые элементы и рисуем hover-версию
+        if word_key in self.canvas_word_items:
+            for cid in self.canvas_word_items[word_key]:
+                self.canvas.delete(cid)
+        
+        tag = f"w_{block_idx}_{word_idx}"
+        items = []
+        for dy, width, color, stipple in palette:
+            opts = {"fill": color, "width": width, "capstyle": tk.ROUND, "tags": tag}
+            if stipple:
+                opts["stipple"] = stipple
+            item_id = self.canvas.create_line(wx1 - 2, y_base + dy, wx2 + 2, y_base + dy, **opts)
+            items.append(item_id)
+        self.canvas_word_items[word_key] = items
+    
+    def _reset_word_hover(self, word_key):
+        """Возвращает слово к обычному glow подчёркиванию."""
+        block_idx, word_idx = word_key
+        if block_idx >= len(self.last_translated_data):
+            return
+        
+        item = self.last_translated_data[block_idx]
+        words = item.get("words", [])
+        if word_idx >= len(words):
+            return
+        
+        word = words[word_idx]
+        wx1, wy1, wx2, wy2 = [int(v) for v in word["bbox"]]
+        h = max(10, wy2 - wy1)
+        y_base = wy2 + max(1, int(h * 0.06))
+        
+        is_latin = _is_latin_word(word["text"])
+        screenshot = getattr(self, "current_screenshot", None)
+        brightness = _get_bg_brightness(screenshot, (wx1, wy1, wx2, wy2))
+        
+        if is_latin:
+            palette = PALETTE_EN_DARK if brightness < 128 else PALETTE_EN_LIGHT
+        else:
+            palette = PALETTE_RU_DARK if brightness < 128 else PALETTE_RU_LIGHT
+        
+        # Удаляем hover-элементы и рисуем обычную версию
+        if word_key in self.canvas_word_items:
+            for cid in self.canvas_word_items[word_key]:
+                self.canvas.delete(cid)
+        
+        tag = f"w_{block_idx}_{word_idx}"
+        items = []
+        for dy, width, color, stipple in palette:
+            opts = {"fill": color, "width": width, "capstyle": tk.ROUND, "tags": tag}
+            if stipple:
+                opts["stipple"] = stipple
+            item_id = self.canvas.create_line(wx1 - 2, y_base + dy, wx2 + 2, y_base + dy, **opts)
+            items.append(item_id)
+        self.canvas_word_items[word_key] = items
+
+    # Legacy compatibility shims
+    def set_hover_effect(self, idx):
+        pass
+    def reset_hover_effect(self, idx):
+        pass
+
+    def on_canvas_click(self, event):
+        # Закрываем активный тултип при клике в любом месте
+        if self.active_tooltip and self.active_tooltip.winfo_exists():
+            self.active_tooltip.destroy()
+            self.active_tooltip = None
+            
+        if not self.click_lock_active or not self.last_translated_data:
+            return
+        
+        # Debounce: откладываем одинарный клик на 250мс (чтобы двойной клик мог отменить)
+        if self._click_after_id:
+            self.after_cancel(self._click_after_id)
+        self._click_after_id = self.after(250, lambda: self._do_single_click(event))
+    
+    def _do_single_click(self, event):
+        """Обработчик одинарного клика с debounce — озвучка блока."""
+        self._click_after_id = None
+        x, y = event.x, event.y
+        block_idx = self._find_block_at(x, y)
+        if block_idx is not None:
+            speak_orig = bool(event.state & 0x0004)  # Ctrl
+            self.speak_sentence(block_idx, speak_original=speak_orig)
+    
+    def on_canvas_double_click(self, event):
+        """Двойной клик — перевод отдельного слова в тултипе."""
+        # Отменяем одинарный клик (debounce)
+        if self._click_after_id:
+            self.after_cancel(self._click_after_id)
+            self._click_after_id = None
+        
+        if not self.click_lock_active or not self.last_translated_data:
+            return
+        
+        word_hit = self._find_word_at(event.x, event.y)
+        if word_hit is None:
+            return
+        
+        block_idx, word_idx = word_hit
+        item = self.last_translated_data[block_idx]
+        words = item.get("words", [])
+        if word_idx >= len(words):
+            return
+        
+        word = words[word_idx]
+        word_text = word["text"]
+        
+        # Показываем WordTooltip
+        self._show_word_tooltip(word_text, event.x_root, event.y_root)
+    
+    def _show_word_tooltip(self, word_text, x_root, y_root):
+        """Показывает компактный тултип с переводом одного слова."""
+        if self.active_tooltip and self.active_tooltip.winfo_exists():
+            try:
+                self.active_tooltip.destroy()
+            except:
+                pass
+        self.active_tooltip = WordTooltip(self, word_text, x_root, y_root)
+
+    def on_canvas_right_click(self, event):
+        if not self.click_lock_active or not self.last_translated_data:
+            return
+            
+        x, y = event.x, event.y
+        block_idx = self._find_block_at(x, y)
+        if block_idx is not None:
+            item = self.last_translated_data[block_idx]
+            self.show_tooltip(item, event.x_root, event.y_root)
+
+    def show_tooltip(self, item, x_root, y_root):
+        if self.active_tooltip and self.active_tooltip.winfo_exists():
+            try:
+                self.active_tooltip.destroy()
+            except:
+                pass
+        self.active_tooltip = TranslationTooltip(self, item, x_root, y_root)
+
+    def force_refresh_sentence(self, original_text: str):
+        # Запускаем фоновую задачу принудительного перевода
+        import asyncio
+        asyncio.create_task(self._async_force_refresh(original_text))
+        
+    async def _async_force_refresh(self, original_text: str):
+        try:
+            engine_type = getattr(self.master, "translation_engine", "google_cache")
+            ollama_model = getattr(self.master, "ollama_model", "gemma2")
+            ollama_url = getattr(self.master, "ollama_url", "http://localhost:11434")
+            msty_model = getattr(self.master, "msty_model", "local-model")
+            msty_url = getattr(self.master, "msty_url", "http://localhost:8080")
+            
+            import functools
+            import sqlite3
+            loop = asyncio.get_running_loop()
+            
+            def do_trans():
+                import translation_engine
+                # Удаляем старую автозапись из кэша перед переводом
+                try:
+                    conn = sqlite3.connect(translation_engine.DB_PATH)
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM translations WHERE LOWER(source_text) = LOWER(?)", (original_text.strip(),))
+                    conn.commit()
+                    conn.close()
+                except:
+                    pass
+                    
+                engine = translation_engine.get_engine(engine_type, 
+                                                       ollama_model=ollama_model, 
+                                                       ollama_url=ollama_url,
+                                                       msty_model=msty_model,
+                                                       msty_url=msty_url)
+                res = engine.translate_batch([original_text], self.translate_to)
+                return res[0] if res else original_text
+                
+            new_text = await loop.run_in_executor(None, do_trans)
+            
+            # Обновляем текст предложения в last_translated_data
+            updated = False
+            for item in self.last_translated_data:
+                if item["original_text"].strip().lower() == original_text.strip().lower():
+                    item["text"] = new_text
+                    updated = True
+                    
+            if updated:
+                # Перерисовываем канвас
+                self.draw_translations()
+                # Озвучиваем обновленный перевод
+                for i, item in enumerate(self.last_translated_data):
+                    if item["original_text"].strip().lower() == original_text.strip().lower():
+                        self.speak_sentence(i)
+                        break
+        except Exception as e:
+            print(f"Force refresh failed for '{original_text}': {e}")
+
+    def save_custom_sentence_translation(self, original_text: str, custom_text: str):
+        import translation_engine
+        engine_type = getattr(self.master, "translation_engine", "google_cache")
+        engine = translation_engine.get_engine(engine_type)
+        engine.save_custom_translation(original_text, self.translate_to, custom_text)
+        
+        updated = False
+        for item in self.last_translated_data:
+            if item["original_text"].strip().lower() == original_text.strip().lower():
+                item["text"] = custom_text
+                updated = True
+                
+        if updated:
+            self.draw_translations()
+            for i, item in enumerate(self.last_translated_data):
+                if item["original_text"].strip().lower() == original_text.strip().lower():
+                    self.speak_sentence(i)
+                    break
+
+    def reset_custom_sentence_translation(self, original_text: str):
+        import translation_engine
+        engine_type = getattr(self.master, "translation_engine", "google_cache")
+        engine = translation_engine.get_engine(engine_type)
+        engine.save_custom_translation(original_text, self.translate_to, "")
+        self.force_refresh_sentence(original_text)
+
+    def speak_sentence(self, idx, speak_original=False):
+        if not self.last_translated_data or idx >= len(self.last_translated_data):
+            return
+        item = self.last_translated_data[idx]
+        text_to_speak = item["original_text"] if speak_original else item["text"]
+        
+        if text_to_speak and text_to_speak.strip():
+            if hasattr(self.master, "update_text_and_play"):
+                self.master.update_text_and_play(text_to_speak)
+            elif hasattr(self.master, "master") and hasattr(self.master.master, "update_text_and_play"):
+                self.master.master.update_text_and_play(text_to_speak)
 
     def speak_translated_text(self):
         if not self.last_translated_data:
             return
-        combined_text = "\n".join([item["text"] for item in self.last_translated_data])
-        if hasattr(self.master, "update_text_and_play"):
-            self.master.update_text_and_play(combined_text)
-        elif hasattr(self.master, "master") and hasattr(self.master.master, "update_text_and_play"):
-            self.master.master.update_text_and_play(combined_text)
+        # Объединяем перевод предложений для гладкой озвучки на русском
+        combined_text = " ".join([item["text"] for item in self.last_translated_data])
+        if combined_text.strip():
+            if hasattr(self.master, "update_text_and_play"):
+                self.master.update_text_and_play(combined_text)
+            elif hasattr(self.master, "master") and hasattr(self.master.master, "update_text_and_play"):
+                self.master.master.update_text_and_play(combined_text)
+
+    def show_help_overlay(self):
+        if hasattr(self, "help_frame"):
+            try:
+                self.help_frame.place_forget()
+                self.help_frame.destroy()
+            except:
+                pass
+            del self.help_frame
+            
+            if hasattr(self, "btn_help"):
+                self.btn_help.configure(fg_color="transparent")
+                
+            if getattr(self, "help_overlay_active", False):
+                self.help_overlay_active = False
+                return
+                
+        self.help_overlay_active = True
+        if hasattr(self, "btn_help"):
+            self.btn_help.configure(fg_color="#34C759")
+            
+        self.help_frame = ctk.CTkScrollableFrame(self.center_container, fg_color="#111111", corner_radius=8, border_width=1, border_color="#007AFF")
+        self.help_frame.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.9, relheight=0.8)
+        
+        ctk.CTkLabel(self.help_frame, text="📖 ЛЕГЕНДА И ИНСТРУКЦИЯ ОВЕРЛЕЯ", font=ctk.CTkFont(size=12, weight="bold"), text_color="#007AFF").pack(pady=(10, 5))
+        
+        def add_item(title, desc):
+            ctk.CTkLabel(self.help_frame, text=title, font=ctk.CTkFont(size=11, weight="bold"), text_color="#34C759", anchor="w").pack(fill="x", padx=10, pady=(5, 1))
+            lbl = ctk.CTkLabel(self.help_frame, text=desc, font=ctk.CTkFont(size=10), justify="left", anchor="w", wraplength=300)
+            lbl.pack(fill="x", padx=15, pady=(0, 4))
+            
+        add_item("🔊/A / [Space] (Пробел)", "Переключает режим кликабельности экрана. При включении оверлей темнеет, блокируя сквозные клики, чтобы вы могли взаимодействовать с текстом.")
+        add_item("ЛКМ (Левый клик)", "Нажмите на предложение в режиме блокировки кликов для озвучки перевода на русский язык.")
+        add_item("Ctrl + ЛКМ", "Озвучивает выделенное предложение на языке оригинала (английском).")
+        add_item("ПКМ (Правый клик)", "Показывает всплывающее окошко (Tooltip) с текстом перевода предложения у курсора.")
+        add_item("✨ (Рамки)", "Включает/выключает отображение постоянных неоновых рамок вокруг распознанных предложений.")
+        add_item("⚡ (Авто)", "Включает автосканирование: при изменении содержимого под окном переводчика текст автоматически перераспознается.")
+        add_item("🔊 (В тулбаре)", "Озвучить весь распознанный текст (сначала оригинал, затем перевод).")
+        add_item("[Esc] / ✕", "Закрыть оверлей переводчика.")
+        
+        ctk.CTkButton(self.help_frame, text="ПОНЯТНО", height=24, corner_radius=5, fg_color="#007AFF", hover_color="#005BBB", command=self.show_help_overlay).pack(pady=(10, 10))
+
+    def destroy(self):
+        if hasattr(self.master, "on_screen_translator_closed"):
+            try:
+                self.master.on_screen_translator_closed()
+            except:
+                pass
+        super().destroy()

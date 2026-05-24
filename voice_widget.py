@@ -319,6 +319,9 @@ class VoiceAssistantApp(ctk.CTk):
         self.btn_settings = ctk.CTkButton(self.top_bar, text="⚙", width=30, height=30, corner_radius=6, 
                                    fg_color="transparent", hover_color="#333", text_color="#888", font=ctk.CTkFont(size=20), command=self.show_appearance_overlay)
 
+        self.btn_help = ctk.CTkButton(self.top_bar, text="❓", width=30, height=30, corner_radius=6, 
+                                   fg_color="transparent", hover_color="#333", text_color="#888", font=ctk.CTkFont(size=16), command=self.show_help_overlay)
+
         self.btn_clear = ctk.CTkButton(self.top_bar, text="🧹", width=30, height=30, corner_radius=6,
                                    fg_color="#222", hover_color="#c0392b", text_color="#ccc", font=ctk.CTkFont(size=16), command=self.clear_text_box)
 
@@ -351,6 +354,9 @@ class VoiceAssistantApp(ctk.CTk):
 
         self.btn_clear.bind("<Enter>", lambda e: set_status("Очистить текст (🧹)"))
         self.btn_clear.bind("<Leave>", lambda e: reset_status())
+
+        self.btn_help.bind("<Enter>", lambda e: set_status("Инструкция и легенда (❓)"))
+        self.btn_help.bind("<Leave>", lambda e: reset_status())
 
         # Micro mode controls
         self.play_micro = ctk.CTkButton(self.top_bar, text="▶", width=30, height=30, corner_radius=6, fg_color="#007AFF", font=ctk.CTkFont(size=18), command=self.toggle_play_pause)
@@ -465,6 +471,7 @@ class VoiceAssistantApp(ctk.CTk):
             None,
             ("⚙ Настройки и функции", self.show_appearance_overlay),
             ("⛶ Перевод экрана", self.open_screen_translator),
+            ("📖 Инструкция и легенда", self.show_help_overlay),
             ("ℹ О программе", self.show_about_overlay),
             None,
             ("✕ Закрыть приложение", self.on_closing)
@@ -489,6 +496,8 @@ class VoiceAssistantApp(ctk.CTk):
         self.btn_restore.grid_forget()
         self.btn_settings.grid_forget()
         self.btn_clear.grid_forget()
+        if hasattr(self, 'btn_help'):
+            self.btn_help.grid_forget()
         self.play_micro.grid_forget()
         self.mini_center.grid_forget()
         self.right_frame.grid_forget()
@@ -516,7 +525,8 @@ class VoiceAssistantApp(ctk.CTk):
             self.full_header.grid(row=0, column=2, sticky="w", padx=10)
             self.btn_screen_translate.grid(row=0, column=4, padx=5, sticky="e")
             self.btn_clear.grid(row=0, column=5, padx=5, sticky="e")
-            self.btn_settings.grid(row=0, column=6, padx=5, sticky="e")
+            self.btn_help.grid(row=0, column=6, padx=5, sticky="e")
+            self.btn_settings.grid(row=0, column=7, padx=5, sticky="e")
             
             # Configure top_bar column weights for full mode
             self.top_bar.grid_columnconfigure(0, weight=0)
@@ -526,6 +536,7 @@ class VoiceAssistantApp(ctk.CTk):
             self.top_bar.grid_columnconfigure(4, weight=0)
             self.top_bar.grid_columnconfigure(5, weight=0)
             self.top_bar.grid_columnconfigure(6, weight=0)
+            self.top_bar.grid_columnconfigure(7, weight=0)
             
             self.text_box.grid(row=1, column=0, padx=20, pady=0, sticky="nsew")
             self.footer.grid(row=2, column=0, sticky="ew", padx=20, pady=20)
@@ -668,6 +679,57 @@ class VoiceAssistantApp(ctk.CTk):
         self.text_box._textbox.tag_configure("md_h2", font=("Inter", int(self.font_size * 1.3), "bold"))
 
     # --- Overlays ---
+    def show_help_overlay(self):
+        if getattr(self, "current_overlay", None) == "help":
+            self.close_overlay()
+            return
+        self.close_overlay()
+        self.current_overlay = "help"
+        if hasattr(self, 'btn_help'): self.btn_help.configure(fg_color="#34C759")
+        
+        self.overlay_frame = ctk.CTkScrollableFrame(self, fg_color="#111", corner_radius=10, border_width=1, border_color="#333")
+        if self.display_mode == "full":
+            self.overlay_frame.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.82, relheight=0.85)
+        else:
+            self.geometry("480x480")
+            self.overlay_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+            
+        ctk.CTkLabel(self.overlay_frame, text="📖 ИНСТРУКЦИЯ ПО ИСПОЛЬЗОВАНИЮ", font=ctk.CTkFont(size=12, weight="bold"), text_color="#007AFF").pack(pady=(15, 10))
+        
+        def add_section(title, text):
+            ctk.CTkLabel(self.overlay_frame, text=title, font=ctk.CTkFont(size=11, weight="bold"), text_color="#34C759", anchor="w").pack(fill="x", padx=15, pady=(8, 2))
+            lbl = ctk.CTkLabel(self.overlay_frame, text=text, font=ctk.CTkFont(size=11), justify="left", anchor="w", wraplength=340)
+            lbl.pack(fill="x", padx=25, pady=(0, 5))
+            
+        add_section(
+            "1. Голосовая озвучка (TTS)",
+            "Выделите любой текст в любом стороннем приложении и нажмите сочетание клавиш [Ctrl + Shift] (или задайте свой хоткей в настройках ⚙).\n"
+            "Программа скопирует текст и начнет читать его вслух."
+        )
+        
+        add_section(
+            "2. Распознавание и перевод экрана (OCR)",
+            "Нажмите [Ctrl + Alt + T] (или кнопку ⛶ на панели).\n"
+            "Затем выделите рамкой нужную область экрана. Откроется прозрачное окно чтения."
+        )
+        
+        add_section(
+            "3. Интерактивное чтение (Click Lock)",
+            "Внутри рамки перевода нажмите клавишу [Space] (Пробел) или кнопку 🔊/A на верхней панели.\n"
+            "Окно слегка притенится, блокируя клики сквозь себя (защита от случайных нажатий на кнопки под оверлеем).\n\n"
+            "• ЛКМ по предложению — озвучить его перевод на русский язык.\n"
+            "• Ctrl + ЛКМ — озвучить предложение в оригинале.\n"
+            "• ПКМ по предложению — показать всплывающее окошко с текстом перевода.\n\n"
+            "Нажмите [Space] еще раз для возврата в прозрачный режим просмотра."
+        )
+        
+        add_section(
+            "4. Постоянная подсветка",
+            "Все распознанные OCR предложения постоянно обводятся нежными рамками. Если какое-то слово не обведено — оно не распозналось (попробуйте скорректировать область выделения)."
+        )
+        
+        ctk.CTkButton(self.overlay_frame, text="ПОНЯТНО", height=28, corner_radius=6, fg_color="#007AFF", hover_color="#005BBB", command=self.close_overlay).pack(pady=(15, 10))
+
     def show_about_overlay(self):
         if getattr(self, "current_overlay", None) == "about":
             self.close_overlay()
@@ -688,7 +750,7 @@ class VoiceAssistantApp(ctk.CTk):
         ctk.CTkLabel(self.overlay_frame, text="Wise Yaroslav", font=ctk.CTkFont(size=12, weight="bold")).pack()
         
         ctk.CTkLabel(self.overlay_frame, text="Текущая версия:", font=ctk.CTkFont(size=10, weight="bold"), text_color="#888").pack(pady=(10, 0))
-        ctk.CTkLabel(self.overlay_frame, text="v3.1.1 (2026-05-23)", font=ctk.CTkFont(size=12)).pack()
+        ctk.CTkLabel(self.overlay_frame, text="v3.3.0 (2026-05-24)", font=ctk.CTkFont(size=12)).pack()
         
         ctk.CTkLabel(self.overlay_frame, text="GitHub Репозиторий:", font=ctk.CTkFont(size=10, weight="bold"), text_color="#888").pack(pady=(10, 0))
         
@@ -769,7 +831,8 @@ class VoiceAssistantApp(ctk.CTk):
         self.argos_status_label = None
         self.argos_download_btn = None
         
-        # 8. Save & Close button
+        # 8. Help & Save buttons
+        self.help_btn = ctk.CTkButton(self.overlay_frame, text="📖 ИНСТРУКЦИЯ (ЛЕГЕНДА)", height=26, corner_radius=6, fg_color="#34C759", hover_color="#28A745", command=self.show_help_overlay)
         self.save_btn = ctk.CTkButton(self.overlay_frame, text="СОХРАНИТЬ И ЗАКРЫТЬ", height=26, corner_radius=6, fg_color="#007AFF", hover_color="#005BBB", command=self.save_and_close_overlay)
         
         # Initialize engine
@@ -778,8 +841,10 @@ class VoiceAssistantApp(ctk.CTk):
         for child in self.argos_status_frame.winfo_children():
             child.destroy()
             
-        # Скрываем временный статус-фрейм и кнопку сохранения перед переупаковкой
+        # Скрываем временный статус-фрейм и кнопки перед переупаковкой
         self.argos_status_frame.pack_forget()
+        if hasattr(self, "help_btn"):
+            self.help_btn.pack_forget()
         if hasattr(self, "save_btn"):
             self.save_btn.pack_forget()
             
@@ -816,9 +881,11 @@ class VoiceAssistantApp(ctk.CTk):
             # Для Google Translate скрываем фрейм статуса полностью
             pass
             
-        # Всегда перепаковываем кнопку сохранения в самый низ оверлея
+        # Всегда перепаковываем кнопки инструкции и сохранения в самый низ оверлея
+        if hasattr(self, "help_btn"):
+            self.help_btn.pack(pady=(8, 2))
         if hasattr(self, "save_btn"):
-            self.save_btn.pack(pady=(8, 5))
+            self.save_btn.pack(pady=(2, 5))
 
         # Управляем геометрией окна в режиме mini для предотвращения пустот
         if self.display_mode == "mini":
@@ -909,11 +976,11 @@ class VoiceAssistantApp(ctk.CTk):
         self.current_overlay = "speed"
         if hasattr(self, 'btn_speed'): self.btn_speed.configure(fg_color="#007AFF")
         if hasattr(self, 'btn_mini_speed'): self.btn_mini_speed.configure(fg_color="#007AFF")
-        if self.display_mode != "full": self.geometry("480x250")
+        if self.display_mode != "full": self.geometry("480x280")
         
         self.overlay_frame = ctk.CTkFrame(self, fg_color="#111", corner_radius=10, border_width=1, border_color="#333")
         if self.display_mode != "full": self.overlay_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
-        else: self.overlay_frame.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.6, relheight=0.3)
+        else: self.overlay_frame.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.8, relheight=0.42)
         
         ctk.CTkLabel(self.overlay_frame, text="НАСТРОЙКА СКОРОСТИ", font=ctk.CTkFont(size=12, weight="bold"), text_color="#888").pack(pady=10)
         self.val_lbl = ctk.CTkLabel(self.overlay_frame, text=f"{self.current_rate}x", font=ctk.CTkFont(size=20, weight="bold"), text_color="#007AFF")
@@ -921,7 +988,32 @@ class VoiceAssistantApp(ctk.CTk):
         slider = ctk.CTkSlider(self.overlay_frame, from_=0.5, to=3.0, command=self.change_speed)
         slider.set(self.current_rate)
         slider.bind("<ButtonRelease-1>", lambda e: self.on_speed_slider_release())
-        slider.pack(fill="x", padx=30, pady=10)
+        slider.pack(fill="x", padx=30, pady=(10, 5))
+        
+        # Ряд кнопок-пресетов скорости
+        presets_frame = ctk.CTkFrame(self.overlay_frame, fg_color="transparent")
+        presets_frame.pack(pady=(5, 10))
+        
+        def set_preset_speed(rate_val):
+            slider.set(rate_val)
+            self.change_speed(rate_val)
+            self.on_speed_slider_release()
+            
+        presets = [1.0, 1.25, 1.5, 1.75, 2.0, 2.5]
+        for p in presets:
+            btn = ctk.CTkButton(
+                presets_frame, 
+                text=f"{p}x", 
+                width=42, 
+                height=22, 
+                corner_radius=5, 
+                fg_color="#222", 
+                hover_color="#333",
+                font=ctk.CTkFont(size=11),
+                command=lambda val=p: set_preset_speed(val)
+            )
+            btn.pack(side="left", padx=2)
+            
         ctk.CTkButton(self.overlay_frame, text="ЗАКРЫТЬ", height=28, corner_radius=6, fg_color="#333", command=self.close_overlay).pack(pady=10)
 
     def on_speed_slider_release(self):
@@ -980,6 +1072,7 @@ class VoiceAssistantApp(ctk.CTk):
             self.overlay_frame = None
             self.current_overlay = None
             if hasattr(self, 'btn_settings'): self.btn_settings.configure(fg_color="transparent")
+            if hasattr(self, 'btn_help'): self.btn_help.configure(fg_color="transparent")
             if hasattr(self, 'btn_speed'): self.btn_speed.configure(fg_color="#222")
             if hasattr(self, 'btn_mini_speed'): self.btn_mini_speed.configure(fg_color="#222")
             if hasattr(self, 'btn_voice'): self.btn_voice.configure(fg_color="#222")
@@ -1000,8 +1093,11 @@ class VoiceAssistantApp(ctk.CTk):
     def open_screen_translator(self):
         # Check if screen translator window is already open
         if hasattr(self, "screen_translator_win") and self.screen_translator_win.winfo_exists():
-            self.screen_translator_win.translate_area()
-            self.screen_translator_win.focus()
+            # Если оверлей уже открыт, то клик закрывает его
+            try:
+                self.screen_translator_win.destroy()
+            except:
+                pass
         else:
             from screen_translator import AreaSelector
             def on_area_selected(x, y, w, h, cropped_img):
@@ -1023,7 +1119,16 @@ class VoiceAssistantApp(ctk.CTk):
                     self.screen_translator_win.focus()
                     self.screen_translator_win.translate_precropped(cropped_img)
                     
+                    # Подсвечиваем синим цветом кнопку перевода экрана в главном окне
+                    if hasattr(self, "btn_screen_translate"):
+                        self.btn_screen_translate.configure(fg_color="#007AFF")
+                    
             selector = AreaSelector(self, on_area_selected)
+
+    def on_screen_translator_closed(self):
+        # Сбрасываем подсветку кнопки перевода экрана в главном окне
+        if hasattr(self, "btn_screen_translate"):
+            self.btn_screen_translate.configure(fg_color="#222")
 
     def start_hotkey_listener(self):
         def check_hotkey():
@@ -1103,7 +1208,12 @@ class VoiceAssistantApp(ctk.CTk):
         try:
             import pysbd
             import re
-            lang = "ru" if "(RU)" in self.current_voice else "en"
+            
+            # Динамически определяем доминирующий язык текста
+            latin_chars = sum(1 for c in text if ('a' <= c.lower() <= 'z'))
+            cyrillic_chars = sum(1 for c in text if ('а' <= c.lower() <= 'я' or c.lower() == 'ё'))
+            lang = "ru" if cyrillic_chars > latin_chars else "en"
+            
             segmenter = pysbd.Segmenter(language=lang, clean=False, char_span=True)
             spans = segmenter.segment(text)
             
@@ -1312,24 +1422,44 @@ class VoiceAssistantApp(ctk.CTk):
             for f in os.listdir(temp_dir):
                 try: os.remove(os.path.join(temp_dir, f))
                 except: pass
-        for i in range(start_idx, len(sentences)):
-            if self.stop_requested: break
-            s_hash = hashlib.md5(f"{sentences[i]}_{self.current_voice}_{self.current_rate}".encode()).hexdigest()
+
+        async def download_sentence(i, text):
+            if self.stop_requested:
+                return i, None
+            s_hash = hashlib.md5(f"{text}_{self.current_voice}_{self.current_rate}".encode()).hexdigest()
             file_path = os.path.join(temp_dir, f"c_{s_hash}.mp3")
             if not os.path.exists(file_path):
                 try:
                     rate_str = f"{int((self.current_rate - 1) * 100):+d}%"
                     voice_id = VOICES.get(self.current_voice, VOICES["Светлана (RU)"])
-                    communicate = edge_tts.Communicate(sentences[i], voice_id, rate=rate_str)
-                    loop.run_until_complete(communicate.save(file_path))
-                except: file_path = None
+                    communicate = edge_tts.Communicate(text, voice_id, rate=rate_str)
+                    await communicate.save(file_path)
+                except Exception as e:
+                    print(f"Download failed for sentence {i}: {e}")
+                    file_path = None
+            return i, file_path
+
+        async def start_downloads():
+            tasks = [asyncio.create_task(download_sentence(i, sentences[i])) for i in range(start_idx, len(sentences))]
+            return tasks
+
+        # Запускаем все скачивания параллельно
+        tasks = loop.run_until_complete(start_downloads())
+
+        # Ожидаем завершения каждой задачи строго по порядку и отправляем в плеер
+        for i, task in enumerate(tasks):
+            if self.stop_requested:
+                break
+            actual_idx = start_idx + i
+            idx, file_path = loop.run_until_complete(task)
             
-            p = (i + 1) / len(sentences)
+            p = (actual_idx + 1) / len(sentences)
             self.after(0, lambda val=p: self.buffer_prog_full.set(val))
             self.after(0, lambda val=p: self.buffer_prog_mini.set(val))
-            self.after(0, lambda i=i: self.highlight_sentence(i, "buffered"))
+            self.after(0, lambda idx=actual_idx: self.highlight_sentence(idx, "buffered"))
             
-            self.item_queue.put((i, file_path))
+            self.item_queue.put((actual_idx, file_path))
+            
         self.item_queue.put(None)
 
     def consumer_thread(self, total, start_idx):
