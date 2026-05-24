@@ -16,7 +16,7 @@
 *   **🎧 Чтение в один клик из любой программы:**
     Просто выделите текст мышкой в *абсолютно любом* приложении и нажмите `Ctrl + Shift`. Нейросетевые голоса Microsoft Edge TTS мгновенно озвучат его с естественной интонацией.
 *   **⛶ «Живой» оверлей-переводчик экрана (Чтение некопируемого текста):**
-    Нажмите `Ctrl + Alt + T`, выделите область экрана рамкой — и перевод появится прямо поверх оригинального текста. Окно переводчика **прозрачно для кликов (click-through)**, вы можете продолжать скроллить и кликать интерфейс под ним.
+    *   **Перевод экрана в реальном времени [В стадии доработки / WIP] (v3.3.3):** Интерактивная рамка `⛶ A文` для перевода любой области экрана. Рамку можно перемещать и растягивать. Она полностью прозрачна для кликов (click-through) — вы можете продолжать работать с элементами под ней. Распознанный текст подсвечивается при наведении, перевод показывается во всплывающих подсказках (ПКМ) или быстро озвучивается (ЛКМ).
     > **В чем суперсила:** Эта функция незаменима, когда текст защищен от выделения и копирования (PDF-файлы с защитой, надписи на картинках, неактивные элементы интерфейса или кнопки программ, игры). Оверлей распознает некопируемый текст на лету, позволяя озвучить его, перевести или скопировать без риска случайно кликнуть по интерактивным элементам под ним.
 *   **🧠 Режим интерактивного чтения (Click Lock):**
     Нажмите `Space` (Пробел) внутри рамки переводчика. Окно притенится, фиксируя клики. Теперь вы можете взаимодействовать с текстом:
@@ -113,6 +113,7 @@ The project was developed with special care for people with **dyslexia** (the au
 *   **⛶ "Live" Screen Translation Overlay (Read Uncopyable Text):**
     Press `Ctrl + Alt + T`, crop a region of the screen, and the translation will appear directly over the original text. The window is **click-through**, allowing you to scroll and click elements underneath it.
     > **Why it's a superpower:** This feature is irreplaceable when text cannot be selected or copied (secured PDFs, images, inactive UI elements, program buttons, or games). The overlay recognizes uncopyable text on the fly, allowing you to speak, translate, or copy it to the clipboard without the risk of accidentally clicking the interactive elements underneath.
+*   **Real-time Screen Translator [Work In Progress / WIP] (v3.3.3):** An interactive crop frame `⛶ A文` to translate any screen region. The frame is resizable and moveable. It is completely click-through — you can scroll and click elements underneath it. Recognized text is adaptively highlighted on hover; the translation is displayed in a tooltip (Right Click) or spoken aloud (Left Click).
 *   **🧠 Interactive Reading Mode (Click Lock):**
     Press `Space` inside the translator frame. The window dims and locks mouse clicks. Now you can interact with the text:
     *   *Left Click a sentence* — speak the translation.

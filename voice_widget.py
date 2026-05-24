@@ -195,6 +195,10 @@ class VoiceAssistantApp(ctk.CTk):
         self.markdown_enabled = True
         self.mini_drawer_open = False
         self.current_overlay = None
+        self.translation_active = False
+        self.original_raw_text = ""
+        self.translated_raw_text = None
+        self.pre_translation_voice = None
 
         self.load_settings()
         self.setup_ui_once()
@@ -316,6 +320,9 @@ class VoiceAssistantApp(ctk.CTk):
         self.btn_screen_translate = ctk.CTkButton(self.top_bar, image=self.img_translate, text="", width=30, height=30, corner_radius=6,
                                    fg_color="#222", hover_color="#333", command=self.open_screen_translator)
 
+        self.btn_translate_toggle = ctk.CTkButton(self.top_bar, text="A文", width=30, height=30, corner_radius=6,
+                                   fg_color="#222", hover_color="#333", text_color="#ccc", font=ctk.CTkFont(size=12, weight="bold"), command=self.toggle_translation_mode)
+
         self.btn_settings = ctk.CTkButton(self.top_bar, text="⚙", width=30, height=30, corner_radius=6, 
                                    fg_color="transparent", hover_color="#333", text_color="#888", font=ctk.CTkFont(size=20), command=self.show_appearance_overlay)
 
@@ -348,6 +355,9 @@ class VoiceAssistantApp(ctk.CTk):
         
         self.btn_screen_translate.bind("<Enter>", lambda e: set_status("Перевод области экрана (⛶ A文)"))
         self.btn_screen_translate.bind("<Leave>", lambda e: reset_status())
+
+        self.btn_translate_toggle.bind("<Enter>", lambda e: set_status("Перевести текст в редакторе (A文)"))
+        self.btn_translate_toggle.bind("<Leave>", lambda e: reset_status())
 
         self.btn_text_drawer.bind("<Enter>", lambda e: set_status("Показать/скрыть текст (📖)"))
         self.btn_text_drawer.bind("<Leave>", lambda e: reset_status())
@@ -510,6 +520,7 @@ class VoiceAssistantApp(ctk.CTk):
             
         # Hide translate button by default
         self.btn_screen_translate.grid_forget()
+        self.btn_translate_toggle.grid_forget()
         
         if mode == "full":
             self.overrideredirect(False)
@@ -524,9 +535,10 @@ class VoiceAssistantApp(ctk.CTk):
             self.btn_to_micro.grid(row=0, column=1, padx=5)
             self.full_header.grid(row=0, column=2, sticky="w", padx=10)
             self.btn_screen_translate.grid(row=0, column=4, padx=5, sticky="e")
-            self.btn_clear.grid(row=0, column=5, padx=5, sticky="e")
-            self.btn_help.grid(row=0, column=6, padx=5, sticky="e")
-            self.btn_settings.grid(row=0, column=7, padx=5, sticky="e")
+            self.btn_translate_toggle.grid(row=0, column=5, padx=5, sticky="e")
+            self.btn_clear.grid(row=0, column=6, padx=5, sticky="e")
+            self.btn_help.grid(row=0, column=7, padx=5, sticky="e")
+            self.btn_settings.grid(row=0, column=8, padx=5, sticky="e")
             
             # Configure top_bar column weights for full mode
             self.top_bar.grid_columnconfigure(0, weight=0)
@@ -537,6 +549,7 @@ class VoiceAssistantApp(ctk.CTk):
             self.top_bar.grid_columnconfigure(5, weight=0)
             self.top_bar.grid_columnconfigure(6, weight=0)
             self.top_bar.grid_columnconfigure(7, weight=0)
+            self.top_bar.grid_columnconfigure(8, weight=0)
             
             self.text_box.grid(row=1, column=0, padx=20, pady=0, sticky="nsew")
             self.footer.grid(row=2, column=0, sticky="ew", padx=20, pady=20)
@@ -554,9 +567,10 @@ class VoiceAssistantApp(ctk.CTk):
             self.btn_to_full.grid(row=0, column=2, padx=5)
             self.btn_text_drawer.grid(row=0, column=3, padx=5)
             self.btn_screen_translate.grid(row=0, column=4, padx=5)
+            self.btn_translate_toggle.grid(row=0, column=5, padx=5)
             
-            self.mini_center.grid(row=0, column=5, sticky="ew", padx=10)
-            self.right_frame.grid(row=0, column=6, padx=5)
+            self.mini_center.grid(row=0, column=6, sticky="ew", padx=10)
+            self.right_frame.grid(row=0, column=7, padx=5)
             
             # Configure top_bar column weights for mini mode
             self.top_bar.grid_columnconfigure(0, weight=0)
@@ -750,7 +764,7 @@ class VoiceAssistantApp(ctk.CTk):
         ctk.CTkLabel(self.overlay_frame, text="Wise Yaroslav", font=ctk.CTkFont(size=12, weight="bold")).pack()
         
         ctk.CTkLabel(self.overlay_frame, text="Текущая версия:", font=ctk.CTkFont(size=10, weight="bold"), text_color="#888").pack(pady=(10, 0))
-        ctk.CTkLabel(self.overlay_frame, text="v3.3.2 (2026-05-24)", font=ctk.CTkFont(size=12)).pack()
+        ctk.CTkLabel(self.overlay_frame, text="v3.3.3 (2026-05-24)", font=ctk.CTkFont(size=12)).pack()
         
         ctk.CTkLabel(self.overlay_frame, text="GitHub Репозиторий:", font=ctk.CTkFont(size=10, weight="bold"), text_color="#888").pack(pady=(10, 0))
         
@@ -1046,6 +1060,76 @@ class VoiceAssistantApp(ctk.CTk):
         self.save_settings()
         self.close_overlay()
         self.btn_voice.configure(text=f"🔊 {self.current_voice.split(' ')[0]}")
+        
+    def select_voice_no_save(self, voice):
+        self.current_voice = voice
+        self.btn_voice.configure(text=f"🔊 {self.current_voice.split(' ')[0]}")
+
+    def toggle_translation_mode(self):
+        self.stop_speech()
+        self.translation_active = not self.translation_active
+        
+        if self.translation_active:
+            self.pre_translation_voice = self.current_voice
+            if not self.current_voice.endswith("(RU)"):
+                self.select_voice_no_save("Светлана (RU)")
+                
+            self.btn_translate_toggle.configure(fg_color="#34C759", text_color="#fff")
+            current_text = self.text_box.get("1.0", "end").strip()
+            self.original_raw_text = current_text
+            self.c_status.configure(text="Перевод текста...")
+            threading.Thread(target=self.async_translate_text, args=(current_text,), daemon=True).start()
+        else:
+            if hasattr(self, 'pre_translation_voice') and self.pre_translation_voice:
+                self.select_voice_no_save(self.pre_translation_voice)
+                
+            self.btn_translate_toggle.configure(fg_color="#222", text_color="#ccc")
+            if hasattr(self, 'original_raw_text') and self.original_raw_text:
+                self.text_box.delete("0.0", "end")
+                self.text_box.insert("0.0", self.original_raw_text)
+                if self.markdown_enabled: self.apply_markdown_tags()
+                self.text_box.mark_set("insert", "1.0")
+
+    def async_translate_text(self, text):
+        if not text: return
+        try:
+            from translation_engine import get_engine
+            engine = get_engine(self.translation_engine)
+            translated = engine.translate(text, "ru")
+            self.after(0, lambda: self.apply_translated_text(translated))
+        except Exception as e:
+            print(f"Error in async_translate_text: {e}")
+            self.after(0, lambda: self.c_status.configure(text="Ошибка перевода"))
+
+    def apply_translated_text(self, translated):
+        self.translated_raw_text = translated
+        if self.translation_active:
+            self.text_box.delete("0.0", "end")
+            self.text_box.insert("0.0", translated)
+            if self.markdown_enabled: self.apply_markdown_tags()
+            self.text_box.mark_set("insert", "1.0")
+            if not self.is_speaking:
+                self.c_status.configure(text="Выделите текст и нажмите Ctrl+Shift", text_color="#888")
+
+    def async_translate_and_play(self, text):
+        try:
+            from translation_engine import get_engine
+            engine = get_engine(self.translation_engine)
+            translated = engine.translate(text, "ru")
+            self.after(0, lambda: self.apply_translated_and_play(translated))
+        except Exception as e:
+            print(f"Error in async_translate_and_play: {e}")
+            self.after(0, lambda: self.apply_translated_and_play(text))
+
+    def apply_translated_and_play(self, translated):
+        self.translated_raw_text = translated
+        if self.translation_active:
+            self.text_box.delete("0.0", "end")
+            self.text_box.insert("0.0", translated)
+            if self.markdown_enabled: self.apply_markdown_tags()
+            self.text_box.mark_set("insert", "1.0")
+            self.play_from_text(0)
+
     def close_overlay(self):
         if self.overlay_frame:
             try:
@@ -1165,11 +1249,20 @@ class VoiceAssistantApp(ctk.CTk):
         if text: self.after(0, lambda: self.update_text_and_play(text))
 
     def update_text_and_play(self, text):
-        self.text_box.delete("0.0", "end")
-        self.text_box.insert("0.0", text)
-        if self.markdown_enabled: self.apply_markdown_tags()
-        self.text_box.mark_set("insert", "1.0")
-        self.play_from_text(0)
+        self.original_raw_text = text
+        self.translated_raw_text = None
+        
+        if self.translation_active:
+            self.text_box.delete("0.0", "end")
+            self.text_box.insert("0.0", "Перевод текста...")
+            self.stop_speech()
+            threading.Thread(target=self.async_translate_and_play, args=(text,), daemon=True).start()
+        else:
+            self.text_box.delete("0.0", "end")
+            self.text_box.insert("0.0", text)
+            if self.markdown_enabled: self.apply_markdown_tags()
+            self.text_box.mark_set("insert", "1.0")
+            self.play_from_text(0)
 
     def apply_markdown_tags(self):
         self.text_box.tag_remove("md_bold", "1.0", "end")
