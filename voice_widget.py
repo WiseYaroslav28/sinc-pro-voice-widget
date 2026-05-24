@@ -1065,6 +1065,26 @@ class VoiceAssistantApp(ctk.CTk):
         self.current_voice = voice
         self.btn_voice.configure(text=f"🔊 {self.current_voice.split(' ')[0]}")
 
+    def translate_single_text(self, text):
+        if not text:
+            return ""
+        try:
+            from translation_engine import get_engine
+            kwargs = {}
+            if self.translation_engine == "ollama":
+                kwargs["ollama_model"] = self.ollama_model
+                kwargs["ollama_url"] = self.ollama_url
+            elif self.translation_engine == "msty":
+                kwargs["msty_model"] = self.msty_model
+                kwargs["msty_url"] = self.msty_url
+                
+            engine = get_engine(self.translation_engine, **kwargs)
+            res = engine.translate_batch([text], "ru")
+            return res[0] if res else text
+        except Exception as e:
+            print(f"Error in translate_single_text: {e}")
+            return text
+
     def toggle_translation_mode(self):
         self.stop_speech()
         self.translation_active = not self.translation_active
@@ -1093,9 +1113,7 @@ class VoiceAssistantApp(ctk.CTk):
     def async_translate_text(self, text):
         if not text: return
         try:
-            from translation_engine import get_engine
-            engine = get_engine(self.translation_engine)
-            translated = engine.translate(text, "ru")
+            translated = self.translate_single_text(text)
             self.after(0, lambda: self.apply_translated_text(translated))
         except Exception as e:
             print(f"Error in async_translate_text: {e}")
@@ -1113,9 +1131,7 @@ class VoiceAssistantApp(ctk.CTk):
 
     def async_translate_and_play(self, text):
         try:
-            from translation_engine import get_engine
-            engine = get_engine(self.translation_engine)
-            translated = engine.translate(text, "ru")
+            translated = self.translate_single_text(text)
             self.after(0, lambda: self.apply_translated_and_play(translated))
         except Exception as e:
             print(f"Error in async_translate_and_play: {e}")
