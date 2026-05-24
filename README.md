@@ -15,8 +15,9 @@
 
 *   **🎧 Чтение в один клик из любой программы:**
     Просто выделите текст мышкой в *абсолютно любом* приложении и нажмите `Ctrl + Shift`. Нейросетевые голоса Microsoft Edge TTS мгновенно озвучат его с естественной интонацией.
-*   **⛶ «Живой» оверлей-переводчик экрана:**
+*   **⛶ «Живой» оверлей-переводчик экрана (Чтение некопируемого текста):**
     Нажмите `Ctrl + Alt + T`, выделите область экрана рамкой — и перевод появится прямо поверх оригинального текста. Окно переводчика **прозрачно для кликов (click-through)**, вы можете продолжать скроллить и кликать интерфейс под ним.
+    > **В чем суперсила:** Эта функция незаменима, когда текст защищен от выделения и копирования (PDF-файлы с защитой, надписи на картинках, неактивные элементы интерфейса или кнопки программ, игры). Оверлей распознает некопируемый текст на лету, позволяя озвучить его, перевести или скопировать без риска случайно кликнуть по интерактивным элементам под ним.
 *   **🧠 Режим интерактивного чтения (Click Lock):**
     Нажмите `Space` (Пробел) внутри рамки переводчика. Окно притенится, фиксируя клики. Теперь вы можете взаимодействовать с текстом:
     *   *Клик ЛКМ по предложению* — озвучить перевод.
@@ -109,8 +110,9 @@ The project was developed with special care for people with **dyslexia** (the au
 
 *   **🎧 One-Click Reading from Any App:**
     Simply highlight text in *any* application and press `Ctrl + Shift`. Premium neural network voices from Microsoft Edge TTS will instantly read it aloud with natural intonations.
-*   **⛶ "Live" Screen Translation Overlay:**
+*   **⛶ "Live" Screen Translation Overlay (Read Uncopyable Text):**
     Press `Ctrl + Alt + T`, crop a region of the screen, and the translation will appear directly over the original text. The window is **click-through**, allowing you to scroll and click elements underneath it.
+    > **Why it's a superpower:** This feature is irreplaceable when text cannot be selected or copied (secured PDFs, images, inactive UI elements, program buttons, or games). The overlay recognizes uncopyable text on the fly, allowing you to speak, translate, or copy it to the clipboard without the risk of accidentally clicking the interactive elements underneath.
 *   **🧠 Interactive Reading Mode (Click Lock):**
     Press `Space` inside the translator frame. The window dims and locks mouse clicks. Now you can interact with the text:
     *   *Left Click a sentence* — speak the translation.
