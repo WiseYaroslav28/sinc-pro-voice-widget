@@ -3,105 +3,187 @@
 ---
 
 <a id="ru"></a>
-# 🇷🇺 SINC PRO - Голосовой виджет
+# 🇷🇺 SINC PRO — Умный голосовой помощник и переводчик экрана
 
-**SINC PRO** — это элегантный, быстрый и удобный голосовой виджет для Windows, созданный для озвучивания любого выделенного текста с помощью нейросетевых голосов (Edge TTS). 
+> **SINC PRO** — это элегантное, невероятно быстрое и отзывчивое приложение для Windows, созданное для того, чтобы превратить чтение с экрана в легкий и комфортный процесс. 
 
-Проект разрабатывался с особой заботой и вниманием к людям с **дислексией**, так как автор программы сам является дислексиком. Главная цель SINC PRO — сделать потребление текстовой информации в любой среде (браузеры, PDF-документы, мессенджеры, рабочие программы) максимально комфортным, быстрым и не требующим усилий.
-
-### ✨ Ключевые возможности
-
-*   **Перевод экрана в реальном времени [В стадии доработки / WIP] (v3.3.2):** Интерактивная рамка `⛶ A文` для перевода любой области экрана. Рамку можно перемещать и растягивать. Она полностью прозрачна для кликов (click-through) — вы можете продолжать работать с элементами под ней. Распознанный текст подсвечивается при наведении, перевод показывается во всплывающих подсказках (ПКМ) или быстро озвучивается (ЛКМ).
-*   **Контекстное меню быстрого доступа (v3.0.0):** Клик правой кнопкой мыши по виджету в режимах Mini и Micro opens удобное меню для переключения режимов или закрытия приложения.
-*   **Глобальный доступ отовсюду:** Выделите текст в **любой** программе, нажмите комбинацию клавиш — и программа мгновенно начнет его читать.
-*   **Нейросетевые голоса:** Использование Microsoft Edge TTS обеспечивает премиальное естественное звучание. Поддерживаются русский, английский, немецкий, французский, испанский, китайский и другие языки. Вы можете легко добавлять новые языки и голоса в словари программы.
-*   **Интеллектуальное разбиение текста (v3.3.0):** Использование библиотеки `pysbd` предотвращает ошибочные разрывы предложений на дробных числах (например, `5.5`), многоточиях и сокращениях (например, `т.д.`), а также автоматически склеивает русские инициалы для плавного чтения.
-*   **Три режима интерфейса:**
-    *   **Оконный режим (Full):** Полноценное окно с текстовым редактором и поддержкой Markdown.
-    *   **Плеер-панель (Mini):** Компактная полоска сверху экрана поверх всех окон. Идеально для работы. Включает выдвижную текстовую панель (Text Drawer), открываемую кнопкой `📖`.
-    *   **Микро-виджет (Micro):** Ультракомпактный виджет для базового управления.
-*   **Всегда поверх других окон:** Виджеты не потеряются среди других программ.
-*   **Кастомизация на лету:** Прямо из виджета меняйте голос (🔊), скорость (⚡) и настраивайте горячие клавиши (хоткей перевода по умолчанию: `Ctrl + Alt + T`).
+Проект разрабатывался с особой заботой о людях с **дислексией** (автор программы сам является дислексиком). Главная цель SINC PRO — убрать барьеры при потреблении сложной текстовой информации в любой среде: будь то научные PDF-статьи, техническая документация, код в IDE, мессенджеры или веб-страницы.
 
 ---
 
-### ⛶ Переводчик экрана (Текущее состояние и WIP)
+## ✨ В чем суперсила SINC PRO? (Ценность для вас)
 
-Функция перевода области экрана находится в стадии активной разработки и доработки. 
-
-#### Что реализовано на данный момент:
-1.  **Офлайн-распознавание текста (OCR):** Быстрый захват и распознавание текста на базе встроенного в Windows 10/11 WinRT API (работает без подключения к интернету).
-2.  **Объединение строк в абзацы (Connected Components):** Продвинутый алгоритм на основе графа смежности. Он автоматически связывает строки одного абзаца даже в многоколоночных макетах, предотвращая некорректное склеивание соседних колонок.
-3.  **Интерактивный оверлей чтения:** Вместо ресурсоемкого замазывания оригинального текста плашками реализована легкая неоновая обводка предложений. Цвет рамок автоматически адаптируется под яркость фона (светлый/темный) для комфортного чтения.
-4.  **Всплывающий перевод (Tooltips):** Клик правой кнопкой мыши по предложению открывает стильное всплывающее окно у курсора с переводом на русский язык.
-5.  **Быстрая озвучка перевода:** Клик левой кнопкой мыши по предложению мгновенно озвучивает его перевод, а `Ctrl` + клик ЛКМ — читает оригинальный английский текст.
-6.  **Поддержка мультимониторных систем:** Точный захват и калибровка координат окна Canvas (1:1 физические пиксели) на нескольких экранах, включая мониторы с отрицательными координатами.
-
-#### Известные проблемы и ограничения:
-*   **Игнорирование графических элементов:** Некоторые сложные иконки интерфейсов с текстом могут распознаваться как буквы-символы, однако большинство таких случаев отсекается встроенной фильтрацией.
+*   **🎧 Чтение в один клик из любой программы:**
+    Просто выделите текст мышкой в *абсолютно любом* приложении и нажмите `Ctrl + Shift`. Нейросетевые голоса Microsoft Edge TTS мгновенно озвучат его с естественной интонацией.
+*   **⛶ «Живой» оверлей-переводчик экрана:**
+    Нажмите `Ctrl + Alt + T`, выделите область экрана рамкой — и перевод появится прямо поверх оригинального текста. Окно переводчика **прозрачно для кликов (click-through)**, вы можете продолжать скроллить и кликать интерфейс под ним.
+*   **🧠 Режим интерактивного чтения (Click Lock):**
+    Нажмите `Space` (Пробел) внутри рамки переводчика. Окно притенится, фиксируя клики. Теперь вы можете взаимодействовать с текстом:
+    *   *Клик ЛКМ по предложению* — озвучить перевод.
+    *   *Ctrl + ЛКМ* — озвучить оригинал на английском.
+    *   *ПКМ по предложению* — открыть мини-редактор и скорректировать перевод вручную.
+*   **🔍 Быстрый перевод слов (Double Click):**
+    Дважды кликните по любому незнакомому слову в оверлее, и над ним появится стильная всплывающая подсказка с точным переводом и кнопкой индивидуальной озвучки.
+*   **〰 Нити чтения (Flow Threads) и неоновая подсветка:**
+    Умная неоновая подсветка предложений адаптируется к яркости фона (светлый/темный). А штрихпунктирные нити физически соединяют слова, помогая вашим глазам плавно вести строку и не терять фокус при дислексии или усталости.
+*   **⚡ Автообновление экрана (Auto Scan):**
+    Включите автосканирование (кнопка `⚡`), и переводчик сам обновит текст и рамки, если картинка или код под оверлеем изменятся.
+*   **🔒 Локальный перевод и LLM:**
+    Переводите оффлайн с помощью встроенного Argos Translate, либо подключите локальные нейросети через Ollama или Msty. Ваши данные не уйдут в сеть.
 
 ---
 
-### 🚀 Как пользоваться?
+## 🚀 Быстрый старт за 15 секунд
 
-1. Запустите программу (`SINC_PRO.exe` или скрипт).
-2. Выделите любой текст в любом приложении и нажмите **`Ctrl + Shift`** для голосовой озвучки.
-3. Или нажмите **`Ctrl + Alt + T`**, выделите рамкой область экрана и получите мгновенный перевод поверх текста.
-4. Управляйте воспроизведением (Пауза `❙❙`, Плей `▶`) из виджета.
+1.  Скачайте и запустите программу (`SINC_PRO.exe` из релизов или запустите скрипт `voice_widget.py`).
+2.  Выделите текст в любом месте и нажмите **`Ctrl + Shift`** для озвучки.
+3.  Или нажмите **`Ctrl + Alt + T`** и выделите область экрана для интерактивного перевода.
 
-### ⚖️ Лицензия и Правовая информация
-*   **Лицензия:** Проект распространяется под свободной лицензией **MIT** (см. файл [LICENSE](file:///c:/Antigravity%20projects/voice-server/LICENSE)).
-*   **Disclaimer:** Данный проект создан исключительно в образовательных, личных целях и для обеспечения доступности (Accessibility). Программа использует библиотеку `edge-tts` для доступа к публичным серверам Microsoft Edge TTS. Разработчик не несет ответственности за любое неправомерное или коммерческое использование данного ПО третьими лицами.
+### ⌨️ Горячие клавиши по умолчанию
+
+| Сочетание | Действие |
+| :--- | :--- |
+| **`Ctrl + Shift`** | Озвучить выделенный текст в любой программе |
+| **`Ctrl + Alt + T`** | Вызвать рамку перевода экрана |
+| **`Space` (Пробел)** | Включить/выключить интерактивный режим (Click Lock) внутри рамки |
+| **`Esc`** | Закрыть оверлей перевода / закрыть настройки |
+
+---
+
+## 🎮 Интерактивный гид по оверлею
+
+Когда вы включили интерактивный режим (`Space` или кнопка `🔊/A`), вам доступны следующие жесты:
+
+*   **Одинарный клик ЛКМ:** Озвучивает перевод предложения на русском языке.
+*   **`Ctrl` + ЛКМ:** Озвучивает предложение на языке оригинала.
+*   **Двойной клик ЛКМ:** Открывает быстрый перевод выбранного слова.
+*   **Клик правой кнопкой (ПКМ):** Открывает меню ручного редактирования перевода. Вы можете ввести свой вариант, сбросить его или обновить кэш.
+
+### Панель инструментов оверлея:
+*   `✨` — включить/выключить неоновые рамки предложений.
+*   `Aa` — скрыть/показать подсветку слов.
+*   `〰` — скрыть/показать направляющие нити чтения.
+*   `⚡` — включить автоотслеживание изменений на экране.
+
+---
+
+## 🎭 Режимы интерфейса
+
+SINC PRO умеет менять облик под ваши рабочие задачи:
+1.  **Редактор (Full):** Полноценное окно с текстовым полем, поддержкой Markdown и скраббером (прогресс-баром) для перемотки озвучки по предложениям.
+2.  **Плеер (Mini):** Компактная полоска поверх всех окон. Идеально для фонового прослушивания документации при работе. Кнопка `📖` выдвигает текстовый ящик.
+3.  **Микро (Micro):** Ультракомпактная кнопка-кругляшок для управления воспроизведением с минимальным следом на экране.
+
+---
+
+<details>
+<summary>🛠️ Под капотом (Технические детали реализации для разработчиков)</summary>
+
+### Технологический стек:
+*   **Интерфейс:** `customtkinter` (Python-обертка над Tkinter с поддержкой темной темы и DPI-awareness на нескольких мониторах).
+*   **Распознавание (OCR):** Windows OCR WinRT API (высокая скорость, 100% оффлайн, поддержка DPI масштабирования 1:1).
+*   **Синтез речи (TTS):** Microsoft Edge TTS (`edge-tts`) — естественные нейросетевые голоса без необходимости платных API ключей.
+*   **База данных:** SQLite (`translation_cache.db`) для кэширования переводов и хранения пользовательских правок.
+
+### Ключевые алгоритмы:
+1.  **Абстрагирование чисел:** Для экономии трафика и повторного использования кэша все числа в предложениях заменяются токенами перед отправкой в переводчик, а затем возвращаются обратно.
+2.  **Связные компоненты (Paragraph Merging):** Алгоритм на основе графа смежности объединяет строки OCR в единые абзацы, анализируя высоту шрифта, расстояние по Y, пунктуацию на стыках и регистр символов. Предотвращает ложное слияние табличных колонок.
+3.  **Hybrid OCR:** При нахождении смешанных слов (с дефисами или mixed-языком) область точечно вырезается, масштабируется в 3 раза фильтром `LANCZOS` и повторно сканируется русским движком WinRT.
+4.  **Избирательный перевод mixed-текста:** В русско-английских технических текстах переводятся только отдельные латинские термины длиной от 3 букв (с разбиением CamelCase), сохраняя русский контекст нетронутым.
+5.  **Фоновый валидатор кэша:** Воркер раз в 12 секунд проверяет валидность переводов в БД SQLite и фоново обновляет устаревшие записи.
+
+</details>
 
 ---
 
 <a id="en"></a>
-# 🇺🇸 SINC PRO - Voice Assistant Widget
+# 🇺🇸 SINC PRO — Smart Voice Assistant & Screen Translator
 
-**SINC PRO** is an elegant, fast, and convenient voice widget for Windows designed to read any selected text aloud using premium neural network voices (Edge TTS).
+**SINC PRO** is an elegant, incredibly fast, and responsive Windows application designed to make reading from your screen effortless and comfortable.
 
-This project was developed with special care and attention to people with **dyslexia**, as the author is dyslexic themselves. The main goal of SINC PRO is to make consuming text in any environment (browsers, PDFs, messengers, work apps) effortless, quick, and comfortable.
-
-### ✨ Key Features
-
-*   **Real-time Screen Translator [Work In Progress / WIP] (v3.3.2):** An interactive crop frame `⛶ A文` to translate any screen region. The frame is resizable and moveable. It is completely click-through — you can scroll and click elements underneath it. Recognized text is adaptively highlighted on hover; the translation is displayed in a tooltip (Right Click) or spoken aloud (Left Click).
-*   **Quick Access Context Menu (v3.0.0):** Right-click the widget in Mini and Micro modes to toggle UI modes or exit the app.
-*   **Global Access Everywhere:** Highlight text in **any** application, press the hotkey, and the program will instantly start reading it aloud.
-*   **Premium Neural Voices:** Powered by Microsoft Edge TTS for natural, human-like sound. It supports English, Russian, German, French, Spanish, Chinese, and many more. You can easily add new voices to the dictionary.
-*   **Intelligent Sentence Segmentation (v3.3.0):** Integration of `pysbd` prevents incorrect sentence breaks on decimals (e.g. `5.5`), ellipses, and standard abbreviations (e.g. `etc.`), and automatically merges Russian initials for fluent speech.
-*   **Three UI Modes:**
-    *   **Full Mode:** A complete window with a text editor and Markdown support.
-    *   **Mini Player:** A compact top-screen overlay. Perfect for background listening while working. Includes a "Text Drawer" that expands when you click `📖`.
-    *   **Micro Widget:** An ultra-compact widget with minimal footprint.
-*   **Always on Top:** The widget stays above other applications.
-*   **On-the-fly Customization:** Change voices (🔊), reading speed (⚡), and customize hotkeys (default Screen Translate hotkey is `Ctrl + Alt + T`).
+The project was developed with special care for people with **dyslexia** (the author is dyslexic themselves). The main goal of SINC PRO is to remove barriers when consuming complex text in any environment: scientific PDFs, technical documentation, code in IDEs, messengers, or web pages.
 
 ---
 
-### ⛶ Screen Translator (Current State & WIP)
+## ✨ Key Features (Value for You)
 
-The Screen Translator feature is currently in active development and refinement.
-
-#### What is implemented so far:
-1.  **Offline Text Recognition (OCR):** High-speed, internet-free text capture powered by Windows 10/11 WinRT OCR API.
-2.  **Paragraph Merging (Connected Components):** Advanced adjacency-graph-based merging. Automatically groups lines of the same paragraph, even in multi-column layouts, preventing columns from blending together.
-3.  **Interactive Reading Overlay:** Instead of heavy overlay patches, a lightweight neon border is drawn around recognized sentences. The border color adaptively changes depending on background brightness.
-4.  **Pop-up Translation (Tooltips):** Right-click any sentence to open a sleek pop-up window with the Russian translation near the cursor.
-5.  **Quick Voice Reading:** Left-click any sentence to instantly speak its translation, or `Ctrl` + Left Click to read the original English text.
-6.  **Multi-Monitor Support:** Precise canvas coordinate calibration (1:1 physical pixels) on secondary screens, including screens with negative coordinates.
-
-#### Known Issues and Limitations:
-*   **Graphical element noise:** Certain complex UI icons containing text characters might be misidentified by OCR as single letters, though most of these are cleared by the built-in filtering.
+*   **🎧 One-Click Reading from Any App:**
+    Simply highlight text in *any* application and press `Ctrl + Shift`. Premium neural network voices from Microsoft Edge TTS will instantly read it aloud with natural intonations.
+*   **⛶ "Live" Screen Translation Overlay:**
+    Press `Ctrl + Alt + T`, crop a region of the screen, and the translation will appear directly over the original text. The window is **click-through**, allowing you to scroll and click elements underneath it.
+*   **🧠 Interactive Reading Mode (Click Lock):**
+    Press `Space` inside the translator frame. The window dims and locks mouse clicks. Now you can interact with the text:
+    *   *Left Click a sentence* — speak the translation.
+    *   *Ctrl + Left Click* — speak the original English text.
+    *   *Right Click a sentence* — open a mini-editor to manually edit the translation.
+*   **🔍 Double Click Word Translation:**
+    Double-click any unfamiliar word in the overlay to show a sleek tooltip with its translation and a quick speak button.
+*   **〰 Flow Threads & Neon Highlighting:**
+    The neon border brightness automatically adapts to the background (light/dark). The *Flow Threads* (dashed lines) physically connect words in reading order, helping your eyes maintain focus and follow the line smoothly.
+*   **⚡ Auto Scan Screen Updates:**
+    Turn on auto-scanning (the `⚡` button), and the overlay will automatically refresh text and shapes if the content or code underneath changes.
+*   **🔒 Local Translation & LLMs:**
+    Translate offline using the built-in Argos Translate engine, or connect local LLMs via Ollama or Msty. Your data never leaves your computer.
 
 ---
 
-### 🚀 How to use it?
+## 🚀 Quick Start in 15 Seconds
 
-1. Launch the application (`SINC_PRO.exe` or the Python script).
-2. Highlight any text in any app and press **`Ctrl + Shift`** to speak it.
-3. Or press **`Ctrl + Alt + T`**, select a region of the screen, and see the translation overlay.
-4. Control playback (Pause `❙❙`, Play `▶`) from the floating widget.
+1.  Download and run the application (`SINC_PRO.exe` from releases or run `voice_widget.py`).
+2.  Highlight text anywhere and press **`Ctrl + Shift`** to speak.
+3.  Or press **`Ctrl + Alt + T`** and select a screen region for interactive translation.
 
-### ⚖️ License & Disclaimer
-*   **License:** Distributed under the free **MIT License** (see [LICENSE](file:///c:/Antigravity%20projects/voice-server/LICENSE)).
-*   **Disclaimer:** This project is created exclusively for educational, personal, and accessibility purposes. It uses the `edge-tts` library to access Microsoft Edge TTS servers. The developer is not responsible for any misuse or commercial exploitation of this software by third parties.
+### ⌨️ Default Hotkeys
+
+| Hotkey | Action |
+| :--- | :--- |
+| **`Ctrl + Shift`** | Read selected text from any program |
+| **`Ctrl + Alt + T`** | Open screen translation frame |
+| **`Space`** | Toggle Interactive Mode (Click Lock) inside the frame |
+| **`Esc`** | Close translation overlay / settings overlay |
+
+---
+
+## 🎮 Interactive Overlay Guide
+
+Once interactive mode is active (`Space` or `🔊/A` button), use the following gestures:
+
+*   **Single Left Click:** Speaks the sentence translation in Russian.
+*   **`Ctrl` + Left Click:** Speaks the original sentence text.
+*   **Double Left Click:** Opens a quick translation for the clicked word.
+*   **Right Click:** Opens the manual translation editor to write a custom translation, reset it, or refresh the cache.
+
+### Overlay Toolbar Options:
+*   `✨` — toggle neon sentence borders.
+*   `Aa` — toggle word underlines.
+*   `〰` — toggle guiding flow threads.
+*   `⚡` — toggle auto-scanning for screen changes.
+
+---
+
+## 🎭 UI Modes
+
+SINC PRO adapts to your workflow:
+1.  **Editor (Full):** A complete window with a text field, Markdown rendering, and a scrubber (progress bar) to rewind speech by sentences.
+2.  **Player (Mini):** A compact bar on top of all windows. Ideal for listening to documentation while working. The `📖` button slides out the text drawer.
+3.  **Micro (Micro):** An ultra-compact widget with basic controls and a minimal desktop footprint.
+
+---
+
+<details>
+<summary>🛠️ Under the Hood (Technical Details for Developers)</summary>
+
+### Technology Stack:
+*   **UI:** `customtkinter` (a wrapper over Tkinter with dark mode support and multi-monitor DPI awareness).
+*   **OCR:** Windows Runtime OCR API (high speed, 100% offline, 1:1 physical pixel DPI mapping).
+*   **TTS:** Microsoft Edge TTS (`edge-tts`) — natural neural voices without the need for API keys.
+*   **Database:** SQLite (`translation_cache.db`) for caching translations and storing custom edits.
+
+### Core Algorithms:
+1.  **Digit Abstraction:** Pre-replaces digits with temporary tokens (e.g. `99990`) before translating to reuse the template cache efficiently, restoring them afterwards.
+2.  **Connected Components (Paragraph Merging):** Adjacency-graph merging of OCR lines based on font size, vertical gaps, trailing punctuation, and letter casing. Prevents columns in tables from merging together.
+3.  **Hybrid OCR:** If a mixed-language word (e.g., with dashes) is missed by the main OCR, the region is cropped, upscaled 3x using `LANCZOS` filter, and rescanned with the Russian WinRT engine.
+4.  **Mixed-Text Translation:** Translates only English terms (length >= 3, CamelCase aware) within Russian/English technical texts to preserve the overall Russian context.
+5.  **Background Cache Validator:** Runs a loop every 12 seconds to re-verify translations in SQLite and update stale entries in the background.
+
+</details>
