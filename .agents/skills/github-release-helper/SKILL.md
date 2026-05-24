@@ -7,6 +7,9 @@ description: Use this skill when releasing a new version of SINC PRO, building t
 
 Этот навык используется ИИ-агентом для правильной компиляции, оформления и отправки релизов SINC PRO на GitHub.
 
+## Важное правило публикации
+* **ЗАПРЕЩЕНО** выполнять команды отправки изменений в удаленный репозиторий (`git push`) или создания релизов на GitHub (`gh release create`) без явного, прямого указания пользователя. Всегда завершай изменения локально и жди команды пользователя для публикации.
+
 ## 1. Сборка проекта и очистка заблокированных файлов
 Перед запуском компиляции через `PyInstaller` (или при возникновении ошибки `PermissionError: [WinError 5]` при записи `SINC_PRO.exe`):
 1. Проверь, запущен ли процесс `SINC_PRO.exe` в системе.
@@ -20,16 +23,12 @@ description: Use this skill when releasing a new version of SINC PRO, building t
    ```
 
 ## 2. Глобальная авторизация в GitHub
-Если при выполнении команд GitHub CLI (`gh`) или Git возникает ошибка авторизации (`HTTP 401 Unauthorized`):
+Если при выполнении любых авторизованных команд Git или GitHub CLI (`gh`) возникает ошибка доступа `HTTP 401 Unauthorized`:
 1. Проверь наличие переменной окружения `GITHUB_PERSONAL_ACCESS_TOKEN` в Windows.
 2. Если она задана, используй её значение для переопределения стандартных переменных в текущей сессии PowerShell перед вызовом команд `gh` или `git`:
    ```powershell
    $env:GITHUB_TOKEN = $env:GITHUB_PERSONAL_ACCESS_TOKEN
    $env:GH_TOKEN = $env:GITHUB_PERSONAL_ACCESS_TOKEN
-   ```
-3. Пример вызова команды создания релиза:
-   ```powershell
-   $env:GITHUB_TOKEN = $env:GITHUB_PERSONAL_ACCESS_TOKEN; $env:GH_TOKEN = $env:GITHUB_PERSONAL_ACCESS_TOKEN; gh release create vX.Y.Z dist/SINC_PRO.exe --title "vX.Y.Z" --notes-file release_notes.md
    ```
 
 ## 3. Языковой стандарт и оформление

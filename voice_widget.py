@@ -88,6 +88,22 @@ VOICE_AVATARS = {
     "Alvaro (ES)": "🇪🇸",
     "Xiaoxiao (CN)": "🇨🇳"
 }
+
+DEFAULT_VOICES_BY_LANG = {
+    "ru": "Светлана (RU)",
+    "en": "Guy (EN)",
+    "de": "Katja (DE)",
+    "fr": "Denise (FR)",
+    "es": "Alvaro (ES)",
+    "zh-CN": "Xiaoxiao (CN)"
+}
+
+def is_voice_matching_lang(voice_name, lang_code):
+    v_upper = voice_name.upper()
+    l_upper = lang_code.split('-')[0].upper()
+    if l_upper == "ZH":
+        return "CN" in v_upper
+    return f"({l_upper})" in v_upper
 # Persistent Settings Path
 if getattr(sys, 'frozen', False):
     APP_DIR = os.path.dirname(sys.executable)
@@ -235,6 +251,7 @@ class VoiceAssistantApp(ctk.CTk):
         self.translate_to = "ru"
         self.translate_hotkey = "ctrl+alt+t"
         self.speak_hotkey = "ctrl+shift"
+        self.speak_translate_hotkey = "ctrl+alt+x"
         self.translation_engine = "google_cache"
         self.ollama_model = "gemma2"
         self.ollama_url = "http://localhost:11434"
@@ -251,6 +268,7 @@ class VoiceAssistantApp(ctk.CTk):
                     self.translate_to = data.get("translate_to", "ru")
                     self.translate_hotkey = data.get("translate_hotkey", "ctrl+alt+t")
                     self.speak_hotkey = data.get("speak_hotkey", "ctrl+shift")
+                    self.speak_translate_hotkey = data.get("speak_translate_hotkey", "ctrl+alt+x")
                     self.translation_engine = data.get("translation_engine", "google_cache")
                     self.ollama_model = data.get("ollama_model", "gemma2")
                     self.ollama_url = data.get("ollama_url", "http://localhost:11434")
@@ -272,6 +290,7 @@ class VoiceAssistantApp(ctk.CTk):
                     "translate_to": self.translate_to,
                     "translate_hotkey": self.translate_hotkey,
                     "speak_hotkey": self.speak_hotkey,
+                    "speak_translate_hotkey": self.speak_translate_hotkey,
                     "translation_engine": self.translation_engine,
                     "ollama_model": self.ollama_model,
                     "ollama_url": self.ollama_url,
@@ -320,7 +339,7 @@ class VoiceAssistantApp(ctk.CTk):
         self.btn_screen_translate = ctk.CTkButton(self.top_bar, image=self.img_translate, text="", width=30, height=30, corner_radius=6,
                                    fg_color="#222", hover_color="#333", command=self.open_screen_translator)
 
-        self.btn_translate_toggle = ctk.CTkButton(self.top_bar, text="A文", width=30, height=30, corner_radius=6,
+        self.btn_translate_toggle = ctk.CTkButton(self, text="A文", width=30, height=30, corner_radius=6,
                                    fg_color="#222", hover_color="#333", text_color="#ccc", font=ctk.CTkFont(size=12, weight="bold"), command=self.toggle_translation_mode)
 
         self.btn_settings = ctk.CTkButton(self.top_bar, text="⚙", width=30, height=30, corner_radius=6, 
@@ -431,7 +450,7 @@ class VoiceAssistantApp(ctk.CTk):
         self.text_box._textbox.tag_lower("buffered")
 
         self.footer = ctk.CTkFrame(self, fg_color="#181818", corner_radius=15, height=80)
-        self.footer.grid_columnconfigure((0,1,2), weight=1) # Ensure columns stretch properly
+        self.footer.grid_columnconfigure((0,1,2,3), weight=1) # Ensure columns stretch properly
 
         self.btn_voice = ctk.CTkButton(self.footer, text=f"🔊 {self.current_voice.split(' ')[0]}", width=40, height=35, corner_radius=10, fg_color="#222", hover_color="#333", font=ctk.CTkFont(size=12), command=self.show_voice_overlay)
         self.btn_voice.grid(row=1, column=0, padx=15, pady=(15, 15), sticky="w")
@@ -439,8 +458,11 @@ class VoiceAssistantApp(ctk.CTk):
         self.btn_speed = ctk.CTkButton(self.footer, text=f"⚡ {self.current_rate}x", width=40, height=35, corner_radius=10, fg_color="#222", hover_color="#333", font=ctk.CTkFont(size=12), command=self.show_speed_overlay)
         self.btn_speed.grid(row=1, column=1, padx=0, pady=(15, 15), sticky="w")
 
+        self.btn_translate_toggle.grid(in_=self.footer, row=1, column=2, padx=15, pady=(15, 15), sticky="w")
+        self.btn_translate_toggle.lift()
+
         self.play_main = ctk.CTkButton(self.footer, text="▶ ПЛЕЙ", width=90, height=35, corner_radius=10, fg_color="#007AFF", font=ctk.CTkFont(size=14, weight="bold"), command=self.toggle_play_pause)
-        self.play_main.grid(row=1, column=2, padx=15, pady=(15, 15), sticky="e")
+        self.play_main.grid(row=1, column=3, padx=15, pady=(15, 15), sticky="e")
 
         # --- Full Scrubber ---
         self.scrub_container_full = ctk.CTkFrame(self.footer, fg_color="transparent", height=20, cursor="hand2")
@@ -458,7 +480,7 @@ class VoiceAssistantApp(ctk.CTk):
         self.scrub_thumb_full.bind("<B1-Motion>", lambda e: self.on_scrub_drag(e, "full"))
         self.scrub_thumb_full.bind("<ButtonRelease-1>", self.on_scrub_end)
         
-        self.scrub_container_full.grid(row=0, column=0, columnspan=3, sticky="ew", padx=15, pady=(15, 0))
+        self.scrub_container_full.grid(row=0, column=0, columnspan=4, sticky="ew", padx=15, pady=(15, 0))
         
         # Right click context menu binding for widgets
         self.bind_right_click(self)
@@ -486,7 +508,8 @@ class VoiceAssistantApp(ctk.CTk):
             None,
             ("✕ Закрыть приложение", self.on_closing)
         ]
-        ContextMenu(self, event.x_root, event.y_root, options)
+        x_mouse, y_mouse = self.winfo_pointerxy()
+        ContextMenu(self, x_mouse, y_mouse, options)
 
     def apply_mode(self, mode, initial=False):
         if not initial:
@@ -521,6 +544,7 @@ class VoiceAssistantApp(ctk.CTk):
         # Hide translate button by default
         self.btn_screen_translate.grid_forget()
         self.btn_translate_toggle.grid_forget()
+        self.btn_translate_toggle.pack_forget()
         
         if mode == "full":
             self.overrideredirect(False)
@@ -535,10 +559,9 @@ class VoiceAssistantApp(ctk.CTk):
             self.btn_to_micro.grid(row=0, column=1, padx=5)
             self.full_header.grid(row=0, column=2, sticky="w", padx=10)
             self.btn_screen_translate.grid(row=0, column=4, padx=5, sticky="e")
-            self.btn_translate_toggle.grid(row=0, column=5, padx=5, sticky="e")
-            self.btn_clear.grid(row=0, column=6, padx=5, sticky="e")
-            self.btn_help.grid(row=0, column=7, padx=5, sticky="e")
-            self.btn_settings.grid(row=0, column=8, padx=5, sticky="e")
+            self.btn_clear.grid(row=0, column=5, padx=5, sticky="e")
+            self.btn_help.grid(row=0, column=6, padx=5, sticky="e")
+            self.btn_settings.grid(row=0, column=7, padx=5, sticky="e")
             
             # Configure top_bar column weights for full mode
             self.top_bar.grid_columnconfigure(0, weight=0)
@@ -549,7 +572,10 @@ class VoiceAssistantApp(ctk.CTk):
             self.top_bar.grid_columnconfigure(5, weight=0)
             self.top_bar.grid_columnconfigure(6, weight=0)
             self.top_bar.grid_columnconfigure(7, weight=0)
-            self.top_bar.grid_columnconfigure(8, weight=0)
+            
+            self.btn_translate_toggle.configure(width=40, height=35, corner_radius=10)
+            self.btn_translate_toggle.grid(in_=self.footer, row=1, column=2, padx=15, pady=(15, 15), sticky="w")
+            self.btn_translate_toggle.lift()
             
             self.text_box.grid(row=1, column=0, padx=20, pady=0, sticky="nsew")
             self.footer.grid(row=2, column=0, sticky="ew", padx=20, pady=20)
@@ -567,10 +593,13 @@ class VoiceAssistantApp(ctk.CTk):
             self.btn_to_full.grid(row=0, column=2, padx=5)
             self.btn_text_drawer.grid(row=0, column=3, padx=5)
             self.btn_screen_translate.grid(row=0, column=4, padx=5)
-            self.btn_translate_toggle.grid(row=0, column=5, padx=5)
             
-            self.mini_center.grid(row=0, column=6, sticky="ew", padx=10)
-            self.right_frame.grid(row=0, column=7, padx=5)
+            self.btn_translate_toggle.configure(width=30, height=30, corner_radius=6)
+            self.btn_translate_toggle.pack(in_=self.right_frame, side="left", padx=2, before=self.play_mini)
+            self.btn_translate_toggle.lift()
+            
+            self.mini_center.grid(row=0, column=5, sticky="ew", padx=10)
+            self.right_frame.grid(row=0, column=6, padx=5)
             
             # Configure top_bar column weights for mini mode
             self.top_bar.grid_columnconfigure(0, weight=0)
@@ -643,6 +672,7 @@ class VoiceAssistantApp(ctk.CTk):
         x = self.winfo_x() + (event.x - self.drag_data["x"])
         y = self.winfo_y() + (event.y - self.drag_data["y"])
         self.geometry(f"+{x}+{y}")
+        self.update_idletasks()
 
     # --- Custom Scrubbing Logic ---
     def on_scrub_start(self, event, source):
@@ -815,6 +845,12 @@ class VoiceAssistantApp(ctk.CTk):
         self.speak_hotkey_entry.insert(0, self.speak_hotkey)
         self.speak_hotkey_entry.pack(pady=1)
         
+        # 4b. Speak with translate hotkey setting
+        ctk.CTkLabel(self.overlay_frame, text="Хоткей озвучки С ПЕРЕВОДОМ:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(4, 1))
+        self.speak_translate_hotkey_entry = ctk.CTkEntry(self.overlay_frame, width=150, placeholder_text="ctrl+alt+x", height=24)
+        self.speak_translate_hotkey_entry.insert(0, self.speak_translate_hotkey)
+        self.speak_translate_hotkey_entry.pack(pady=1)
+        
         # 5. Target language for translation
         ctk.CTkLabel(self.overlay_frame, text="Язык перевода экрана:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(4, 1))
         langs = {"Русский": "ru", "English": "en", "Deutsch": "de", "Français": "fr", "Español": "es", "Chinese": "zh-CN"}
@@ -953,6 +989,10 @@ class VoiceAssistantApp(ctk.CTk):
                 shk = self.speak_hotkey_entry.get().strip().lower()
                 if shk:
                     self.speak_hotkey = shk
+            if hasattr(self, "speak_translate_hotkey_entry") and self.speak_translate_hotkey_entry.winfo_exists():
+                sthk = self.speak_translate_hotkey_entry.get().strip().lower()
+                if sthk:
+                    self.speak_translate_hotkey = sthk
             if hasattr(self, "engine_option") and self.engine_option.winfo_exists():
                 engines = {"Google Translate": "google_cache", "Argos (Оффлайн)": "argos", "Msty / Local API": "msty", "Ollama": "ollama"}
                 sel_eng = self.engine_option.get()
@@ -1070,17 +1110,107 @@ class VoiceAssistantApp(ctk.CTk):
             return ""
         try:
             from translation_engine import get_engine
-            kwargs = {}
-            if self.translation_engine == "ollama":
-                kwargs["ollama_model"] = self.ollama_model
-                kwargs["ollama_url"] = self.ollama_url
-            elif self.translation_engine == "msty":
-                kwargs["msty_model"] = self.msty_model
-                kwargs["msty_url"] = self.msty_url
+            import re
+            
+            target_lang = self.translate_to
+            
+            def needs_translation(txt):
+                latin_alpha = sum(1 for c in txt if ('A' <= c <= 'Z') or ('a' <= c <= 'z'))
+                cyrillic_alpha = sum(1 for c in txt if ('а' <= c <= 'я' or c.lower() == 'ё'))
+                if target_lang == "ru":
+                    return latin_alpha >= 3
+                else:
+                    return cyrillic_alpha >= 3
+
+            def is_mixed_text(txt):
+                latin_alpha = sum(1 for c in txt if ('A' <= c <= 'Z') or ('a' <= c <= 'z'))
+                cyrillic_alpha = sum(1 for c in txt if ('а' <= c <= 'я' or c.lower() == 'ё'))
+                return latin_alpha > 0 and cyrillic_alpha > 0
+
+            def get_translatable_words(txt):
+                if target_lang == "ru":
+                    words = re.findall(r'\b[a-zA-Z]{3,}\b', txt)
+                    valid_words = {}
+                    for w in words:
+                        if '_' in w or any(c.isdigit() for c in w):
+                            continue
+                        if re.search(r'\.[a-zA-Z0-9]*\b' + re.escape(w) + r'\b', txt):
+                            continue
+                        if re.search(r'\b' + re.escape(w) + r'\.[a-zA-Z0-9]+', txt):
+                            continue
+                        if re.search(r'[a-zA-Z0-9_]*[\/\\]' + re.escape(w) + r'\b', txt) or re.search(r'\b' + re.escape(w) + r'[\/\\][a-zA-Z0-9_]*', txt):
+                            continue
+                        prepared = re.sub(r'(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])', ' ', w)
+                        valid_words[w] = prepared
+                    return valid_words
+                else:
+                    words = re.findall(r'\b[а-яА-ЯёЁ]{2,}\b', txt)
+                    valid_words = {}
+                    for w in words:
+                        valid_words[w] = w
+                    return valid_words
+
+            sentences = self.split_into_sentences(text)
+            texts_to_translate = []
+            tasks = []
+            
+            translated_sentences = [text[start:end] for start, end in sentences]
+            
+            for i, (start, end) in enumerate(sentences):
+                sent_text = text[start:end]
+                if needs_translation(sent_text):
+                    if is_mixed_text(sent_text):
+                        words_map = get_translatable_words(sent_text)
+                        if words_map:
+                            for raw_w, prep_w in words_map.items():
+                                if prep_w not in texts_to_translate:
+                                    texts_to_translate.append(prep_w)
+                                tasks.append(('word', i, raw_w, prep_w))
+                    else:
+                        if sent_text not in texts_to_translate:
+                            texts_to_translate.append(sent_text)
+                        tasks.append(('full', i, sent_text))
+
+            trans_map = {}
+            if texts_to_translate:
+                kwargs = {}
+                if self.translation_engine == "ollama":
+                    kwargs["ollama_model"] = self.ollama_model
+                    kwargs["ollama_url"] = self.ollama_url
+                elif self.translation_engine == "msty":
+                    kwargs["msty_model"] = self.msty_model
+                    kwargs["msty_url"] = self.msty_url
+                    
+                engine = get_engine(self.translation_engine, **kwargs)
+                batch_results = engine.translate_batch(texts_to_translate, target_lang)
+                for orig, trans in zip(texts_to_translate, batch_results):
+                    trans_map[orig] = trans
+
+            for task_info in tasks:
+                task_type = task_info[0]
+                if task_type == 'full':
+                    sent_idx, orig_text = task_info[1], task_info[2]
+                    translated_sentences[sent_idx] = trans_map.get(orig_text, orig_text)
+                elif task_type == 'word':
+                    sent_idx, raw_w, prep_w = task_info[1], task_info[2], task_info[3]
+                    word_trans = trans_map.get(prep_w)
+                    if word_trans and word_trans.lower() != prep_w.lower():
+                        curr_sent = translated_sentences[sent_idx]
+                        pattern = r'\b' + re.escape(raw_w) + r'\b'
+                        translated_sentences[sent_idx] = re.sub(pattern, word_trans, curr_sent)
+
+            last_idx = 0
+            final_parts = []
+            for i, (start, end) in enumerate(sentences):
+                if start > last_idx:
+                    final_parts.append(text[last_idx:start])
+                final_parts.append(translated_sentences[i])
+                last_idx = end
                 
-            engine = get_engine(self.translation_engine, **kwargs)
-            res = engine.translate_batch([text], "ru")
-            return res[0] if res else text
+            if last_idx < len(text):
+                final_parts.append(text[last_idx:])
+                
+            return "".join(final_parts)
         except Exception as e:
             print(f"Error in translate_single_text: {e}")
             return text
@@ -1091,8 +1221,10 @@ class VoiceAssistantApp(ctk.CTk):
         
         if self.translation_active:
             self.pre_translation_voice = self.current_voice
-            if not self.current_voice.endswith("(RU)"):
-                self.select_voice_no_save("Светлана (RU)")
+            target_lang = self.translate_to
+            if not is_voice_matching_lang(self.current_voice, target_lang):
+                default_v = DEFAULT_VOICES_BY_LANG.get(target_lang, "Светлана (RU)")
+                self.select_voice_no_save(default_v)
                 
             self.btn_translate_toggle.configure(fg_color="#34C759", text_color="#fff")
             current_text = self.text_box.get("1.0", "end").strip()
@@ -1109,6 +1241,7 @@ class VoiceAssistantApp(ctk.CTk):
                 self.text_box.insert("0.0", self.original_raw_text)
                 if self.markdown_enabled: self.apply_markdown_tags()
                 self.text_box.mark_set("insert", "1.0")
+                self.play_from_text(0)
 
     def async_translate_text(self, text):
         if not text: return
@@ -1128,6 +1261,7 @@ class VoiceAssistantApp(ctk.CTk):
             self.text_box.mark_set("insert", "1.0")
             if not self.is_speaking:
                 self.c_status.configure(text="Выделите текст и нажмите Ctrl+Shift", text_color="#888")
+            self.play_from_text(0)
 
     def async_translate_and_play(self, text):
         try:
@@ -1240,9 +1374,15 @@ class VoiceAssistantApp(ctk.CTk):
                             time.sleep(1.0)
                             continue
                             
+                    if hasattr(self, "speak_translate_hotkey") and self.speak_translate_hotkey:
+                        if keyboard.is_pressed(self.speak_translate_hotkey):
+                            self.on_hotkey_triggered(force_translate=True)
+                            time.sleep(1.0)
+                            continue
+
                     if hasattr(self, "speak_hotkey") and self.speak_hotkey:
                         if keyboard.is_pressed(self.speak_hotkey):
-                            self.on_hotkey_triggered()
+                            self.on_hotkey_triggered(force_translate=False)
                             time.sleep(1.0)
                             continue
                 except Exception as e:
@@ -1250,9 +1390,9 @@ class VoiceAssistantApp(ctk.CTk):
                 time.sleep(0.05)
         threading.Thread(target=check_hotkey, daemon=True).start()
 
-    def on_hotkey_triggered(self):
+    def on_hotkey_triggered(self, force_translate=False):
         timeout = time.time() + 1.0
-        while (keyboard.is_pressed('ctrl') or keyboard.is_pressed('shift')) and time.time() < timeout:
+        while (keyboard.is_pressed('ctrl') or keyboard.is_pressed('shift') or keyboard.is_pressed('alt')) and time.time() < timeout:
             time.sleep(0.05)
         time.sleep(0.1)
         pyperclip.copy("") 
@@ -1262,12 +1402,15 @@ class VoiceAssistantApp(ctk.CTk):
         ctypes.windll.user32.keybd_event(0x11, 0, 2, 0)
         time.sleep(0.3)
         text = pyperclip.paste().strip()
-        if text: self.after(0, lambda: self.update_text_and_play(text))
+        if text: self.after(0, lambda: self.update_text_and_play(text, force_translate=force_translate))
 
-    def update_text_and_play(self, text):
+    def update_text_and_play(self, text, force_translate=False):
+        if force_translate and not self.translation_active:
+            self.toggle_translation_mode()
+            
         self.original_raw_text = text
         self.translated_raw_text = None
-        
+            
         if self.translation_active:
             self.text_box.delete("0.0", "end")
             self.text_box.insert("0.0", "Перевод текста...")
