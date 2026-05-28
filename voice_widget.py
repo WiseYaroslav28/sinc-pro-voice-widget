@@ -113,6 +113,72 @@ else:
 SETTINGS_FILE = os.path.join(APP_DIR, "voice_settings.json")
 CREATE_NO_WINDOW = 0x08000000
 
+def get_monitor_from_point(x, y):
+    if sys.platform.startswith("win"):
+        try:
+            class POINT(ctypes.Structure):
+                _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+            class RECT(ctypes.Structure):
+                _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                            ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [("cbSize", ctypes.c_ulong),
+                            ("rcMonitor", RECT),
+                            ("rcWork", RECT),
+                            ("dwFlags", ctypes.c_ulong)]
+                
+            pt = POINT(x, y)
+            hMonitor = ctypes.windll.user32.MonitorFromPoint(pt, 2) # MONITOR_DEFAULTTONEAREST = 2
+            
+            mi = MONITORINFO()
+            mi.cbSize = ctypes.sizeof(MONITORINFO)
+            if ctypes.windll.user32.GetMonitorInfoW(hMonitor, ctypes.byref(mi)):
+                return (mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom)
+        except Exception:
+            pass
+    return None
+
+def is_position_on_screen(x, y):
+    if x is None or y is None:
+        return False
+    if sys.platform.startswith("win"):
+        try:
+            class RECT(ctypes.Structure):
+                _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                            ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [("cbSize", ctypes.c_ulong),
+                            ("rcMonitor", RECT),
+                            ("rcWork", RECT),
+                            ("dwFlags", ctypes.c_ulong)]
+            
+            monitors_rects = []
+            def callback(hMonitor, hdcMonitor, lprcMonitor, dwData):
+                mi = MONITORINFO()
+                mi.cbSize = ctypes.sizeof(MONITORINFO)
+                if ctypes.windll.user32.GetMonitorInfoW(hMonitor, ctypes.byref(mi)):
+                    monitors_rects.append(mi.rcMonitor)
+                return True
+                
+            CMPFUNC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
+            callback_func = CMPFUNC(callback)
+            ctypes.windll.user32.EnumDisplayMonitors(None, None, callback_func, 0)
+            
+            if monitors_rects:
+                min_x = min(r.left for r in monitors_rects)
+                max_x = max(r.right for r in monitors_rects)
+                min_y = min(r.top for r in monitors_rects)
+                max_y = max(r.bottom for r in monitors_rects)
+                
+                margin = 300
+                if (min_x - margin <= x <= max_x + margin) and (min_y - margin <= y <= max_y + margin):
+                    return True
+                else:
+                    return False
+        except Exception:
+            pass
+    return True
+
 class ContextMenu(ctk.CTkToplevel):
     def __init__(self, master, x, y, options):
         super().__init__(master)
@@ -143,26 +209,40 @@ class ContextMenu(ctk.CTkToplevel):
                 )
                 btn.pack(fill="x", padx=5, pady=2)
                 
-        # Smart positioning logic
-        sw = self.winfo_screenwidth()
-        sh = self.winfo_screenheight()
+        # Smart positioning logic with multi-monitor support
+        m_left, m_top, m_right, m_bottom = 0, 0, self.winfo_screenwidth(), self.winfo_screenheight()
+        
+        monitor = get_monitor_from_point(x, y)
+        if monitor:
+            m_left, m_top, m_right, m_bottom = monitor
+            
         w = 200
         h = sum([30 if opt is not None else 10 for opt in options]) + 15
         
-        x_pos = x if x + w <= sw else x - w
-        y_pos = y if y + h <= sh else y - h
+        x_pos = x if x + w <= m_right else x - w
+        y_pos = y if y + h <= m_bottom else y - h
         
-        x_pos = max(10, min(sw - w - 10, x_pos))
-        y_pos = max(10, min(sh - h - 10, y_pos))
+        x_pos = max(m_left + 10, min(m_right - w - 10, x_pos))
+        y_pos = max(m_top + 10, min(m_bottom - h - 10, y_pos))
         
         self.geometry(f"{w}x{h}+{x_pos}+{y_pos}")
         
         self.bind("<FocusOut>", lambda e: self.destroy())
-        self.bind("<ButtonPress-1>", self.on_click_outside)
+        self.bind("<Button-1>", self.on_click_outside)
+        self.bind("<Button-2>", self.on_click_outside)
+        self.bind("<Button-3>", self.on_click_outside)
         self.bind("<Escape>", lambda e: self.destroy())
         
         self.after(100, self.grab_focus)
         
+    def destroy(self):
+        try:
+            if hasattr(self.master, "active_context_menu") and self.master.active_context_menu is self:
+                self.master.active_context_menu = None
+        except Exception:
+            pass
+        super().destroy()
+
     def make_cmd(self, command):
         def cmd():
             self.destroy()
@@ -177,9 +257,22 @@ class ContextMenu(ctk.CTkToplevel):
             pass
             
     def on_click_outside(self, event):
-        x, y = event.x, event.y
-        if x < 0 or y < 0 or x > self.winfo_width() or y > self.winfo_height():
+        try:
+            rx = self.winfo_rootx()
+            ry = self.winfo_rooty()
+            rw = self.winfo_width()
+            rh = self.winfo_height()
+            is_outside = not (rx <= event.x_root <= rx + rw and ry <= event.y_root <= ry + rh)
+        except Exception:
+            is_outside = True
+            
+        if event.num == 3 or is_outside:
             self.destroy()
+            if event.num == 3:
+                try:
+                    self.master.after(10, lambda: self.master.show_context_menu(None))
+                except Exception:
+                    pass
 
 class VoiceAssistantApp(ctk.CTk):
     def __init__(self):
@@ -215,13 +308,14 @@ class VoiceAssistantApp(ctk.CTk):
         self.original_raw_text = ""
         self.translated_raw_text = None
         self.pre_translation_voice = None
+        self.active_context_menu = None
 
         self.load_settings()
         self.setup_ui_once()
         self.start_hotkey_listener()
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
         
-        self.apply_mode("full", initial=True)
+        self.apply_mode(self.display_mode, initial=True)
         
         # Set window icon
         try:
@@ -243,6 +337,31 @@ class VoiceAssistantApp(ctk.CTk):
             except Exception:
                 pass
 
+    def update_taskbar_visibility(self):
+        if sys.platform.startswith("win"):
+            try:
+                self.update_idletasks()
+                hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
+                if hwnd == 0:
+                    hwnd = self.winfo_id()
+                
+                GWL_EXSTYLE = -20
+                WS_EX_APPWINDOW = 0x00040000
+                WS_EX_TOOLWINDOW = 0x00000080
+                
+                style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+                if self.display_mode in ["mini", "micro"]:
+                    style = (style | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW
+                else:
+                    style = style | WS_EX_APPWINDOW
+                
+                ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+                # Force Windows to recalculate the frame styles to update the taskbar icon immediately
+                ctypes.windll.user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0027) # SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
+                ctypes.windll.user32.ShowWindow(hwnd, 5) # SW_SHOW
+            except Exception:
+                pass
+
     def load_settings(self):
         self.current_voice = "Светлана (RU)"
         self.current_rate = 1.0
@@ -257,6 +376,9 @@ class VoiceAssistantApp(ctk.CTk):
         self.ollama_url = "http://localhost:11434"
         self.msty_model = "Gemma 4"
         self.msty_url = "http://localhost:8080"
+        self.window_x = None
+        self.window_y = None
+        self.display_mode = "full"
         try:
             if os.path.exists(SETTINGS_FILE):
                 with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
@@ -274,6 +396,9 @@ class VoiceAssistantApp(ctk.CTk):
                     self.ollama_url = data.get("ollama_url", "http://localhost:11434")
                     self.msty_model = data.get("msty_model", "Gemma 4")
                     self.msty_url = data.get("msty_url", "http://localhost:8080")
+                    self.window_x = data.get("window_x", None)
+                    self.window_y = data.get("window_y", None)
+                    self.display_mode = data.get("display_mode", "full")
                     # Auto-fix old conflicting hotkey if present in settings file
                     if self.translate_hotkey == "ctrl+shift+t":
                         self.translate_hotkey = "ctrl+alt+t"
@@ -295,7 +420,10 @@ class VoiceAssistantApp(ctk.CTk):
                     "ollama_model": self.ollama_model,
                     "ollama_url": self.ollama_url,
                     "msty_model": self.msty_model,
-                    "msty_url": self.msty_url
+                    "msty_url": self.msty_url,
+                    "window_x": getattr(self, "window_x", None),
+                    "window_y": getattr(self, "window_y", None),
+                    "display_mode": getattr(self, "display_mode", "full")
                 }, f)
         except: pass
 
@@ -496,6 +624,13 @@ class VoiceAssistantApp(ctk.CTk):
             self.bind_right_click(child)
 
     def show_context_menu(self, event):
+        if getattr(self, "active_context_menu", None) is not None:
+            try:
+                self.active_context_menu.destroy()
+            except Exception:
+                pass
+            self.active_context_menu = None
+            
         options = [
             (f"{'✓ ' if self.display_mode == 'full' else '    '}🗖 Редактор (Full)", lambda: self.apply_mode("full")),
             (f"{'✓ ' if self.display_mode == 'mini' else '    '}▬ Плеер-панель (Mini)", lambda: self.apply_mode("mini")),
@@ -509,14 +644,40 @@ class VoiceAssistantApp(ctk.CTk):
             ("✕ Закрыть приложение", self.on_closing)
         ]
         x_mouse, y_mouse = self.winfo_pointerxy()
-        ContextMenu(self, x_mouse, y_mouse, options)
+        self.active_context_menu = ContextMenu(self, x_mouse, y_mouse, options)
 
     def apply_mode(self, mode, initial=False):
         if not initial:
+            try:
+                wx = self.winfo_x()
+                wy = self.winfo_y()
+                if wx > -30000 and wy > -30000:
+                    self.window_x = wx
+                    self.window_y = wy
+            except Exception:
+                pass
             self.withdraw()
             self.close_overlay()
             
         self.display_mode = mode
+        
+        # Determine window size
+        w, h = 480, 600
+        if mode == "full":
+            w, h = 480, 600
+        elif mode == "mini":
+            w, h = 480, 60
+        elif mode == "micro":
+            w, h = 170, 60
+
+        def apply_geometry():
+            if initial:
+                self.deiconify()
+                self.update_idletasks()
+            if self.window_x is not None and self.window_y is not None and is_position_on_screen(self.window_x, self.window_y):
+                self.geometry(f"{w}x{h}+{self.window_x}+{self.window_y}")
+            else:
+                self.geometry(f"{w}x{h}")
         
         # Reset all layout elements first
         self.text_box.grid_forget()
@@ -548,7 +709,7 @@ class VoiceAssistantApp(ctk.CTk):
         
         if mode == "full":
             self.overrideredirect(False)
-            self.geometry("480x600")
+            apply_geometry()
             self.apply_dark_titlebar()
             
             self.grid_rowconfigure(0, weight=0)
@@ -582,7 +743,7 @@ class VoiceAssistantApp(ctk.CTk):
             
         elif mode == "mini":
             self.overrideredirect(True)
-            self.geometry("480x60")
+            apply_geometry()
             
             self.grid_rowconfigure(0, weight=1)
             self.grid_rowconfigure(1, weight=0)
@@ -618,7 +779,7 @@ class VoiceAssistantApp(ctk.CTk):
                 
         elif mode == "micro":
             self.overrideredirect(True)
-            self.geometry("170x60")
+            apply_geometry()
             
             self.grid_rowconfigure(0, weight=1)
             self.grid_rowconfigure(1, weight=0)
@@ -638,6 +799,7 @@ class VoiceAssistantApp(ctk.CTk):
             
         if not initial:
             self.after(50, self.deiconify)
+        self.after(100, self.update_taskbar_visibility)
             
     def toggle_text_drawer(self):
         if self.display_mode != "mini":
@@ -794,7 +956,7 @@ class VoiceAssistantApp(ctk.CTk):
         ctk.CTkLabel(self.overlay_frame, text="Wise Yaroslav", font=ctk.CTkFont(size=12, weight="bold")).pack()
         
         ctk.CTkLabel(self.overlay_frame, text="Текущая версия:", font=ctk.CTkFont(size=10, weight="bold"), text_color="#888").pack(pady=(10, 0))
-        ctk.CTkLabel(self.overlay_frame, text="v3.3.3 (2026-05-24)", font=ctk.CTkFont(size=12)).pack()
+        ctk.CTkLabel(self.overlay_frame, text="v3.3.5 (2026-05-28)", font=ctk.CTkFont(size=12)).pack()
         
         ctk.CTkLabel(self.overlay_frame, text="GitHub Репозиторий:", font=ctk.CTkFont(size=10, weight="bold"), text_color="#888").pack(pady=(10, 0))
         
@@ -1654,6 +1816,17 @@ class VoiceAssistantApp(ctk.CTk):
     def on_closing(self):
         self.stop_speech()
         
+        # Save position and display mode before exiting
+        try:
+            wx = self.winfo_x()
+            wy = self.winfo_y()
+            if wx > -30000 and wy > -30000:
+                self.window_x = wx
+                self.window_y = wy
+            self.save_settings()
+        except Exception:
+            pass
+        
         # Clean up temp folder
         temp_dir = os.path.join(os.environ["TEMP"], "sinc_cache")
         if os.path.exists(temp_dir):
@@ -1791,6 +1964,10 @@ if __name__ == "__main__":
             mutex = kernel32.CreateMutexW(None, True, mutex_name)
             last_error = kernel32.GetLastError()
             if last_error == 183: # ERROR_ALREADY_EXISTS
+                hwnd = ctypes.windll.user32.FindWindowW(None, "SINC PRO")
+                if hwnd:
+                    ctypes.windll.user32.ShowWindow(hwnd, 9) # SW_RESTORE
+                    ctypes.windll.user32.SetForegroundWindow(hwnd)
                 sys.exit(0)
             _single_instance_mutex = mutex
         except Exception:
