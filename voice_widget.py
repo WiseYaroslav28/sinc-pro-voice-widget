@@ -301,7 +301,7 @@ class VoiceAssistantApp(ctk.CTk):
         self.current_play_ratio = 0.0
         self.current_sentence_idx = 0
         self.font_size = 15
-        self.markdown_enabled = True
+        self.markdown_enabled = False
         self.mini_drawer_open = False
         self.current_overlay = None
         self.translation_active = False
@@ -366,7 +366,7 @@ class VoiceAssistantApp(ctk.CTk):
         self.current_voice = "Светлана (RU)"
         self.current_rate = 1.0
         self.font_size = 15
-        self.markdown_enabled = True
+        self.markdown_enabled = False
         self.translate_to = "ru"
         self.translate_hotkey = "ctrl+alt+t"
         self.speak_hotkey = "ctrl+shift"
@@ -386,7 +386,7 @@ class VoiceAssistantApp(ctk.CTk):
                     self.current_voice = data.get("voice", "Светлана (RU)")
                     self.current_rate = data.get("rate", 1.0)
                     self.font_size = data.get("font_size", 15)
-                    self.markdown_enabled = data.get("markdown_enabled", True)
+                    self.markdown_enabled = False
                     self.translate_to = data.get("translate_to", "ru")
                     self.translate_hotkey = data.get("translate_hotkey", "ctrl+alt+t")
                     self.speak_hotkey = data.get("speak_hotkey", "ctrl+shift")
@@ -990,11 +990,6 @@ class VoiceAssistantApp(ctk.CTk):
         f_slider.set(self.font_size)
         f_slider.pack(fill="x", padx=30, pady=2)
         
-        # 2. Markdown switch
-        md_switch = ctk.CTkSwitch(self.overlay_frame, text="Markdown форматирование", command=self.toggle_markdown)
-        if self.markdown_enabled: md_switch.select()
-        md_switch.pack(pady=3)
-        
         # 3. Translate hotkey setting
         ctk.CTkLabel(self.overlay_frame, text="Хоткей перевода экрана:", font=ctk.CTkFont(size=11, weight="bold")).pack(pady=(4, 1))
         self.hotkey_entry = ctk.CTkEntry(self.overlay_frame, width=150, placeholder_text="ctrl+shift+t", height=24)
@@ -1567,6 +1562,7 @@ class VoiceAssistantApp(ctk.CTk):
         if text: self.after(0, lambda: self.update_text_and_play(text, force_translate=force_translate))
 
     def update_text_and_play(self, text, force_translate=False):
+        text = self.clean_markdown_completely(text)
         if force_translate and not self.translation_active:
             self.toggle_translation_mode()
             
@@ -1683,21 +1679,58 @@ class VoiceAssistantApp(ctk.CTk):
                     sentences.append((m.start() + leading_spaces, m.end() - trailing_spaces))
             return sentences
 
-    def clean_markdown_for_tts(self, text):
+    def clean_markdown_completely(self, text):
+        if not text:
+            return ""
         import re
-        # Remove headers
-        text = re.sub(r'^#+\s+', '', text, flags=re.MULTILINE)
-        # Remove bold/italic
-        text = re.sub(r'\*\*|__|[\*_]', '', text)
-        # Remove links [text](url) -> text
+        
+        # 1. Remove code blocks but keep content
+        text = re.sub(r'```[\w]*\s*([\s\S]*?)```', r'\1', text)
+        
+        # 2. Remove inline code
+        text = re.sub(r'`([^`]+)`', r'\1', text)
+        
+        # 3. Remove images
+        text = re.sub(r'\!\[(.*?)\]\(.*?\)', r'\1', text)
+        
+        # 4. Remove links
         text = re.sub(r'\[(.*?)\]\(.*?\)', r'\1', text)
-        return text
+        
+        # 5. Remove headers
+        text = re.sub(r'^#+\s+', '', text, flags=re.MULTILINE)
+        
+        # 6. Remove bullet points
+        text = re.sub(r'^\s*[-*+]\s+', '', text, flags=re.MULTILINE)
+        
+        # 7. Remove list numbers dot (e.g. "1. " -> "1 ")
+        text = re.sub(r'^\s*(\d+)\.\s+', r'\1 ', text, flags=re.MULTILINE)
+        
+        # 8. Remove emphasis (bold, italic, strikethrough)
+        text = re.sub(r'\*\*|__|[\*_~]', '', text)
+        
+        # 9. Remove horizontal rules
+        text = re.sub(r'^\s*[-*_]{3,}\s*$', '', text, flags=re.MULTILINE)
+        
+        # 10. Clean up multiple newlines
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        
+        return text.strip()
+
+    def clean_markdown_for_tts(self, text):
+        return self.clean_markdown_completely(text)
 
     def play_from_text(self, start_idx=0):
         self.stop_speech()
         time.sleep(0.1)
         full_text = self.text_box.get("0.0", "end").strip()
         if not full_text: return
+        
+        # Полностью очищаем текст от разметки Markdown перед воспроизведением
+        cleaned_text = self.clean_markdown_completely(full_text)
+        if cleaned_text != full_text:
+            self.text_box.delete("0.0", "end")
+            self.text_box.insert("0.0", cleaned_text)
+            full_text = cleaned_text
         
         # Get raw sentences and their offsets
         self.sentence_offsets = self.split_into_sentences(full_text)
