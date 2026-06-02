@@ -14,6 +14,6 @@ export default defineConfig({
     command: 'npx serve src -p 9999 --no-clipboard -s',
     url: 'http://localhost:9999',
     reuseExistingServer: true,
-    timeout: 10000,
+    timeout: 20000,
   },
 });
