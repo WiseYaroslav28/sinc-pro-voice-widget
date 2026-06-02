@@ -174,14 +174,8 @@
               Пресеты
             </div>
             
-            <!-- Веер пресетов по ховеру (парящие слова) -->
-            <div class="absolute bottom-full mb-2 w-0 h-0 flex justify-center items-center hidden" id="hover-presets-menu">
-              <button class="preset-btn" style="bottom: 15px; left: -90px; transform: translate(-50%, 50%);" data-preset="summary">Суть</button>
-              <button class="preset-btn" style="bottom: 50px; left: -45px; transform: translate(-50%, 50%);" data-preset="tasks">Задачи</button>
-              <button class="preset-btn" style="bottom: 50px; left: 15px; transform: translate(-50%, 50%);" data-preset="email">Письмо</button>
-              <button class="preset-btn" style="bottom: 15px; left: 60px; transform: translate(-50%, 50%);" data-preset="transcript">Текст</button>
-              <button class="preset-btn" style="bottom: -15px; left: -15px; transform: translate(-50%, 50%);" data-preset="custom">Промпт</button>
-            </div>
+            <!-- Веер пресетов — заполняется через JS из массива PRESETS -->
+            <div class="absolute bottom-full mb-2 w-0 h-0 flex justify-center items-center hidden" id="hover-presets-menu"></div>
           </div>
 
           <!-- Кнопка Журнала -->
@@ -205,14 +199,8 @@
               <span class="material-symbols-outlined text-[15px]">auto_awesome</span>
             </button>
             
-            <!-- Веер пресетов -->
-            <div class="absolute bottom-full mb-1 w-0 h-0 flex justify-center items-center hidden" id="recording-presets-fan">
-              <button class="preset-btn" style="bottom: 12px; left: -80px; transform: translate(-50%, 50%);" data-rec-preset="summary">Суть</button>
-              <button class="preset-btn" style="bottom: 44px; left: -35px; transform: translate(-50%, 50%);" data-rec-preset="tasks">Задачи</button>
-              <button class="preset-btn" style="bottom: 44px; left: 15px; transform: translate(-50%, 50%);" data-rec-preset="email">Письмо</button>
-              <button class="preset-btn" style="bottom: 12px; left: 55px; transform: translate(-50%, 50%);" data-rec-preset="transcript">Текст</button>
-              <button class="preset-btn" style="bottom: -14px; left: -15px; transform: translate(-50%, 50%);" data-rec-preset="custom">Промпт</button>
-            </div>
+            <!-- Веер пресетов — заполняется через JS из массива PRESETS -->
+            <div class="absolute bottom-full mb-1 w-0 h-0 flex justify-center items-center hidden" id="recording-presets-fan"></div>
           </div>
 
           <!-- Пилюля записи -->
@@ -249,14 +237,8 @@
               <span class="material-symbols-outlined text-[15px]">auto_awesome</span>
             </button>
             
-            <!-- Веер пресетов -->
-            <div class="absolute bottom-full mb-1 w-0 h-0 flex justify-center items-center hidden" id="pause-presets-fan">
-              <button class="preset-btn" style="bottom: 12px; left: -80px; transform: translate(-50%, 50%);" data-pause-preset="summary">Суть</button>
-              <button class="preset-btn" style="bottom: 44px; left: -35px; transform: translate(-50%, 50%);" data-pause-preset="tasks">Задачи</button>
-              <button class="preset-btn" style="bottom: 44px; left: 15px; transform: translate(-50%, 50%);" data-pause-preset="email">Письмо</button>
-              <button class="preset-btn" style="bottom: 12px; left: 55px; transform: translate(-50%, 50%);" data-pause-preset="transcript">Текст</button>
-              <button class="preset-btn" style="bottom: -14px; left: -15px; transform: translate(-50%, 50%);" data-pause-preset="custom">Промпт</button>
-            </div>
+            <!-- Веер пресетов — заполняется через JS из массива PRESETS -->
+            <div class="absolute bottom-full mb-1 w-0 h-0 flex justify-center items-center hidden" id="pause-presets-fan"></div>
           </div>
           
           <!-- Пилюля паузы — шире чем записи, чтобы вместить все кнопки -->
@@ -450,50 +432,63 @@
       let customPromptText = "";
 
       // ======================================================================
-      // ПРЕСЕТЫ — обработчики кликов
+      // ПРЕСЕТЫ — единственный источник правды (DRY)
+      // Чтобы добавить/убрать пресет — меняй ТОЛЬКО этот массив.
       // ======================================================================
 
-      document.querySelectorAll('#hover-presets-menu button').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const preset = btn.getAttribute('data-preset');
-          if (preset === 'custom') {
-            openCustomPromptWindow();
-          } else {
-            currentPreset = preset;
-            syncPresetUI(currentPreset);
-            hoverPresetsMenu.classList.add('hidden');
-            mode = 'latch';
-            startRecordingProcess();
-          }
-        });
-      });
+      // Позиции в веере (bottom/left в px относительно центра контейнера)
+      const PRESETS = [
+        { id: 'summary',    label: 'Суть',    pos: { bottom: 15, left: -90 } },
+        { id: 'tasks',      label: 'Задачи',  pos: { bottom: 50, left: -45 } },
+        { id: 'email',      label: 'Письмо',  pos: { bottom: 50, left:  15 } },
+        { id: 'transcript', label: 'Текст',   pos: { bottom: 15, left:  60 } },
+        { id: 'custom',     label: 'Промпт',  pos: { bottom: -15, left: -15 } },
+      ];
 
-      document.querySelectorAll('[data-rec-preset]').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const preset = btn.getAttribute('data-rec-preset');
-          if (preset === 'custom') {
-            openCustomPromptWindow();
-          } else {
-            currentPreset = preset;
-            syncPresetUI(currentPreset);
-          }
-        });
-      });
+      // Рендерит кнопки пресетов в контейнер с нужным data-атрибутом
+      function renderPresetFan(containerId, attrName) {
+        const el = document.getElementById(containerId);
+        if (!el) return;
+        el.innerHTML = PRESETS.map(p =>
+          `<button class="preset-btn"
+                   style="bottom:${p.pos.bottom}px; left:${p.pos.left}px; transform:translate(-50%,50%);"
+                   ${attrName}="${p.id}">${p.label}</button>`
+        ).join('');
+      }
 
-      document.querySelectorAll('[data-pause-preset]').forEach(btn => {
-        btn.addEventListener('click', (e) => {
+      // Привязывает обработчик к вееру через event delegation
+      function bindPresetFan(containerId, attrName, onSelect) {
+        const el = document.getElementById(containerId);
+        if (!el) return;
+        el.addEventListener('click', (e) => {
           e.stopPropagation();
-          const preset = btn.getAttribute('data-pause-preset');
+          const btn = e.target.closest(`[${attrName}]`);
+          if (!btn) return;
+          const preset = btn.getAttribute(attrName);
           if (preset === 'custom') {
             openCustomPromptWindow();
           } else {
             currentPreset = preset;
             syncPresetUI(currentPreset);
+            if (onSelect) onSelect(preset);
           }
         });
+      }
+
+      // Рендерим все три меню из одного источника
+      renderPresetFan('hover-presets-menu',    'data-preset');
+      renderPresetFan('recording-presets-fan', 'data-rec-preset');
+      renderPresetFan('pause-presets-fan',     'data-pause-preset');
+
+      // Привязываем события
+      bindPresetFan('hover-presets-menu', 'data-preset', () => {
+        hoverPresetsMenu.classList.add('hidden');
+        mode = 'latch';
+        startRecordingProcess();
       });
+      bindPresetFan('recording-presets-fan', 'data-rec-preset', null);
+      bindPresetFan('pause-presets-fan',     'data-pause-preset', null);
+
 
       async function openCustomPromptWindow() {
         if (!window.__TAURI__) return;
