@@ -241,8 +241,8 @@
             <div class="absolute bottom-full mb-1 w-0 h-0 flex justify-center items-center hidden" id="pause-presets-fan"></div>
           </div>
           
-          <!-- Пилюля паузы — шире чем записи, чтобы вместить все кнопки -->
-          <div class="bg-[#1b1b25] border border-[#35343a] rounded-full h-10 flex items-center px-3 shadow-[0_8px_24px_rgba(0,0,0,0.6)] gap-2 cursor-pointer hover:border-[#ffc107]/50 transition-all w-[280px] justify-between mx-auto gpu-layer" id="pause-pill">
+          <!-- Пилюля паузы — занимает всю ширину контейнера -->
+          <div class="bg-[#1b1b25] border border-[#35343a] rounded-full h-10 flex items-center px-3 shadow-[0_8px_24px_rgba(0,0,0,0.6)] gap-2 cursor-pointer hover:border-[#ffc107]/50 transition-all w-full justify-between gpu-layer" id="pause-pill">
             <!-- Left: Pause Icon + Yellow Dot -->
             <div class="flex items-center gap-1.5 border-r border-[#4a4455]/40 pr-2">
               <span class="material-symbols-outlined text-[#ffc107] text-[16px]" style="font-variation-settings: 'FILL' 1;">pause</span>
@@ -393,20 +393,41 @@
       // Размеры окна по состоянию (логические пиксели)
       const WIN_WIDTH      = 320;
       const WIN_HEIGHT_IDLE   = 52;   // только пилюля
-      const WIN_HEIGHT_HOVER  = 170;  // пилюля + кнопки + пресеты
+      const WIN_HEIGHT_HOVER  = 130;  // пилюля + 3 кнопки пресетов
       const WIN_HEIGHT_ACTIVE = 200;  // запись / пауза / отмена
       const WIN_HEIGHT = WIN_HEIGHT_ACTIVE; // для инициализации
 
       // Динамическое изменение высоты окна под состояние
       async function resizeToState(state) {
         if (!invoke || !lastBottomCenterX_phys || !lastBottomY_phys) return;
+
+        // Если растём из idle — читаем актуальную позицию окна
+        // чтобы компенсировать любой drift после перетаскивания
+        if (currentState === 'idle' && appWindow) {
+          try {
+            const size = await appWindow.innerSize();
+            const pos  = await appWindow.outerPosition();
+            lastBottomCenterX_phys = pos.x + size.width / 2;
+            lastBottomY_phys       = pos.y + size.height;
+          } catch (_) {}
+        }
+
         const h = state === 'idle' ? WIN_HEIGHT_IDLE
                 : state === 'hover' ? WIN_HEIGHT_HOVER
                 : WIN_HEIGHT_ACTIVE;
         const w_phys  = Math.round(WIN_WIDTH * cachedScaleFactor);
         const h_phys  = Math.round(h * cachedScaleFactor);
-        const x_phys  = Math.round(lastBottomCenterX_phys - w_phys / 2);
-        const y_phys  = Math.round(lastBottomY_phys - h_phys);
+
+        // Клэмпинг по горизонтали
+        const screenWidth_phys = Math.round(screen.width * cachedScaleFactor);
+        const x_raw = Math.round(lastBottomCenterX_phys - w_phys / 2);
+        const x_phys = Math.max(0, Math.min(screenWidth_phys - w_phys, x_raw));
+
+        // Клэмпинг по вертикали — нижний край не выходит за экран
+        const screenHeight_phys = Math.round(screen.height * cachedScaleFactor);
+        const bottomY = Math.min(lastBottomY_phys, screenHeight_phys - 4);
+        const y_phys  = Math.round(bottomY - h_phys);
+
         try {
           await invoke('resize_bottom_up_phys', { width: w_phys, height: h_phys, x: x_phys, y: y_phys });
         } catch (e) { console.warn('[Capsule] resize failed:', e); }
@@ -436,13 +457,11 @@
       // Чтобы добавить/убрать пресет — меняй ТОЛЬКО этот массив.
       // ======================================================================
 
-      // Позиции в веере (bottom/left в px относительно центра контейнера)
+      // Позиции в веере — 3 кнопки, симметричная дуга
       const PRESETS = [
-        { id: 'summary',    label: 'Суть',    pos: { bottom: 15, left: -90 } },
-        { id: 'tasks',      label: 'Задачи',  pos: { bottom: 50, left: -45 } },
-        { id: 'email',      label: 'Письмо',  pos: { bottom: 50, left:  15 } },
-        { id: 'transcript', label: 'Текст',   pos: { bottom: 15, left:  60 } },
-        { id: 'custom',     label: 'Промпт',  pos: { bottom: -15, left: -15 } },
+        { id: 'summary',    label: 'Суть',   pos: { bottom: 20, left: -65 } },
+        { id: 'transcript', label: 'Текст',  pos: { bottom: 20, left:  45 } },
+        { id: 'custom',     label: 'Промпт', pos: { bottom: -8, left: -10 } },
       ];
 
       // Рендерит кнопки пресетов в контейнер с нужным data-атрибутом

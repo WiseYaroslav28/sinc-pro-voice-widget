@@ -96,49 +96,47 @@
         <div class="flex-1 flex flex-col px-6 min-h-0 overflow-hidden">
           
           <!-- ВКЛАДКА 1: ГЛАВНАЯ (HOME) -->
-          <section class="tab-content flex flex-col gap-2 flex-1 min-h-0 py-4" id="tab-home">
+          <section class="tab-content flex flex-col gap-2 flex-1 min-h-0 py-4 pb-14" id="tab-home">
 
-            <!-- Компактный Bento-бар сверху (примагничен к верхней границе) -->
-            <div class="flex items-center gap-3 bg-[#1b1b20] rounded-xl border border-[#4a4455]/25 px-4 py-2 flex-shrink-0">
+            <!-- Компактный статус-бар -->
+            <div class="flex items-center gap-2 bg-[#1b1b20] rounded-xl border border-[#4a4455]/25 px-3 py-1.5 flex-shrink-0 overflow-hidden">
               <!-- Хоткеи -->
-              <div class="flex items-center gap-1.5 border-r border-[#4a4455]/25 pr-3">
-                <span class="text-[9px] text-[#ccc3d8]/50 uppercase tracking-wider mr-1">Хоткеи</span>
-                <div class="flex items-center gap-1 bg-[#1f1f24] px-2 py-0.5 rounded-lg border border-[#4a4455]/20" title="Диктовка: Ctrl+Win">
-                  <span class="material-symbols-outlined text-[12px] text-[#ccc3d8]">mic</span>
+              <div class="flex items-center gap-1 border-r border-[#4a4455]/25 pr-2">
+                <div class="flex items-center gap-1 bg-[#1f1f24] px-1.5 py-0.5 rounded border border-[#4a4455]/20" title="Диктовка: Ctrl+Win">
+                  <span class="material-symbols-outlined text-[11px] text-[#ccc3d8]">mic</span>
                   <span class="text-[9px] text-[#ccc3d8]/70 font-mono">Ctrl+Win</span>
                 </div>
-                <div class="flex items-center gap-1 bg-[#1f1f24] px-2 py-0.5 rounded-lg border border-[#4a4455]/20" title="Отправить: Ctrl+Alt">
-                  <span class="material-symbols-outlined text-[12px] text-[#ccc3d8]">send</span>
+                <div class="flex items-center gap-1 bg-[#1f1f24] px-1.5 py-0.5 rounded border border-[#4a4455]/20" title="Отправить: Ctrl+Alt">
+                  <span class="material-symbols-outlined text-[11px] text-[#ccc3d8]">send</span>
                   <span class="text-[9px] text-[#ccc3d8]/70 font-mono">Ctrl+Alt</span>
                 </div>
               </div>
-              <!-- Окна: тумблеры -->
-              <div class="flex items-center gap-3 border-r border-[#4a4455]/25 pr-3">
-                <span class="text-[9px] text-[#ccc3d8]/50 uppercase tracking-wider">Окна</span>
-                <label class="flex items-center gap-1.5 cursor-pointer group">
-                  <span class="text-[11px] text-[#ccc3d8] group-hover:text-white transition-colors">Капсула</span>
-                  <label class="switch" style="transform: scale(0.75); transform-origin: left center;"><input type="checkbox" id="toggle-capsule" checked><span class="slider"></span></label>
+              <!-- Окна -->
+              <div class="flex items-center gap-2 border-r border-[#4a4455]/25 pr-2">
+                <label class="flex items-center gap-1 cursor-pointer" title="Капсула">
+                  <span class="material-symbols-outlined text-[12px] text-[#ccc3d8]/60">lens_blur</span>
+                  <label class="switch" style="transform: scale(0.65); transform-origin: left center;"><input type="checkbox" id="toggle-capsule" checked><span class="slider"></span></label>
                 </label>
-                <label class="flex items-center gap-1.5 cursor-pointer group">
-                  <span class="text-[11px] text-[#ccc3d8] group-hover:text-white transition-colors">Виджет</span>
-                  <label class="switch" style="transform: scale(0.75); transform-origin: left center;"><input type="checkbox" id="toggle-widget"><span class="slider"></span></label>
+                <label class="flex items-center gap-1 cursor-pointer" title="Виджет">
+                  <span class="material-symbols-outlined text-[12px] text-[#ccc3d8]/60">widgets</span>
+                  <label class="switch" style="transform: scale(0.65); transform-origin: left center;"><input type="checkbox" id="toggle-widget"><span class="slider"></span></label>
                 </label>
               </div>
-              <!-- Сервисы: статус-индикаторы -->
-              <div class="flex items-center gap-3 flex-1">
-                <span class="text-[9px] text-[#ccc3d8]/50 uppercase tracking-wider">Сервисы</span>
-                <div class="flex items-center gap-1.5">
-                  <span class="text-[11px] text-[#e4e1e9]">Gemini AI</span>
+              <!-- Сервисы -->
+              <div class="flex items-center gap-2 flex-1 min-w-0">
+                <div class="flex items-center gap-1" title="Gemini AI">
+                  <span class="material-symbols-outlined text-[11px] text-[#ccc3d8]/60">smart_toy</span>
                   <span class="text-[10px] font-semibold" id="api-status-text">—</span>
-                  <span class="w-1.5 h-1.5 rounded-full" id="api-status-dot"></span>
+                  <span class="w-1.5 h-1.5 rounded-full flex-shrink-0" id="api-status-dot"></span>
                 </div>
-                <div class="flex items-center gap-1.5">
-                  <span class="text-[11px] text-[#e4e1e9]">Микрофон</span>
+                <div class="flex items-center gap-1" title="Микрофон">
+                  <span class="material-symbols-outlined text-[11px] text-[#ccc3d8]/60">mic</span>
                   <span class="text-[10px] text-[#7bd6d1] font-semibold">Готов</span>
-                  <span class="w-1.5 h-1.5 rounded-full bg-[#7bd6d1]" style="box-shadow: 0 0 4px rgba(123,214,209,0.6);"></span>
+                  <span class="w-1.5 h-1.5 rounded-full bg-[#7bd6d1] flex-shrink-0" style="box-shadow: 0 0 4px rgba(123,214,209,0.6);"></span>
                 </div>
               </div>
             </div>
+
 
             <!-- Центральная карточка: Последняя активность — flex-1 заполняет всё -->
             <div class="bg-[#1f1f24] rounded-xl border border-[#4a4455]/20 flex flex-col overflow-hidden relative neon-glow transition-shadow duration-300 flex-1 min-h-0">
