@@ -141,6 +141,58 @@
         backface-visibility: hidden;
         will-change: opacity, border-color;
       }
+
+      /* ── Состояния отправки ────────────────────────────────────────── */
+
+      /* Орбитальный спиннер */
+      @keyframes orbit {
+        0%   { transform: rotate(0deg) translateX(18px) rotate(0deg); }
+        100% { transform: rotate(360deg) translateX(18px) rotate(-360deg); }
+      }
+      .orbit-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #8e52ff;
+        position: absolute;
+        top: 50%; left: 50%;
+        margin: -3.5px 0 0 -3.5px;
+        animation: orbit 1.2s linear infinite;
+        box-shadow: 0 0 8px rgba(142,82,255,0.8);
+      }
+      .orbit-dot:nth-child(2) { animation-delay: -0.4s; background: #45a29e; box-shadow: 0 0 8px rgba(69,162,158,0.8); }
+      .orbit-dot:nth-child(3) { animation-delay: -0.8s; background: #d2bbff; box-shadow: 0 0 8px rgba(210,187,255,0.6); }
+
+      /* Успех — пульсирующая галочка */
+      @keyframes pop-in {
+        0%   { transform: scale(0.3); opacity: 0; }
+        70%  { transform: scale(1.15); opacity: 1; }
+        100% { transform: scale(1); opacity: 1; }
+      }
+      .success-icon { animation: pop-in 0.4s cubic-bezier(0.4,0,0.2,1) both; }
+
+      /* Ошибка — tooltip при наведении */
+      .error-tooltip {
+        position: absolute;
+        bottom: calc(100% + 8px);
+        left: 50%;
+        transform: translateX(-50%);
+        background: #1c1b23;
+        border: 1px solid rgba(240,84,84,0.4);
+        border-radius: 10px;
+        padding: 8px 12px;
+        font-size: 10px;
+        color: #ccc3d8;
+        white-space: pre-wrap;
+        max-width: 260px;
+        word-break: break-word;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s;
+        z-index: 100;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+      }
+      .error-wrapper:hover .error-tooltip { opacity: 1; pointer-events: auto; }
     </style>
   </head>
 
@@ -301,6 +353,67 @@
             <div class="font-mono text-[11px] text-[#f05454] tracking-wider" id="cancel-timer">
               00:00
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- СОСТОЯНИЕ 6: Отправка (Sending — орбитальный спиннер) -->
+      <div class="capsule-state" id="state-sending">
+        <div class="flex flex-col items-center gap-3 w-full">
+          <!-- Орбитальный спиннер -->
+          <div class="relative w-10 h-10 flex items-center justify-center">
+            <div class="orbit-dot"></div>
+            <div class="orbit-dot"></div>
+            <div class="orbit-dot"></div>
+          </div>
+          <!-- Пилюля-статус -->
+          <div class="bg-[#1b1b25] border border-[#4a4455]/60 rounded-full h-10 flex items-center px-4 gap-2 shadow-[0_8px_24px_rgba(0,0,0,0.6)] w-[240px] justify-center">
+            <span class="material-symbols-outlined text-[#8e52ff] text-[14px] spinner">progress_activity</span>
+            <span class="text-[11px] text-[#ccc3d8] tracking-wide font-medium">Обрабатывается...</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- СОСТОЯНИЕ 7: Успех (Send Success — зелёная галочка) -->
+      <div class="capsule-state" id="state-send-success">
+        <div class="bg-[#1b1b25] border border-[#45a29e]/60 rounded-full h-10 flex items-center px-5 gap-2.5 shadow-[0_8px_24px_rgba(0,0,0,0.6)] w-[200px] justify-center">
+          <span class="material-symbols-outlined text-[#45a29e] text-[20px] success-icon" style="font-variation-settings:'FILL' 1;">check_circle</span>
+          <span class="text-[12px] text-[#45a29e] font-bold tracking-wide">Готово</span>
+        </div>
+      </div>
+
+      <!-- СОСТОЯНИЕ 8: Ошибка (Send Error) -->
+      <div class="capsule-state" id="state-send-error">
+        <div class="flex flex-col items-center gap-2 w-full">
+          <!-- Баннер ошибки -->
+          <div class="bg-[#1b1b25]/95 border border-[#f05454]/50 rounded-2xl p-3 shadow-2xl flex flex-col gap-2.5 w-[260px] backdrop-blur-md">
+            <!-- Треугольник + текст + кнопка копировать -->
+            <div class="relative error-wrapper flex items-start gap-2">
+              <span class="material-symbols-outlined text-[#f05454] text-[20px] mt-0.5 flex-shrink-0" style="font-variation-settings:'FILL' 1;">warning</span>
+              <div class="flex flex-col gap-1 flex-1 min-w-0">
+                <span class="text-[10px] font-bold text-[#f05454] uppercase tracking-wider">Ошибка отправки</span>
+                <span class="text-[10px] text-[#ccc3d8] leading-relaxed line-clamp-2" id="error-short-text">Не удалось получить ответ от ИИ</span>
+              </div>
+              <button class="flex-shrink-0 w-6 h-6 rounded-lg bg-[#2a292f] border border-[#4a4455]/40 flex items-center justify-center text-[#ccc3d8] hover:text-white hover:border-[#f05454]/60 transition-all cursor-pointer" id="btn-copy-error" title="Скопировать ошибку">
+                <span class="material-symbols-outlined text-[12px]">content_copy</span>
+              </button>
+              <!-- Tooltip с полным текстом ошибки -->
+              <div class="error-tooltip" id="error-full-tooltip">–</div>
+            </div>
+            <!-- Кнопки -->
+            <div class="flex gap-2">
+              <button class="flex-1 py-1.5 rounded-xl bg-[#8e52ff] hover:bg-[#a377ff] text-white text-[10px] font-bold transition-all shadow-lg active:scale-95 cursor-pointer border-0" id="btn-retry-send">
+                Повторить
+              </button>
+              <button class="flex-1 py-1.5 rounded-xl bg-[#2a292f] hover:bg-[#35343a] text-[#ccc3d8] text-[10px] font-bold transition-all border border-[#4a4455]/40 active:scale-95 cursor-pointer" id="btn-cancel-error">
+                Отмена
+              </button>
+            </div>
+          </div>
+          <!-- Пилюля внизу -->
+          <div class="bg-[#1b1b25] border border-[#f05454]/40 rounded-full h-10 flex items-center px-4 gap-2 shadow-[0_8px_24px_rgba(0,0,0,0.6)] w-[240px] justify-center">
+            <span class="material-symbols-outlined text-[#f05454] text-[14px]">cloud_off</span>
+            <span class="text-[11px] text-[#f05454]/80 tracking-wide font-medium">Не доставлено</span>
           </div>
         </div>
       </div>
@@ -1159,16 +1272,41 @@
 
         // Обновляем якорь ТОЛЬКО при ручном перетаскивании
         if (appWindow) {
-          appWindow.onMoved((event) => {
+        appWindow.onMoved((event) => {
             if (!maybeDragging) return;
             const { x, y } = event.payload;
             const factor = cachedScaleFactor;
+            // Используем ТЕКУЩУЮ высоту окна (не WIN_HEIGHT!) чтобы не было дрейфа якоря
+            const currentH = Math.round(
+              (currentState === 'idle'  ? WIN_HEIGHT_IDLE  :
+               currentState === 'hover' ? WIN_HEIGHT_HOVER :
+               WIN_HEIGHT_ACTIVE) * factor
+            );
             const currentW = Math.round(WIN_WIDTH * factor);
-            const currentH = Math.round(WIN_HEIGHT * factor);
             lastBottomCenterX_phys = x + currentW / 2;
-            lastBottomY_phys = y + currentH;
+            lastBottomY_phys       = y + currentH;
           });
         }
+
+        // Мультимонитор polling: при magnet=ON каждые 800ms смотрим на каком мониторе курсор
+        // Если монитор сменился — перемещаем капсулу туда
+        let _lastMonitorKey = null;
+        setInterval(async () => {
+          if (!isMagnetEnabled || !invoke) return;
+          try {
+            const mon = await invoke('get_cursor_monitor');
+            const key = `${mon.work_left},${mon.work_top},${mon.work_right},${mon.work_bottom}`;
+            if (key !== _lastMonitorKey) {
+              _lastMonitorKey = key;
+              // Обновляем scaleFactor для целевого монитора
+              if (mon.scale_factor && mon.scale_factor > 0) cachedScaleFactor = mon.scale_factor;
+              // Перемещаем на новый монитор (не меняем currentState)
+              await resizeToState(currentState === 'idle' ? 'idle'
+                                : currentState === 'hover' ? 'hover'
+                                : 'active');
+            }
+          } catch (_) {}
+        }, 800);
 
         container.addEventListener('mousedown', (e) => {
           // Если Магнит включён — перетаскивание заблокировано
