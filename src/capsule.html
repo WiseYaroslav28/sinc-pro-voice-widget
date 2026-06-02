@@ -149,8 +149,9 @@
       
       <!-- СОСТОЯНИЕ 1: Покой (Idle - Тонкая полоска) -->
       <div class="capsule-state active" id="state-idle">
-        <div class="w-16 h-1.5 bg-[#ccc3d8]/40 rounded-full cursor-pointer shadow-[0_4px_12px_rgba(0,0,0,0.5)] transition-all duration-300 hover:bg-[#8e52ff]/80 hover:w-20 gpu-layer"></div>
+        <div class="w-16 h-1.5 bg-[#ccc3d8]/40 rounded-full cursor-pointer transition-all duration-300 hover:bg-[#8e52ff]/80 hover:w-20 gpu-layer" style="filter: drop-shadow(0 4px 10px rgba(0,0,0,0.45));"></div>
       </div>
+
 
       <!-- СОСТОЯНИЕ 2: Наведение (Hover - Левитирующие кнопки) -->
       <div class="capsule-state" id="state-hover">
@@ -457,11 +458,12 @@
       // Чтобы добавить/убрать пресет — меняй ТОЛЬКО этот массив.
       // ======================================================================
 
-      // Позиции в веере — 3 кнопки, симметричная дуга
+      // Позиции в веере — Промпт сверху, Суть и Текст по бокам
+      // bottom/left в px относительно центра контейнера (transform: translate(-50%,50%))
       const PRESETS = [
-        { id: 'summary',    label: 'Суть',   pos: { bottom: 20, left: -65 } },
-        { id: 'transcript', label: 'Текст',  pos: { bottom: 20, left:  45 } },
-        { id: 'custom',     label: 'Промпт', pos: { bottom: -8, left: -10 } },
+        { id: 'summary',    label: 'Суть',   pos: { bottom: 20, left: -68 } },
+        { id: 'custom',     label: 'Промпт', pos: { bottom: 75, left:  -8 } },
+        { id: 'transcript', label: 'Текст',  pos: { bottom: 20, left:  52 } },
       ];
 
       // Рендерит кнопки пресетов в контейнер с нужным data-атрибутом

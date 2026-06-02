@@ -4,305 +4,360 @@
     <meta charset="utf-8"/>
     <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
     <title>SINC PRO - Виджет озвучки</title>
-    <!-- Подключаем Tailwind CSS скомпилированный локально -->
     <link rel="stylesheet" href="styles.css" />
-    <!-- Подключаем Google Material Symbols -->
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
     <style>
-      body {
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0; padding: 0;
         background: transparent;
+        width: 100vw; height: 100vh;
+        display: flex; align-items: center; justify-content: center;
+      }
+
+      /* Анимация пульсации при воспроизведении */
+      .play-pulse { animation: pulse-glow 1.5s infinite; }
+      @keyframes pulse-glow {
+        0%, 100% { box-shadow: 0 0 8px rgba(142,82,255,0.5); transform: scale(1); }
+        50%       { box-shadow: 0 0 20px rgba(142,82,255,0.8); transform: scale(1.06); }
+      }
+
+      /* Dropdown-меню, открывающееся ВВЕРХ */
+      .dropdown-menu {
+        position: absolute;
+        bottom: calc(100% + 6px);
+        left: 0;
+        background: #1c1b23;
+        border: 1px solid rgba(142,82,255,0.3);
+        border-radius: 10px;
+        padding: 6px;
+        min-width: 140px;
+        display: none;
+        flex-direction: column;
+        gap: 2px;
+        z-index: 100;
+        box-shadow: 0 -8px 24px rgba(0,0,0,0.6);
+      }
+      .dropdown-menu.open { display: flex; }
+      .dropdown-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 10px;
+        border-radius: 7px;
+        font-size: 12px;
+        color: #ccc3d8;
+        cursor: pointer;
+        transition: background 0.15s;
+        white-space: nowrap;
+      }
+      .dropdown-item:hover { background: rgba(142,82,255,0.15); color: white; }
+      .dropdown-item.selected { color: #8e52ff; font-weight: 600; }
+
+      /* Разделитель между секциями */
+      .menu-section-label {
+        font-size: 9px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #4a4455;
+        padding: 4px 10px 2px;
+      }
+      .menu-divider { height: 1px; background: rgba(74,68,85,0.3); margin: 4px 0; }
+
+      /* Кнопка-пилюля (секция с разделителем) */
+      .pill-btn {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 5px 10px;
+        border-radius: 7px;
+        cursor: pointer;
+        transition: background 0.15s;
+        color: #ccc3d8;
+        font-size: 12px;
+        font-weight: 500;
+        white-space: nowrap;
+        background: transparent;
+        border: none;
+        position: relative;
+      }
+      .pill-btn:hover { background: rgba(255,255,255,0.05); color: white; }
+      .pill-btn.active { color: #8e52ff; }
+
+      /* Иконка-кнопка в нижнем ряду */
+      .icon-btn {
         display: flex;
         align-items: center;
         justify-content: center;
-        width: 100vw;
-        height: 100vh;
+        width: 32px; height: 32px;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s;
+        color: #ccc3d8;
+        background: transparent;
+        border: none;
       }
-      /* Анимация пульсации кнопки при воспроизведении */
-      .play-pulse {
-        animation: pulse-glow 1.5s infinite;
-      }
-      @keyframes pulse-glow {
-        0%, 100% {
-          box-shadow: 0 0 8px rgba(142, 82, 255, 0.5);
-          transform: scale(1);
-        }
-        50% {
-          box-shadow: 0 0 20px rgba(142, 82, 255, 0.8);
-          transform: scale(1.06);
-        }
-      }
+      .icon-btn:hover { background: rgba(255,255,255,0.07); color: #45a29e; }
     </style>
   </head>
 
   <body class="bg-transparent text-[#e4e1e9] antialiased">
-    <!-- Mini Reader Widget Container (дизайн Stitch) -->
-    <div class="w-[320px] bg-[#1b1b20] rounded-lg shadow-2xl border border-[#4a4455]/30 flex flex-col overflow-hidden transition-all duration-300 hover:border-[#8e52ff]/50 focus-within:border-[#8e52ff]/50 group" id="widget-container">
-      
-      <!-- Верхний ряд (slim-режим) -->
-      <div class="flex items-center justify-between p-2 border-b border-[#4a4455]/20 h-[56px] relative z-10">
-        
-        <!-- Выбор языка/голоса -->
-        <div class="relative">
-          <button class="flex items-center gap-1 px-1.5 py-1 rounded text-[#ccc3d8] hover:bg-[#2a292f] hover:text-white transition-colors focus:outline-none" id="btn-voice-dropdown">
-            <span class="text-sm" id="selected-flag">🇷🇺</span>
-            <span class="text-[11px] font-bold tracking-wider uppercase" id="selected-lang-code">RU</span>
-            <span class="material-symbols-outlined text-[16px]">expand_more</span>
+    <div class="bg-[#1b1b20] rounded-2xl border border-[#4a4455]/30 shadow-[0_8px_32px_rgba(0,0,0,0.5)] overflow-visible transition-all duration-300 hover:border-[#8e52ff]/40"
+         id="widget-container"
+         style="width: 320px;">
+
+      <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+      <!-- SLIM ROW (всегда видна)                      -->
+      <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+      <div class="flex items-center px-2 py-2 gap-1" id="slim-row">
+
+        <!-- 🔊 Голос + язык (dropdown вверх) -->
+        <div class="relative" id="voice-wrapper">
+          <button class="pill-btn" id="btn-voice" title="Голос озвучки">
+            <span class="material-symbols-outlined text-[16px] text-[#ccc3d8]/60" style="font-variation-settings:'FILL' 1;">volume_up</span>
+            <span id="selected-voice-label">RU (Алёна)</span>
+            <span class="material-symbols-outlined text-[14px] text-[#4a4455]">expand_more</span>
           </button>
-          <!-- Выпадающее меню языков -->
-          <div class="absolute top-10 left-0 bg-[#1f1f24] border border-[#8e52ff]/30 rounded-md shadow-2xl p-1 hidden flex-col gap-1 z-50 w-24" id="voice-menu">
-            <button class="flex items-center gap-2 px-2 py-1 rounded text-[11px] hover:bg-[#8e52ff]/15 text-left text-white font-semibold" data-lang="ru" data-flag="🇷🇺">
-              <span>🇷🇺</span><span>RU</span>
-            </button>
-            <button class="flex items-center gap-2 px-2 py-1 rounded text-[11px] hover:bg-[#8e52ff]/15 text-left text-white" data-lang="en" data-flag="🇺🇸">
-              <span>🇺🇸</span><span>EN</span>
-            </button>
-            <button class="flex items-center gap-2 px-2 py-1 rounded text-[11px] hover:bg-[#8e52ff]/15 text-left text-white" data-lang="de" data-flag="🇩🇪">
-              <span>🇩🇪</span><span>DE</span>
-            </button>
+          <div class="dropdown-menu" id="voice-menu" style="min-width: 160px;">
+            <div class="menu-section-label">Голос</div>
+            <div class="dropdown-item selected" data-lang="ru" data-voice-name="Алёна" data-label="RU (Алёна)">
+              <span>🇷🇺</span><span>RU (Алёна)</span>
+            </div>
+            <div class="dropdown-item" data-lang="en" data-voice-name="" data-label="EN (Google)">
+              <span>🇺🇸</span><span>EN (Google)</span>
+            </div>
+            <div class="dropdown-item" data-lang="de" data-voice-name="" data-label="DE (Google)">
+              <span>🇩🇪</span><span>DE (Google)</span>
+            </div>
           </div>
         </div>
 
-        <!-- Выбор скорости -->
-        <div class="relative">
-          <button class="flex items-center gap-1 px-1.5 py-1 rounded text-[#45a29e] hover:bg-[#2a292f] transition-colors focus:outline-none" id="btn-speed-dropdown">
-            <span class="material-symbols-outlined text-[16px]">bolt</span>
-            <span class="text-[11px] font-bold uppercase" id="selected-speed-val">1.0x</span>
-            <span class="material-symbols-outlined text-[16px]">expand_more</span>
+        <!-- Разделитель -->
+        <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0"></div>
+
+        <!-- ⚡ Скорость (dropdown вверх) -->
+        <div class="relative" id="speed-wrapper">
+          <button class="pill-btn" id="btn-speed" title="Скорость воспроизведения">
+            <span class="material-symbols-outlined text-[14px] text-[#45a29e]">bolt</span>
+            <span id="selected-speed-label">1.0x</span>
           </button>
-          <!-- Выпадающее меню скоростей -->
-          <div class="absolute top-10 left-0 bg-[#1f1f24] border border-[#8e52ff]/30 rounded-md shadow-2xl p-1 hidden flex-col gap-1 z-50 w-20" id="speed-menu">
-            <button class="px-2 py-1 rounded text-[11px] hover:bg-[#8e52ff]/15 text-left text-white font-semibold" data-speed="1.0">1.0x</button>
-            <button class="px-2 py-1 rounded text-[11px] hover:bg-[#8e52ff]/15 text-left text-white" data-speed="1.25">1.25x</button>
-            <button class="px-2 py-1 rounded text-[11px] hover:bg-[#8e52ff]/15 text-left text-white" data-speed="1.5">1.5x</button>
-            <button class="px-2 py-1 rounded text-[11px] hover:bg-[#8e52ff]/15 text-left text-white" data-speed="2.0">2.0x</button>
-            <button class="px-2 py-1 rounded text-[11px] hover:bg-[#8e52ff]/15 text-left text-white" data-speed="0.75">0.75x</button>
+          <div class="dropdown-menu" id="speed-menu" style="min-width: 100px; left: auto; right: 0;">
+            <div class="menu-section-label">Скорость</div>
+            <div class="dropdown-item" data-speed="0.75">0.75x</div>
+            <div class="dropdown-item selected" data-speed="1.0">1.0x</div>
+            <div class="dropdown-item" data-speed="1.25">1.25x</div>
+            <div class="dropdown-item" data-speed="1.5">1.5x</div>
+            <div class="dropdown-item" data-speed="2.0">2.0x</div>
           </div>
         </div>
 
-        <!-- Play/Pause (Круглая кнопка по центру) -->
-        <button class="flex items-center justify-center w-[32px] h-[32px] rounded-full bg-[#8e52ff] text-white hover:bg-[#a377ff] transition-transform active:scale-95 shadow-[0_0_10px_rgba(142,82,255,0.4)] focus:outline-none" id="widget-play" title="Озвучить буфер обмена">
-          <span class="material-symbols-outlined text-[20px]" id="widget-play-icon" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+        <!-- Разделитель -->
+        <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0"></div>
+
+        <!-- ▶ Play/Pause -->
+        <button class="flex items-center justify-center w-9 h-9 rounded-full bg-[#8e52ff] text-white hover:bg-[#a377ff] transition-all active:scale-95 shadow-[0_0_12px_rgba(142,82,255,0.4)] flex-shrink-0 cursor-pointer border-0"
+                id="widget-play" title="Озвучить буфер обмена">
+          <span class="material-symbols-outlined text-[20px]" id="widget-play-icon" style="font-variation-settings:'FILL' 1;">play_arrow</span>
         </button>
 
-        <!-- Тумблер перевода (RU/EN) -->
-        <button class="flex items-center gap-1 px-1.5 py-1 rounded text-[#ccc3d8] hover:bg-[#2a292f] hover:text-white transition-colors focus:outline-none" id="btn-translate-toggle" title="Переводить перед чтением">
-          <span class="material-symbols-outlined text-[16px]">language</span>
-          <span class="text-[10px] font-bold uppercase tracking-tighter" id="translate-label">RU/EN</span>
+        <!-- Разделитель -->
+        <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0"></div>
+
+        <!-- 文A — Перевод перед чтением -->
+        <button class="icon-btn" id="btn-translate" title="Переводить перед чтением (RU→EN)">
+          <span class="material-symbols-outlined text-[18px]">translate</span>
         </button>
 
-        <!-- Раскрытие / Сворачивание нижнего ряда -->
-        <button class="flex items-center justify-center w-[28px] h-[28px] rounded text-[#ccc3d8] hover:bg-[#2a292f] hover:text-white transition-colors focus:outline-none" id="btn-expand-toggle" title="Развернуть инструменты">
+        <!-- Разделитель -->
+        <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0"></div>
+
+        <!-- ··· Развернуть -->
+        <button class="icon-btn" id="btn-expand" title="Развернуть / свернуть">
           <span class="material-symbols-outlined text-[18px]" id="expand-icon">open_in_full</span>
         </button>
-      </div>
 
-      <!-- Нижний ряд (Вспомогательный - скрыт по умолчанию) -->
-      <div class="hidden items-center justify-between px-3 py-2 bg-[#0e0e13] h-[40px] border-t border-[#4a4455]/10" id="expanded-row">
-        <!-- Группа утилит -->
-        <div class="flex items-center gap-3">
-          <button class="flex items-center justify-center rounded text-[#ccc3d8] hover:text-[#45a29e] transition-colors focus:outline-none" id="widget-ocr-trigger" title="Перевод экрана (Alt+Q)">
+      </div><!-- /slim-row -->
+
+      <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+      <!-- EXPANDED ROW (скрыт по умолчанию)           -->
+      <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+      <div class="hidden items-center justify-between px-3 py-2 border-t border-[#4a4455]/15" id="expanded-row">
+        <!-- Утилиты -->
+        <div class="flex items-center gap-1">
+          <button class="icon-btn" id="widget-ocr-trigger" title="Перевод экрана (Alt+Q)">
             <span class="material-symbols-outlined text-[18px]">center_focus_strong</span>
           </button>
-          <button class="flex items-center justify-center rounded text-[#ccc3d8] hover:text-[#45a29e] transition-colors focus:outline-none" id="widget-history-trigger" title="Журнал записей">
+          <button class="icon-btn" id="widget-history-trigger" title="Журнал записей">
             <span class="material-symbols-outlined text-[18px]">description</span>
           </button>
-          <button class="flex items-center justify-center rounded text-[#ccc3d8] hover:text-[#45a29e] transition-colors focus:outline-none" id="widget-settings-trigger" title="Настройки">
+          <button class="icon-btn" id="widget-settings-trigger" title="Настройки">
             <span class="material-symbols-outlined text-[18px]">settings</span>
           </button>
         </div>
-
-        <!-- AI Capsule Toggle (Тумблер Капсулы) -->
+        <!-- КАПСУЛА ИИ тумблер -->
         <div class="flex items-center gap-2">
-          <span class="text-[10px] font-bold text-[#ccc3d8] uppercase tracking-wider">Капсула</span>
-          <div class="relative inline-flex items-center cursor-pointer">
+          <span class="text-[10px] font-bold text-[#45a29e] uppercase tracking-wider">Капсула ИИ</span>
+          <label class="relative inline-flex items-center cursor-pointer">
             <input type="checkbox" id="widget-toggle-capsule" class="sr-only peer" checked />
-            <div class="w-8 h-4 bg-[#35343a] rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-[#ccc3d8] after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-[#d2bbff] peer-checked:after:bg-[#36007d]"></div>
-          </div>
+            <div class="w-9 h-5 bg-[#35343a] rounded-full peer
+                        peer-checked:bg-[#45a29e]
+                        after:content-[''] after:absolute after:top-[2px] after:left-[2px]
+                        after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all
+                        peer-checked:after:translate-x-4"></div>
+          </label>
         </div>
       </div>
 
-    </div>
+    </div><!-- /widget-container -->
 
-    <!-- Логика работы виджета -->
     <script>
-      // 1. Управление меню языков
-      const btnVoice = document.getElementById('btn-voice-dropdown');
-      const voiceMenu = document.getElementById('voice-menu');
-      const selectedFlag = document.getElementById('selected-flag');
-      const selectedLangCode = document.getElementById('selected-lang-code');
+      // =====================================================================
+      // ЕДИНЫЙ ИСТОЧНИК ПРАВДЫ — состояние виджета
+      // =====================================================================
+      let currentLang      = 'ru';
+      let currentVoiceName = 'Алёна';
+      let currentRate      = 1.0;
+      let translateEnabled = false;
+      let isPlaying        = false;
+      let currentUtterance = null;
+      const synth = window.speechSynthesis;
+
+      // =====================================================================
+      // УТИЛИТЫ — управление dropdown
+      // =====================================================================
+      function openMenu(menuEl) {
+        document.querySelectorAll('.dropdown-menu').forEach(m => m.classList.remove('open'));
+        menuEl.classList.add('open');
+      }
+      function closeAllMenus() {
+        document.querySelectorAll('.dropdown-menu').forEach(m => m.classList.remove('open'));
+      }
+      document.addEventListener('click', closeAllMenus);
+
+      // =====================================================================
+      // ГОЛОС — dropdown
+      // =====================================================================
+      const btnVoice        = document.getElementById('btn-voice');
+      const voiceMenu       = document.getElementById('voice-menu');
+      const selectedVoiceLabel = document.getElementById('selected-voice-label');
 
       btnVoice.addEventListener('click', (e) => {
         e.stopPropagation();
-        voiceMenu.classList.toggle('hidden');
-        speedMenu.classList.add('hidden');
+        voiceMenu.classList.contains('open') ? closeAllMenus() : openMenu(voiceMenu);
       });
 
-      let currentLang = 'ru';
-
-      voiceMenu.querySelectorAll('button').forEach(btn => {
-        btn.addEventListener('click', (e) => {
+      voiceMenu.querySelectorAll('.dropdown-item').forEach(item => {
+        item.addEventListener('click', (e) => {
           e.stopPropagation();
-          voiceMenu.querySelectorAll('button').forEach(b => b.classList.remove('font-semibold'));
-          btn.classList.add('font-semibold');
-          
-          currentLang = btn.getAttribute('data-lang');
-          selectedFlag.textContent = btn.getAttribute('data-flag');
-          selectedLangCode.textContent = currentLang.toUpperCase();
-          voiceMenu.classList.add('hidden');
+          voiceMenu.querySelectorAll('.dropdown-item').forEach(i => i.classList.remove('selected'));
+          item.classList.add('selected');
+          currentLang      = item.dataset.lang;
+          currentVoiceName = item.dataset.voiceName || '';
+          selectedVoiceLabel.textContent = item.dataset.label;
+          closeAllMenus();
         });
       });
 
-      // 2. Управление меню скоростей
-      const btnSpeed = document.getElementById('btn-speed-dropdown');
-      const speedMenu = document.getElementById('speed-menu');
-      const selectedSpeedVal = document.getElementById('selected-speed-val');
+      // =====================================================================
+      // СКОРОСТЬ — dropdown
+      // =====================================================================
+      const btnSpeed         = document.getElementById('btn-speed');
+      const speedMenu        = document.getElementById('speed-menu');
+      const selectedSpeedLabel = document.getElementById('selected-speed-label');
 
       btnSpeed.addEventListener('click', (e) => {
         e.stopPropagation();
-        speedMenu.classList.toggle('hidden');
-        voiceMenu.classList.add('hidden');
+        speedMenu.classList.contains('open') ? closeAllMenus() : openMenu(speedMenu);
       });
 
-      let currentRate = 1.0;
-
-      speedMenu.querySelectorAll('button').forEach(btn => {
-        btn.addEventListener('click', (e) => {
+      speedMenu.querySelectorAll('.dropdown-item').forEach(item => {
+        item.addEventListener('click', (e) => {
           e.stopPropagation();
-          speedMenu.querySelectorAll('button').forEach(b => b.classList.remove('font-semibold'));
-          btn.classList.add('font-semibold');
-          
-          currentRate = parseFloat(btn.getAttribute('data-speed'));
-          selectedSpeedVal.textContent = btn.textContent;
-          speedMenu.classList.add('hidden');
+          speedMenu.querySelectorAll('.dropdown-item').forEach(i => i.classList.remove('selected'));
+          item.classList.add('selected');
+          currentRate = parseFloat(item.dataset.speed);
+          selectedSpeedLabel.textContent = item.dataset.speed + 'x';
+          closeAllMenus();
         });
       });
 
-      // Закрытие меню при клике вне
-      document.addEventListener('click', () => {
-        voiceMenu.classList.add('hidden');
-        speedMenu.classList.add('hidden');
-      });
-
-      // 3. Тумблер перевода (RU/EN)
-      const btnTranslate = document.getElementById('btn-translate-toggle');
-      let translateEnabled = false;
-
+      // =====================================================================
+      // ПЕРЕВОД
+      // =====================================================================
+      const btnTranslate = document.getElementById('btn-translate');
       btnTranslate.addEventListener('click', (e) => {
         e.stopPropagation();
         translateEnabled = !translateEnabled;
-        if (translateEnabled) {
-          btnTranslate.classList.add('text-[#45a29e]');
-          btnTranslate.classList.remove('text-[#ccc3d8]');
-        } else {
-          btnTranslate.classList.remove('text-[#45a29e]');
-          btnTranslate.classList.add('text-[#ccc3d8]');
-        }
+        btnTranslate.style.color = translateEnabled ? '#45a29e' : '';
       });
 
-      // 4. Раскрытие / Сворачивание
-      const btnExpand = document.getElementById('btn-expand-toggle');
+      // =====================================================================
+      // РАЗВЕРНУТЬ / СВЕРНУТЬ
+      // =====================================================================
+      const btnExpand   = document.getElementById('btn-expand');
       const expandedRow = document.getElementById('expanded-row');
-      const expandIcon = document.getElementById('expand-icon');
+      const expandIcon  = document.getElementById('expand-icon');
 
       btnExpand.addEventListener('click', (e) => {
         e.stopPropagation();
-        expandedRow.classList.toggle('hidden');
-        expandedRow.classList.toggle('flex');
-        
-        if (expandedRow.classList.contains('hidden')) {
-          expandIcon.textContent = 'open_in_full';
-          btnExpand.title = "Развернуть инструменты";
-        } else {
-          expandIcon.textContent = 'close_fullscreen';
-          btnExpand.title = "Свернуть";
-        }
+        const isOpen = expandedRow.classList.toggle('hidden') === false;
+        expandedRow.classList.toggle('flex', !expandedRow.classList.contains('hidden'));
+        expandIcon.textContent = expandedRow.classList.contains('hidden') ? 'open_in_full' : 'close_fullscreen';
       });
 
-      // ==========================================================================
-      // СИНТЕЗ РЕЧИ (TTS) И БУФЕР ОБМЕНА
-      // ==========================================================================
-      const playBtn = document.getElementById('widget-play');
+      // =====================================================================
+      // TTS — синтез речи
+      // =====================================================================
+      const playBtn  = document.getElementById('widget-play');
       const playIcon = document.getElementById('widget-play-icon');
-      let isPlaying = false;
-      let synth = window.speechSynthesis;
-      let currentUtterance = null;
 
-      // Чтение буфера обмена (с поддержкой браузера и Tauri)
       async function getClipboardText() {
-        if (window.__TAURI__ && window.__TAURI__.clipboardManager) {
-          try {
-            return await window.__TAURI__.clipboardManager.readText();
-          } catch (e) {
-            console.error('Ошибка чтения буфера через Tauri:', e);
-          }
+        if (window.__TAURI__?.clipboardManager) {
+          try { return await window.__TAURI__.clipboardManager.readText(); } catch (_) {}
         }
         try {
-          if (navigator.clipboard && navigator.clipboard.readText) {
-            return await navigator.clipboard.readText();
-          }
-        } catch (e) {
-          console.warn('Не удалось прочитать буфер обмена через navigator.clipboard:', e);
-        }
-        return "";
+          if (navigator.clipboard?.readText) return await navigator.clipboard.readText();
+        } catch (_) {}
+        return '';
       }
 
       function stopPlayback() {
-        if (synth) {
-          synth.cancel();
-        }
+        synth?.cancel();
         isPlaying = false;
         playIcon.textContent = 'play_arrow';
         playBtn.classList.remove('play-pulse');
-        playBtn.title = "Озвучить буфер обмена";
+        playBtn.title = 'Озвучить буфер обмена';
       }
 
       async function speakText(text) {
-        if (!text) {
-          alert('Буфер обмена пуст! Скопируйте текст для озвучивания.');
-          stopPlayback();
-          return;
-        }
-
+        if (!text) { stopPlayback(); return; }
         currentUtterance = new SpeechSynthesisUtterance(text);
         currentUtterance.rate = currentRate;
 
-        // Фильтруем голоса под выбранный язык
-        let voices = synth.getVoices();
-        let langCode = currentLang === 'ru' ? 'ru-RU' : currentLang === 'en' ? 'en-US' : 'de-DE';
-        
-        let matchingVoice = voices.find(voice => voice.lang.includes(langCode) || voice.lang.includes(currentLang));
-        if (matchingVoice) {
-          currentUtterance.voice = matchingVoice;
-        }
+        const voices  = synth.getVoices();
+        const langMap = { ru: 'ru-RU', en: 'en-US', de: 'de-DE' };
+        const langCode = langMap[currentLang] || currentLang;
+        const voice = voices.find(v =>
+          (currentVoiceName && v.name.includes(currentVoiceName)) ||
+          v.lang.startsWith(langCode) || v.lang.startsWith(currentLang)
+        );
+        if (voice) currentUtterance.voice = voice;
 
-        currentUtterance.onend = () => {
-          stopPlayback();
-        };
-
-        currentUtterance.onerror = (e) => {
-          console.error('Ошибка синтеза речи:', e);
-          stopPlayback();
-        };
+        currentUtterance.onend   = stopPlayback;
+        currentUtterance.onerror = (e) => { console.error('TTS error:', e); stopPlayback(); };
 
         isPlaying = true;
         playIcon.textContent = 'pause';
         playBtn.classList.add('play-pulse');
-        playBtn.title = "Остановить воспроизведение";
-        
+        playBtn.title = 'Остановить воспроизведение';
         synth.speak(currentUtterance);
       }
 
       playBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        if (isPlaying) {
-          stopPlayback();
-        } else {
-          const text = await getClipboardText();
-          speakText(text);
-        }
+        isPlaying ? stopPlayback() : speakText(await getClipboardText());
       });
 
-      // Перезагрузка голосов
       if (synth) {
         synth.getVoices();
         if (speechSynthesis.onvoiceschanged !== undefined) {
@@ -310,57 +365,38 @@
         }
       }
 
-      // ==========================================================================
-      // МЕЖОКОННОЕ ВЗАИМОДЕЙСТВИЕ TAURI
-      // ==========================================================================
-      const ocrTrigger = document.getElementById('widget-ocr-trigger');
-      const historyTrigger = document.getElementById('widget-history-trigger');
+      // =====================================================================
+      // TAURI: межоконное взаимодействие
+      // =====================================================================
+      const ocrTrigger      = document.getElementById('widget-ocr-trigger');
+      const historyTrigger  = document.getElementById('widget-history-trigger');
       const settingsTrigger = document.getElementById('widget-settings-trigger');
 
-      if (ocrTrigger) {
-        ocrTrigger.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          if (window.__TAURI__) {
-            const ocrWin = window.__TAURI__.webviewWindow.WebviewWindow.getByLabel('ocr');
-            if (ocrWin) {
-              await ocrWin.show();
-            }
-          } else {
-            console.log('[Tauri Mock] Открытие оверлея OCR (Alt+Q)');
-          }
-        });
-      }
+      if (ocrTrigger) ocrTrigger.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (window.__TAURI__) {
+          const w = window.__TAURI__.webviewWindow.WebviewWindow.getByLabel('ocr');
+          if (w) await w.show();
+        }
+      });
 
-      if (historyTrigger) {
-        historyTrigger.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          if (window.__TAURI__) {
-            await window.__TAURI__.event.emit('open-history');
-          } else {
-            console.log('[Tauri Mock] Открытие вкладки истории в дашборде');
-          }
-        });
-      }
+      if (historyTrigger) historyTrigger.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (window.__TAURI__) await window.__TAURI__.event.emit('open-history');
+      });
 
-      if (settingsTrigger) {
-        settingsTrigger.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          if (window.__TAURI__) {
-            await window.__TAURI__.event.emit('open-settings');
-          } else {
-            console.log('[Tauri Mock] Открытие вкладки настроек в дашборде');
-          }
-        });
-      }
+      if (settingsTrigger) settingsTrigger.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (window.__TAURI__) await window.__TAURI__.event.emit('open-settings');
+      });
 
       if (window.__TAURI__) {
         const appWindow = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
-        const WebviewWindow = window.__TAURI__.webviewWindow.WebviewWindow;
-        
-        // Перетаскивание
-        const widgetContainer = document.getElementById('widget-container');
-        widgetContainer.addEventListener('mousedown', (e) => {
-          if (e.buttons === 1 && !e.target.closest('button') && !e.target.closest('input')) {
+        const { WebviewWindow } = window.__TAURI__.webviewWindow;
+
+        // Перетаскивание (не по кнопкам)
+        document.getElementById('widget-container').addEventListener('mousedown', (e) => {
+          if (e.buttons === 1 && !e.target.closest('button') && !e.target.closest('input') && !e.target.closest('.dropdown-menu')) {
             appWindow.startDragging();
           }
         });
@@ -371,23 +407,17 @@
           toggleCapsule.addEventListener('change', async (e) => {
             const win = WebviewWindow.getByLabel('capsule');
             if (win) {
-              if (e.target.checked) {
-                await win.show();
-              } else {
-                await win.hide();
-              }
+              e.target.checked ? await win.show() : await win.hide();
             }
           });
         }
 
-        // Синхронизация капсулы
+        // Синхронизация видимости капсулы
         window.__TAURI__.event.listen('capsule-visibility-changed', (event) => {
-          if (toggleCapsule) {
-            toggleCapsule.checked = event.payload;
-          }
+          const t = document.getElementById('widget-toggle-capsule');
+          if (t) t.checked = event.payload;
         });
 
-        // Сообщаем о видимости виджета
         window.__TAURI__.event.emit('widget-visibility-changed', true);
         appWindow.onCloseRequested(() => {
           window.__TAURI__.event.emit('widget-visibility-changed', false);
