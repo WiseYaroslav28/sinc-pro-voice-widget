@@ -127,19 +127,34 @@
         <!-- Разделитель -->
         <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0"></div>
 
-        <!-- ⚡ Скорость (dropdown вверх) -->
+        <!-- ⚡ Скорость (dropdown вниз) -->
         <div class="relative" id="speed-wrapper">
           <button class="pill-btn" id="btn-speed" title="Скорость воспроизведения">
             <span class="material-symbols-outlined text-[14px] text-[#45a29e]">bolt</span>
             <span id="selected-speed-label">1.0x</span>
           </button>
-          <div class="dropdown-menu" id="speed-menu" style="min-width: 100px; left: auto; right: 0;">
+          <div class="dropdown-menu" id="speed-menu" style="min-width: 160px; left: auto; right: 0;">
             <div class="menu-section-label">Скорость</div>
+            <div class="dropdown-item" data-speed="0.5">0.5x</div>
             <div class="dropdown-item" data-speed="0.75">0.75x</div>
             <div class="dropdown-item selected" data-speed="1.0">1.0x</div>
             <div class="dropdown-item" data-speed="1.25">1.25x</div>
             <div class="dropdown-item" data-speed="1.5">1.5x</div>
+            <div class="dropdown-item" data-speed="1.75">1.75x</div>
             <div class="dropdown-item" data-speed="2.0">2.0x</div>
+            <div class="dropdown-item" data-speed="2.25">2.25x</div>
+            <div class="dropdown-item" data-speed="2.5">2.5x</div>
+            <div class="dropdown-item" data-speed="3.0">3.0x</div>
+            <div style="padding: 6px 10px 4px;">
+              <div class="menu-section-label" style="margin-bottom:4px;">Тонкая настройка</div>
+              <input type="range" id="speed-slider" min="0.5" max="3.0" step="0.05" value="1.0"
+                style="width:100%; accent-color:#8e52ff; cursor:pointer;">
+              <div style="display:flex; justify-content:space-between; font-size:10px; color:#ccc3d8; margin-top:2px;">
+                <span>0.5x</span>
+                <span id="speed-slider-val">1.0x</span>
+                <span>3.0x</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -300,12 +315,29 @@
         });
       }
 
-      // Загружаем голоса при готовности
+      // Загружаем голоса при готовности (с polling fallback для WebView2)
       function loadVoices() {
         const voices = synth.getVoices();
         if (voices.length > 0) { buildVoiceMenu(voices); return; }
-        // Chrome/Edge требует событие
-        speechSynthesis.onvoiceschanged = () => buildVoiceMenu(synth.getVoices());
+
+        // Таймаут ожидания onvoiceschanged: 0.3s × 15 попыток = 4.5 сек
+        let attempts = 0;
+        const poll = setInterval(() => {
+          const v = synth.getVoices();
+          if (v.length > 0) {
+            clearInterval(poll);
+            buildVoiceMenu(v);
+          } else if (++attempts >= 15) {
+            clearInterval(poll);
+            selectedVoiceLabel.textContent = 'Голос (OS)';
+          }
+        }, 300);
+
+        // Также подписываемся на событие (Chrome/Edge)
+        speechSynthesis.onvoiceschanged = () => {
+          clearInterval(poll);
+          buildVoiceMenu(synth.getVoices());
+        };
       }
 
       btnVoice.addEventListener('click', (e) => {
@@ -334,9 +366,32 @@
           item.classList.add('selected');
           currentRate = parseFloat(item.dataset.speed);
           selectedSpeedLabel.textContent = item.dataset.speed + 'x';
+          // Синхронизируем слайдер
+          const slider = document.getElementById('speed-slider');
+          if (slider) { slider.value = currentRate; document.getElementById('speed-slider-val').textContent = currentRate.toFixed(2) + 'x'; }
           closeAllMenus();
         });
       });
+
+      // Слайдер тонкой настройки скорости
+      const speedSlider = document.getElementById('speed-slider');
+      const speedSliderVal = document.getElementById('speed-slider-val');
+      if (speedSlider) {
+        speedSlider.addEventListener('input', (e) => {
+          e.stopPropagation();
+          currentRate = parseFloat(speedSlider.value);
+          const label = currentRate.toFixed(2) + 'x';
+          selectedSpeedLabel.textContent = label;
+          speedSliderVal.textContent = label;
+          // Снимаем выделение со всех пресетов
+          speedMenu.querySelectorAll('.dropdown-item').forEach(i => i.classList.remove('selected'));
+          // Выделяем если точно совпадает с пресетом
+          speedMenu.querySelectorAll('.dropdown-item').forEach(i => {
+            if (Math.abs(parseFloat(i.dataset.speed) - currentRate) < 0.01) i.classList.add('selected');
+          });
+        });
+        speedSlider.addEventListener('click', e => e.stopPropagation());
+      }
 
       // =====================================================================
       // ПЕРЕВОД

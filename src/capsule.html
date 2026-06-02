@@ -398,7 +398,7 @@
       // Размеры окна по состоянию (логические пиксели)
       const WIN_WIDTH      = 320;
       const WIN_HEIGHT_IDLE   = 52;   // только пилюля
-      const WIN_HEIGHT_HOVER  = 180;  // пилюля + 3 кнопки (Промпт сверху на 52px от кнопки)
+      const WIN_HEIGHT_HOVER  = 160;  // пилюля + 3 кнопки (Промпт на 40px от кнопки)
       const WIN_HEIGHT_ACTIVE = 200;  // запись / пауза / отмена
       const WIN_HEIGHT = WIN_HEIGHT_ACTIVE; // для инициализации
 
@@ -422,16 +422,17 @@
         const w_phys  = Math.round(WIN_WIDTH * cachedScaleFactor);
         const h_phys  = Math.round(h * cachedScaleFactor);
 
-        // Режим Магнит выключен: позиционирование только по ширине (X), по Y не меняем
+        // Режим Магнит выключен: меняем размер окна, центрируем по X, Y остаётся
         if (!isMagnetEnabled) {
-          // Просто меняем размер, центрируем по X, Y остаётся
           try {
-            const pos = await appWindow.outerPosition();
-            const x_phys = Math.round(pos.x + (pos.width || w_phys) / 2 - w_phys / 2);
-            await invoke('resize_capsule', { width: w_phys, height: h_phys, x: Math.max(0, x_phys), y: pos.y });
-          } catch (_) {
-            await invoke('resize_capsule', { width: w_phys, height: h_phys, x: Math.round(lastBottomCenterX_phys - w_phys / 2), y: Math.round(lastBottomY_phys - h_phys) });
-          }
+            const curPos  = await appWindow.outerPosition();
+            const curSize = await appWindow.innerSize();
+            // Центрируем по текущей центра X и сохраняем Y (нижний край окна)
+            const centerX = curPos.x + curSize.width / 2;
+            const newX    = Math.max(0, Math.round(centerX - w_phys / 2));
+            const newY    = curPos.y + curSize.height - h_phys;
+            await invoke('resize_capsule', { width: w_phys, height: h_phys, x: newX, y: Math.max(0, newY) });
+          } catch (_) {}
           return;
         }
 
@@ -456,6 +457,7 @@
       let cancelInterval = null;
       let cancelSecondsLeft = 5;
       let preCancelState = 'recording';
+      let isCancelPending = false; // защита от гонки состояний cancel-confirm ↔ pause
 
       // Машина состояний глобальных хоткеев
       let isHeld = false;
@@ -476,12 +478,12 @@
       // Чтобы добавить/убрать пресет — меняй ТОЛЬКО этот массив.
       // ======================================================================
 
-      // Позиции в веере — Промпт чуть выше центра, Суть и Текст по бокам (кучнее)
+      // Позиции в веере — кучнее, ближе к кнопке и друг к другу
       // bottom/left в px относительно центра контейнера (transform: translate(-50%,50%))
       const PRESETS = [
-        { id: 'summary',    label: 'Суть',   pos: { bottom: 18, left: -62 } },
-        { id: 'custom',     label: 'Промпт', pos: { bottom: 52, left:  -6 } },
-        { id: 'transcript', label: 'Текст',  pos: { bottom: 18, left:  50 } },
+        { id: 'summary',    label: 'Суть',   pos: { bottom: 10, left: -52 } },
+        { id: 'custom',     label: 'Промпт', pos: { bottom: 40, left:  -4 } },
+        { id: 'transcript', label: 'Текст',  pos: { bottom: 10, left:  44 } },
       ];
 
       // Рендерит кнопки пресетов в контейнер с нужным data-атрибутом
@@ -918,7 +920,8 @@
           mediaRecorder.onpause = () => {
             stopTimer();
             document.getElementById('pause-timer').textContent = recTimer.textContent;
-            switchState('pause');
+            // Не переключаемся в pause если запущена процедура отмены
+            if (!isCancelPending) switchState('pause');
           };
 
           mediaRecorder.onresume = () => {
@@ -956,9 +959,11 @@
       function startCancelCountdown() {
         if (currentState !== 'recording' && currentState !== 'pause') return;
         preCancelState = currentState;
+        isCancelPending = true;  // блокируем onpause от смены состояния
         pauseRecordingProcess();
         document.getElementById('cancel-timer').textContent = recTimer.textContent;
         switchState('cancel-confirm');
+        isCancelPending = false;
         cancelSecondsLeft = 5;
         cancelCountdownText.textContent = `Вся надиктованная запись будет сброшена в архив через ${cancelSecondsLeft} сек...`;
         if (cancelInterval) clearInterval(cancelInterval);
@@ -1151,6 +1156,8 @@
         }
 
         container.addEventListener('mousedown', (e) => {
+          // Если Магнит включён — перетаскивание заблокировано
+          if (isMagnetEnabled) return;
           if (e.buttons === 1 && !e.target.closest('button') && !e.target.closest('input') && !e.target.closest('.preset-btn')) {
             maybeDragging = true;
             appWindow.startDragging();
