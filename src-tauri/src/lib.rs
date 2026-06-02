@@ -5,6 +5,96 @@ use chrono::Local;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
+// ─── Edge TTS ────────────────────────────────────────────────────────────────
+use tokio_tungstenite::{connect_async_tls_with_config, tungstenite::Message};
+use futures_util::{SinkExt, StreamExt};
+use uuid::Uuid;
+
+const EDGE_TTS_ENDPOINT: &str =
+    "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1\
+     ?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4";
+
+#[tauri::command]
+async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String, String> {
+    // rate: 1.0 = нормально, 1.5 = +50%, 0.5 = -50%
+    let rate_pct = (((rate - 1.0) * 100.0).round() as i32).clamp(-50, 100);
+    let rate_str = if rate_pct >= 0 {
+        format!("+{}%", rate_pct)
+    } else {
+        format!("{}%", rate_pct)
+    };
+
+    let conn_id = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
+    let url = format!("{}&ConnectionId={}", EDGE_TTS_ENDPOINT, conn_id);
+
+    let (mut ws, _) = connect_async_tls_with_config(&url, None, false, None)
+        .await
+        .map_err(|e| format!("WebSocket connect failed: {}", e))?;
+
+    // 1. Отправляем конфигурационное сообщение
+    let config_msg = format!(
+        "X-Timestamp:{ts}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n\
+         {{\"context\":{{\"synthesis\":{{\"audio\":{{\"metadataoptions\":{{\"sentenceBoundaryEnabled\":false,\
+         \"wordBoundaryEnabled\":false}},\"outputFormat\":\"audio-24khz-48kbitrate-mono-mp3\"}}}}}}}}",
+        ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S.000Z")
+    );
+    ws.send(Message::Text(config_msg.into())).await
+        .map_err(|e| format!("Send config failed: {}", e))?;
+
+    // 2. SSML синтез
+    let request_id = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
+    let ssml_text = text
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;");
+    let ssml_msg = format!(
+        "X-RequestId:{req}\r\nContent-Type:application/ssml+xml\r\n\
+         X-Timestamp:{ts}\r\nPath:ssml\r\n\r\n\
+         <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>\
+         <voice name='{voice}'><prosody rate='{rate}'>{text}</prosody></voice></speak>",
+        req  = request_id,
+        ts   = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S.000Z"),
+        voice = voice,
+        rate = rate_str,
+        text = ssml_text,
+    );
+    ws.send(Message::Text(ssml_msg.into())).await
+        .map_err(|e| format!("Send SSML failed: {}", e))?;
+
+    // 3. Собираем бинарные чанки MP3
+    let mut audio_bytes: Vec<u8> = Vec::new();
+    let separator = b"Path:audio\r\n";
+
+    loop {
+        match ws.next().await {
+            Some(Ok(Message::Binary(data))) => {
+                // Формат: заголовок + разделитель + аудио-данные
+                if let Some(pos) = data.windows(separator.len())
+                    .position(|w| w == separator)
+                {
+                    let audio_start = pos + separator.len();
+                    if audio_start < data.len() {
+                        audio_bytes.extend_from_slice(&data[audio_start..]);
+                    }
+                }
+            }
+            Some(Ok(Message::Text(t))) => {
+                // turn.end = синтез завершён
+                if t.contains("Path:turn.end") { break; }
+            }
+            Some(Ok(Message::Close(_))) | None => break,
+            Some(Err(e)) => return Err(format!("WebSocket error: {}", e)),
+            _ => {}
+        }
+    }
+
+    if audio_bytes.is_empty() {
+        return Err("Edge TTS вернул пустой аудио-ответ".into());
+    }
+
+    Ok(STANDARD.encode(&audio_bytes))
+}
+
 static APP_HANDLE: Mutex<Option<tauri::AppHandle>> = Mutex::new(None);
 static CTRL_PRESSED: AtomicBool = AtomicBool::new(false);
 static WIN_PRESSED: AtomicBool = AtomicBool::new(false);
@@ -965,7 +1055,8 @@ pub fn run() {
             show_widget_window,
             hide_widget_window,
             resize_bottom_up_phys,
-            get_cursor_monitor
+            get_cursor_monitor,
+            speak_edge_tts
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -248,59 +248,37 @@
       const voiceMenu       = document.getElementById('voice-menu');
       const selectedVoiceLabel = document.getElementById('selected-voice-label');
 
-      // Единый источник правды: те же голоса что были в Python-версии (Neural = премиум)
-      // Имена соответствуют Windows speechSynthesis голосам (Microsoft * Online Natural)
+      // Единый источник правды: голоса как в v3.3.6
+      // edgeId — Azure Neural Voice ID, передаётся в speak_edge_tts напрямую
       const PREFERRED_VOICES = [
-        { label: 'Светлана (RU)', lang: 'ru', search: ['Svetlana', 'svetlana'] },
-        { label: 'Дмитрий (RU)',  lang: 'ru', search: ['Dmitry', 'Dmitri', 'dmitry'] },
-        { label: 'Guy (EN)',       lang: 'en', search: ['Guy'] },
-        { label: 'Aria (EN)',      lang: 'en', search: ['Aria'] },
-        { label: 'Jenny (EN)',     lang: 'en', search: ['Jenny'] },
-        { label: 'Katja (DE)',     lang: 'de', search: ['Katja', 'Hedda'] },
-        { label: 'Denise (FR)',    lang: 'fr', search: ['Denise', 'Julie'] },
-        { label: 'Alvaro (ES)',    lang: 'es', search: ['Alvaro', 'Pablo'] },
-        { label: 'Xiaoxiao (CN)', lang: 'zh', search: ['Xiaoxiao'] },
+        { label: 'Светлана (RU)', lang: 'ru', edgeId: 'ru-RU-SvetlanaNeural' },
+        { label: 'Дмитрий (RU)',  lang: 'ru', edgeId: 'ru-RU-DmitryNeural'   },
+        { label: 'Guy (EN)',       lang: 'en', edgeId: 'en-US-GuyNeural'       },
+        { label: 'Aria (EN)',      lang: 'en', edgeId: 'en-US-AriaNeural'      },
+        { label: 'Jenny (EN)',     lang: 'en', edgeId: 'en-US-JennyNeural'     },
+        { label: 'Katja (DE)',     lang: 'de', edgeId: 'de-DE-KatjaNeural'     },
+        { label: 'Denise (FR)',    lang: 'fr', edgeId: 'fr-FR-DeniseNeural'    },
+        { label: 'Alvaro (ES)',    lang: 'es', edgeId: 'es-ES-AlvaroNeural'    },
+        { label: 'Xiaoxiao (CN)', lang: 'zh', edgeId: 'zh-CN-XiaoxiaoNeural'  },
       ];
 
-      function buildVoiceMenu(allVoices) {
+      function buildVoiceMenu() {
         let html = '';
-        let firstVoice = null;
+        let firstRu = null;
 
         for (const pref of PREFERRED_VOICES) {
-          // Ищем голос в системе по ключевым словам
-          const found = allVoices.find(v =>
-            pref.search.some(kw => v.name.includes(kw)) && v.lang.toLowerCase().startsWith(pref.lang)
-          );
-          // Если не нашли — берём лучший по языку (Online/Natural > прочие)
-          const fallback = allVoices
-            .filter(v => v.lang.toLowerCase().startsWith(pref.lang))
-            .sort((a, b) => {
-              const rank = v => /natural/i.test(v.name) ? 0 : /online/i.test(v.name) ? 1 : /premium/i.test(v.name) ? 2 : 3;
-              return rank(a) - rank(b);
-            })[0];
-          const voice = found || fallback;
-          if (!voice) continue;
-
-          const voiceName = voice.name;
-          html += `<div class="dropdown-item" data-lang="${pref.lang}" data-voice-name="${voiceName}" data-label="${pref.label}">${pref.label}</div>`;
-          if (!firstVoice && pref.lang === 'ru') firstVoice = { lang: pref.lang, name: voiceName, label: pref.label };
-        }
-
-        // Если ни одного не нашли — показываем все системные
-        if (!html) {
-          html = allVoices.slice(0, 15).map(v =>
-            `<div class="dropdown-item" data-lang="${v.lang.slice(0,2)}" data-voice-name="${v.name}" data-label="${v.name}">${v.name}</div>`
-          ).join('');
+          html += `<div class="dropdown-item" data-lang="${pref.lang}" data-edge-id="${pref.edgeId}" data-label="${pref.label}">${pref.label}</div>`;
+          if (!firstRu && pref.lang === 'ru') firstRu = pref;
         }
 
         voiceMenu.innerHTML = html;
 
-        // Первый русский голос по умолчанию
-        if (firstVoice) {
-          currentLang = firstVoice.lang;
-          currentVoiceName = firstVoice.name;
-          selectedVoiceLabel.textContent = firstVoice.label;
-          voiceMenu.querySelector(`[data-voice-name="${firstVoice.name}"]`)?.classList.add('selected');
+        // По умолчанию — первый русский (Светлана)
+        if (firstRu) {
+          currentLang      = firstRu.lang;
+          currentVoiceName = firstRu.edgeId;
+          selectedVoiceLabel.textContent = firstRu.label;
+          voiceMenu.querySelector(`[data-edge-id="${firstRu.edgeId}"]`)?.classList.add('selected');
         }
 
         // Обработчики кликов
@@ -310,42 +288,22 @@
             voiceMenu.querySelectorAll('.dropdown-item').forEach(i => i.classList.remove('selected'));
             item.classList.add('selected');
             currentLang      = item.dataset.lang;
-            currentVoiceName = item.dataset.voiceName || '';
+            currentVoiceName = item.dataset.edgeId;
             selectedVoiceLabel.textContent = item.dataset.label;
             closeAllMenus();
           });
         });
       }
 
-      // Загружаем голоса с polling fallback для WebView2
-      function loadVoices() {
-        const voices = synth.getVoices();
-        if (voices.length > 0) { buildVoiceMenu(voices); return; }
-
-        let attempts = 0;
-        const poll = setInterval(() => {
-          const v = synth.getVoices();
-          if (v.length > 0) {
-            clearInterval(poll);
-            buildVoiceMenu(v);
-          } else if (++attempts >= 20) {
-            clearInterval(poll);
-            selectedVoiceLabel.textContent = 'Голос (OS)';
-          }
-        }, 250);
-
-        speechSynthesis.onvoiceschanged = () => {
-          clearInterval(poll);
-          buildVoiceMenu(synth.getVoices());
-        };
-      }
+      // Голоса не зависят от системы — инициализируем сразу
+      buildVoiceMenu();
 
       btnVoice.addEventListener('click', (e) => {
         e.stopPropagation();
         voiceMenu.classList.contains('open') ? closeAllMenus() : openMenu(voiceMenu);
       });
 
-      loadVoices();
+
 
       // =====================================================================
       // СКОРОСТЬ — dropdown
@@ -418,10 +376,11 @@
       });
 
       // =====================================================================
-      // TTS — синтез речи
+      // TTS — синтез речи через Microsoft Edge TTS (Neural голоса)
       // =====================================================================
       const playBtn  = document.getElementById('widget-play');
       const playIcon = document.getElementById('widget-play-icon');
+      let currentAudio = null;  // Audio объект для воспроизведения MP3
 
       async function getClipboardText() {
         if (window.__TAURI__?.clipboardManager) {
@@ -434,6 +393,11 @@
       }
 
       function stopPlayback() {
+        if (currentAudio) {
+          currentAudio.pause();
+          currentAudio.src = '';
+          currentAudio = null;
+        }
         synth?.cancel();
         isPlaying = false;
         playIcon.textContent = 'play_arrow';
@@ -443,67 +407,52 @@
 
       async function speakText(text) {
         if (!text) { stopPlayback(); return; }
-        currentUtterance = new SpeechSynthesisUtterance(text);
-        currentUtterance.rate = currentRate;
-
-        // Ждём пока голоса загрузятся (на Windows может требоваться небольшая задержка)
-        let voices = synth.getVoices();
-        if (voices.length === 0) {
-          await new Promise(resolve => {
-            const onVoices = () => { resolve(); };
-            speechSynthesis.onvoiceschanged = onVoices;
-            setTimeout(resolve, 1000); // fallback таймаут
-          });
-          voices = synth.getVoices();
-        }
-
-        const langMap = { ru: 'ru', en: 'en', de: 'de' };
-        const langCode = langMap[currentLang] || currentLang;
-
-        // Если указан конкретный голос по имени — ищем его
-        let voice = currentVoiceName
-          ? voices.find(v => v.name.includes(currentVoiceName))
-          : null;
-
-        if (!voice) {
-          // Приоритет: Natural/Online > Premium > любой для языка
-          // (Microsoft Svetlana Online (Natural), Microsoft Dmitry Online (Natural) и т.п.)
-          const forLang = voices.filter(v =>
-            v.lang.toLowerCase().startsWith(langCode.toLowerCase())
-          );
-
-          voice = forLang.find(v => /natural/i.test(v.name))          // Высший приоритет: Natural
-               || forLang.find(v => /online/i.test(v.name))           // Online (Premium)
-               || forLang.find(v => /premium/i.test(v.name))          // Premium
-               || forLang.find(v => /microsoft/i.test(v.name))        // Любой Microsoft
-               || forLang[0]                                           // Первый подходящий
-               || voices.find(v => v.lang.toLowerCase().startsWith(langCode.toLowerCase())); // Fallback
-        }
-
-        if (voice) currentUtterance.voice = voice;
-        currentUtterance.lang = voice?.lang || (langCode + '-' + langCode.toUpperCase());
-
-        currentUtterance.onend   = stopPlayback;
-        currentUtterance.onerror = (e) => { console.error('TTS error:', e); stopPlayback(); };
+        stopPlayback();
 
         isPlaying = true;
         playIcon.textContent = 'pause';
         playBtn.classList.add('play-pulse');
         playBtn.title = 'Остановить воспроизведение';
-        synth.speak(currentUtterance);
+
+        // Путь 1: Edge TTS через Rust backend (Neural голоса, не роботизированные)
+        if (window.__TAURI__) {
+          try {
+            const invoke = window.__TAURI__.core.invoke;
+            const mp3Base64 = await invoke('speak_edge_tts', {
+              text,
+              voice: currentVoiceName,   // Azure voice ID: ru-RU-SvetlanaNeural
+              rate: currentRate,
+            });
+
+            const mp3Bytes = Uint8Array.from(atob(mp3Base64), c => c.charCodeAt(0));
+            const blob = new Blob([mp3Bytes], { type: 'audio/mp3' });
+            const url  = URL.createObjectURL(blob);
+
+            currentAudio = new Audio(url);
+            currentAudio.onended = () => { URL.revokeObjectURL(url); stopPlayback(); };
+            currentAudio.onerror = () => { URL.revokeObjectURL(url); stopPlayback(); };
+            await currentAudio.play();
+            return;
+          } catch (e) {
+            console.warn('[Widget] Edge TTS failed, fallback to speechSynthesis:', e);
+          }
+        }
+
+        // Путь 2: Fallback — Web Speech API (если Tauri недоступен или Edge TTS упал)
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = currentRate;
+        const voices = synth.getVoices();
+        const voice = voices.find(v => v.name === currentVoiceName) || voices[0];
+        if (voice) utterance.voice = voice;
+        utterance.onend   = stopPlayback;
+        utterance.onerror = () => stopPlayback();
+        synth.speak(utterance);
       }
 
       playBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         isPlaying ? stopPlayback() : speakText(await getClipboardText());
       });
-
-      if (synth) {
-        synth.getVoices();
-        if (speechSynthesis.onvoiceschanged !== undefined) {
-          speechSynthesis.onvoiceschanged = () => synth.getVoices();
-        }
-      }
 
       // =====================================================================
       // TAURI: межоконное взаимодействие
