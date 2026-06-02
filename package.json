@@ -6,11 +6,14 @@
   "scripts": {
     "tauri": "tauri",
     "build:css": "npx @tailwindcss/cli -i ./src/input.css -o ./src/styles.css --minify",
-    "watch:css": "npx @tailwindcss/cli -i ./src/input.css -o ./src/styles.css --watch"
+    "watch:css": "npx @tailwindcss/cli -i ./src/input.css -o ./src/styles.css --watch",
+    "test": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@tailwindcss/cli": "^4.3.0",
     "@tauri-apps/cli": "^2",
+    "serve": "^14.2.6",
     "tailwindcss": "^4.3.0"
   }
 }

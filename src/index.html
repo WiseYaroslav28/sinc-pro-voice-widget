@@ -400,6 +400,7 @@
       const toggleIcon = document.getElementById('toggle-icon');
 
       toggleBtn.addEventListener('click', () => {
+        const isCollapsed = sidebar.classList.contains('collapsed');
         sidebar.classList.toggle('collapsed');
         sidebar.classList.toggle('w-[200px]');
         sidebar.classList.toggle('w-[56px]');
@@ -408,13 +409,15 @@
         const logo = document.querySelector('.sidebar-logo');
         const subtext = document.querySelector('.sidebar-subtext');
         
-        if (sidebar.classList.contains('collapsed')) {
+        if (!isCollapsed) {
+          // сворачиваем
           toggleIcon.textContent = 'keyboard_double_arrow_right';
           toggleBtn.title = "Развернуть панель";
           itemsText.forEach(el => el.style.display = 'none');
           if (logo) logo.style.display = 'none';
           if (subtext) subtext.style.display = 'none';
         } else {
+          // разворачиваем
           toggleIcon.textContent = 'keyboard_double_arrow_left';
           toggleBtn.title = "Свернуть панель";
           itemsText.forEach(el => el.style.display = 'inline');
@@ -1008,8 +1011,7 @@
         });
       }
 
-        toggleHistoryCard(id, (currentHistory.find(e => e.id === id) || {}).audio_path || '');
-      }
+
 
       // Утилита: получить текущий текст для активной карточки
       function getDisplayText(entry, viewMode) {
