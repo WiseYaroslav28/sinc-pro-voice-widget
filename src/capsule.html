@@ -644,9 +644,9 @@
 
       // Привязываем события
       bindPresetFan('hover-presets-menu', 'data-preset', () => {
+        // Просто скрываем меню — запись НЕ запускаем.
+        // Пресет уже сохранён внутри bindPresetFan до вызова этого колбэка.
         hoverPresetsMenu.classList.add('hidden');
-        mode = 'latch';
-        startRecordingProcess();
       });
       bindPresetFan('recording-presets-fan', 'data-rec-preset', null);
       bindPresetFan('pause-presets-fan',     'data-pause-preset', null);
