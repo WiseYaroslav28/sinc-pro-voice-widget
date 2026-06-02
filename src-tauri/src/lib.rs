@@ -1,4 +1,4 @@
-use tauri::{Emitter, Manager};
+﻿use tauri::{Emitter, Manager};
 use serde::{Serialize, Deserialize};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::Local;
@@ -351,7 +351,7 @@ fn get_preset_prompt_and_label(preset: &str) -> (&'static str, &'static str) {
             "Письмо"
         ),
         _ => (
-            "Выдели суть аудиозаписи кратко, чётко, без вступлений. БЕЗ фраз 'В аудиозаписи', 'Запись посвящена', 'Речь идёт о' и любых других преамбул. Сразу — тезисы. Каждый тезис с новой строки, начиная с '• '.",
+            "Transform the scattered speech into a clear structured concept. Rules: 1) Remove filler, repetitions, chaos. 2) Merge all fragments into one logical concept. 3) Keep ALL important details and nuances. 4) Structure logically: main idea first, then details. 5) NO preamble, no 'In this recording...', no 'The speech is about...'. 6) Start IMMEDIATELY with the essence. Format: one-line concept title, then bullet points (bullet) for key ideas and details. Answer in Russian.",
             "Суть"
         ),
     }

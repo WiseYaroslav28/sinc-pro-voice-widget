@@ -975,18 +975,23 @@
         }
         if (isUserCancelled && audioChunks.length > 0) {
           const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-          try {
-            const arrayBuffer = await audioBlob.arrayBuffer();
-            const uint8Array = new Uint8Array(arrayBuffer);
-            const bytesArray = Array.from(uint8Array);
-            if (invoke) {
-              await invoke('save_audio', {
-                bytes: bytesArray, durationSecs: finalSeconds,
-                preset: 'cancelled', customPrompt: null, isCancelled: true
-              });
+          // Не сохраняем пустые записи (< 8КБ = тишина или очень короткая запись)
+          if (audioBlob.size < 8000) {
+            showToast('Запись пустая — не сохранено', false);
+          } else {
+            try {
+              const arrayBuffer = await audioBlob.arrayBuffer();
+              const uint8Array = new Uint8Array(arrayBuffer);
+              const bytesArray = Array.from(uint8Array);
+              if (invoke) {
+                await invoke('save_audio', {
+                  bytes: bytesArray, durationSecs: finalSeconds,
+                  preset: 'cancelled', customPrompt: null, isCancelled: true
+                });
+              }
+            } catch (e) {
+              console.error('Ошибка сохранения отменённого аудио:', e);
             }
-          } catch (e) {
-            console.error('Ошибка сохранения отмененного аудио:', e);
           }
         }
         audioChunks = [];
@@ -1000,6 +1005,16 @@
         if (audioChunks.length === 0) { switchState('idle'); return; }
 
         isSending = true;
+
+        // Проверка: не отправляем пустые записи
+        const testBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        if (testBlob.size < 8000) {
+          isSending = false;
+          showToast('Запись пустая — ничего не записано', true);
+          audioChunks = [];
+          switchState('idle');
+          return;
+        }
 
         // Показываем spinner на кнопке Send
         const sendIcon = btnSendAi ? btnSendAi.querySelector('.material-symbols-outlined') : null;
