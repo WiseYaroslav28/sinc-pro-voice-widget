@@ -436,17 +436,12 @@
           return;
         }
 
-        // Режим Магнит включён: прижимаемся к нижней части активного монитора
+        // Режим Магнит включён: центр низа доступного экрана (учитывает taskbar)
+        const availW_phys = Math.round(screen.availWidth  * cachedScaleFactor);
+        const availH_phys = Math.round(screen.availHeight * cachedScaleFactor);
 
-        // Клэмпинг по горизонтали
-        const screenWidth_phys = Math.round(screen.width * cachedScaleFactor);
-        const x_raw = Math.round(lastBottomCenterX_phys - w_phys / 2);
-        const x_phys = Math.max(0, Math.min(screenWidth_phys - w_phys, x_raw));
-
-        // Клэмпинг по вертикали — нижний край не выходит за экран
-        const screenHeight_phys = Math.round(screen.height * cachedScaleFactor);
-        const bottomY = Math.min(lastBottomY_phys, screenHeight_phys - 4);
-        const y_phys  = Math.round(bottomY - h_phys);
+        const x_phys = Math.max(0, Math.round((availW_phys - w_phys) / 2));
+        const y_phys = Math.max(0, availH_phys - h_phys - Math.round(4 * cachedScaleFactor));
 
         try {
           await invoke('resize_bottom_up_phys', { width: w_phys, height: h_phys, x: x_phys, y: y_phys });
@@ -920,8 +915,12 @@
           mediaRecorder.onpause = () => {
             stopTimer();
             document.getElementById('pause-timer').textContent = recTimer.textContent;
-            // Не переключаемся в pause если запущена процедура отмены
-            if (!isCancelPending) switchState('pause');
+            if (isCancelPending) {
+              // Отмена записи: не переключаться в pause, сбросить флаг
+              isCancelPending = false;
+              return;
+            }
+            switchState('pause');
           };
 
           mediaRecorder.onresume = () => {
@@ -959,11 +958,14 @@
       function startCancelCountdown() {
         if (currentState !== 'recording' && currentState !== 'pause') return;
         preCancelState = currentState;
-        isCancelPending = true;  // блокируем onpause от смены состояния
-        pauseRecordingProcess();
+        if (currentState === 'recording') {
+          // Устанавливаем флаг ДО паузы — onpause сбросит его после срабатывания
+          isCancelPending = true;
+          pauseRecordingProcess();
+        }
+        // Если уже были на паузе — не нужно паузировать ещё раз, просто переключаемся
         document.getElementById('cancel-timer').textContent = recTimer.textContent;
         switchState('cancel-confirm');
-        isCancelPending = false;
         cancelSecondsLeft = 5;
         cancelCountdownText.textContent = `Вся надиктованная запись будет сброшена в архив через ${cancelSecondsLeft} сек...`;
         if (cancelInterval) clearInterval(cancelInterval);

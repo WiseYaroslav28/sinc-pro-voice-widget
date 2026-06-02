@@ -93,7 +93,7 @@
         </header>
 
         <!-- Scrollable Content Canvas -->
-        <div class="flex-1 flex flex-col px-6 min-h-0 overflow-hidden pb-12">
+        <div class="flex-1 flex flex-col px-6 min-h-0 overflow-hidden">
           
           <!-- ВКЛАДКА 1: ГЛАВНАЯ (HOME) -->
           <section class="tab-content flex flex-col gap-2 flex-1 min-h-0 py-4" id="tab-home">
@@ -351,14 +351,14 @@
                     <div class="text-[13px] text-[#e4e1e9] font-medium">Магнит</div>
                     <div class="text-[11px] text-[#ccc3d8] mt-0.5">Прижиматься к нижней части монитора с курсором</div>
                   </div>
-                  <label class="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" id="setting-capsule-magnet" class="sr-only peer" checked />
-                    <div class="w-10 h-5 bg-[#35343a] rounded-full peer
-                                peer-checked:bg-[#8e52ff]
-                                after:content-[''] after:absolute after:top-[2px] after:left-[2px]
-                                after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all
-                                peer-checked:after:translate-x-5"></div>
-                  </label>
+                  <!-- Кастомный toggle — не зависит от Tailwind JIT -->
+                  <div id="magnet-toggle-track"
+                       onclick="document.getElementById('setting-capsule-magnet').click()"
+                       style="width:40px; height:22px; border-radius:11px; background:#8e52ff; position:relative; cursor:pointer; transition:background 0.2s; flex-shrink:0;">
+                    <div id="magnet-toggle-thumb"
+                         style="width:18px; height:18px; border-radius:50%; background:white; position:absolute; top:2px; left:20px; transition:left 0.2s; box-shadow:0 1px 3px rgba(0,0,0,0.4);"></div>
+                  </div>
+                  <input type="checkbox" id="setting-capsule-magnet" style="display:none;" checked />
                 </div>
               </div>
             </div>
@@ -368,8 +368,8 @@
 
         </div>
 
-        <!-- Подвал дашборда (Footer Stitch) -->
-        <footer class="absolute bottom-0 right-0 left-0 h-12 bg-[#0e0e13] border-t border-[#4a4455]/30 flex justify-between items-center px-6 z-10 text-[11px]">
+        <!-- Подвал дашборда -->
+        <footer class="h-12 w-full bg-[#0e0e13] border-t border-[#4a4455]/30 flex justify-between items-center px-6 flex-shrink-0 z-10 text-[11px]">
           <span class="font-bold text-[#e4e1e9]">© 2026 SINC PRO. API: Gemini Connected.</span>
           <div class="flex gap-4">
             <a class="text-[#ccc3d8] hover:text-[#7bd6d1] transition-opacity" href="#">Статус систем</a>
@@ -1274,13 +1274,24 @@
 
       // Настройка Магнита капсулы — сохраняем + передаём в капсулу
       const magnetToggle = document.getElementById('setting-capsule-magnet');
+      const magnetTrack  = document.getElementById('magnet-toggle-track');
+      const magnetThumb  = document.getElementById('magnet-toggle-thumb');
+
+      function syncMagnetToggleUI(isChecked) {
+        if (!magnetTrack || !magnetThumb) return;
+        magnetTrack.style.background = isChecked ? '#8e52ff' : '#35343a';
+        magnetThumb.style.left = isChecked ? '20px' : '2px';
+      }
+
       if (magnetToggle) {
         // Восстанавливаем сохранённое значение (null = по умолчанию true)
         const saved = localStorage.getItem('capsuleMagnet');
         magnetToggle.checked = saved === null ? true : saved === 'true';
+        syncMagnetToggleUI(magnetToggle.checked);
 
         magnetToggle.addEventListener('change', () => {
           localStorage.setItem('capsuleMagnet', magnetToggle.checked);
+          syncMagnetToggleUI(magnetToggle.checked);
           if (window.__TAURI__) {
             window.__TAURI__.event.emit('capsule-magnet-changed', magnetToggle.checked).catch(() => {});
           }
