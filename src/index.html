@@ -148,7 +148,10 @@
                 <!-- Иконка + заголовок -->
                 <div class="flex items-center gap-2 flex-shrink-0">
                   <div class="bg-[#d2bbff]/10 p-1 rounded-lg flex-shrink-0">
-                    <span class="material-symbols-outlined text-[#d2bbff] text-[16px]" style="font-variation-settings: 'FILL' 1;">graphic_eq</span>
+                    <!-- Иконка типа записи: клик разворачивает/сворачивает плеер -->
+                    <button id="btn-toggle-player" title="Открыть источник записи" style="background:none;border:none;padding:0;cursor:pointer;display:flex;">
+                      <span class="material-symbols-outlined text-[#d2bbff] text-[16px]" id="activity-type-icon" style="font-variation-settings: 'FILL' 1;">mic</span>
+                    </button>
                   </div>
                   <div>
                     <h3 class="text-[12px] font-semibold text-[#e4e1e9] leading-tight">Последняя активность</h3>
@@ -208,16 +211,18 @@
                 <div class="absolute bottom-0 left-0 w-full h-10 pointer-events-none" style="background: linear-gradient(to top, #1f1f24, transparent);"></div>
               </div>
 
-              <!-- Плеер внизу карточки -->
-              <div class="px-4 py-2 border-t border-[#4a4455]/20 flex items-center gap-2 flex-shrink-0 bg-[#1b1b20]/50">
-                <div class="bg-[#2a292f] h-6 rounded-full border border-[#4a4455]/30 flex items-center px-2 gap-2 flex-1">
-                  <button class="text-[#e4e1e9] hover:text-[#d2bbff] transition-colors flex-shrink-0 focus:outline-none" id="player-play" title="Воспроизвести">
-                    <span class="material-symbols-outlined text-[16px]" id="player-play-icon" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
-                  </button>
-                  <div class="flex-1 h-1 bg-[#35343a] rounded-full overflow-hidden relative cursor-pointer" id="player-scrubber-container">
-                    <div class="absolute top-0 left-0 h-full w-0 bg-[#d2bbff] rounded-full" id="player-progress"></div>
+              <!-- Коллапсируемая панель с плеером (по клику на иконку в шапке) -->
+              <div class="hidden flex-col border-t border-[#4a4455]/20 bg-[#1b1b20]/50" id="player-panel">
+                <div class="px-4 py-2 flex items-center gap-2">
+                  <div class="bg-[#2a292f] h-6 rounded-full border border-[#4a4455]/30 flex items-center px-2 gap-2 flex-1">
+                    <button class="text-[#e4e1e9] hover:text-[#d2bbff] transition-colors flex-shrink-0 focus:outline-none" id="player-play" title="Воспроизвести">
+                      <span class="material-symbols-outlined text-[16px]" id="player-play-icon" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+                    </button>
+                    <div class="flex-1 h-1 bg-[#35343a] rounded-full overflow-hidden relative cursor-pointer" id="player-scrubber-container">
+                      <div class="absolute top-0 left-0 h-full w-0 bg-[#d2bbff] rounded-full" id="player-progress"></div>
+                    </div>
+                    <span class="text-[10px] text-[#ccc3d8] w-7 text-right font-mono" id="player-time">0:00</span>
                   </div>
-                  <span class="text-[10px] text-[#ccc3d8] w-7 text-right font-mono" id="player-time">0:00</span>
                 </div>
               </div>
 
@@ -329,6 +334,27 @@
                 <div class="flex justify-between items-center py-2">
                   <span class="text-[#ccc3d8]">Озвучить выделенный фрагмент</span>
                   <kbd class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] px-2 py-1 rounded font-semibold text-[11px]">Ctrl + Shift + S</kbd>
+                </div>
+              </div>
+            </div>
+
+            <!-- Блок 4: Капсула ИИ -->
+            <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-5">
+              <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-4">Капсула ИИ</h3>
+              <div class="flex flex-col gap-4">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="text-[13px] text-[#e4e1e9] font-medium">Магнит</div>
+                    <div class="text-[11px] text-[#ccc3d8] mt-0.5">Прижиматься к нижней части монитора с курсором</div>
+                  </div>
+                  <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="setting-capsule-magnet" class="sr-only peer" checked />
+                    <div class="w-10 h-5 bg-[#35343a] rounded-full peer
+                                peer-checked:bg-[#8e52ff]
+                                after:content-[''] after:absolute after:top-[2px] after:left-[2px]
+                                after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all
+                                peer-checked:after:translate-x-5"></div>
+                  </label>
                 </div>
               </div>
             </div>
@@ -1177,6 +1203,43 @@
         const secs = entry.duration_secs % 60;
         document.getElementById('player-time').textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
         document.getElementById('player-progress').style.width = "0%";
+
+        // Обновляем иконку типа записи
+        const typeIcon = document.getElementById('activity-type-icon');
+        if (typeIcon) {
+          // Если preset === 'transcript' или запись от микрофона → микрофон; текст → текстовая иконка
+          typeIcon.textContent = (entry.preset === 'text_input') ? 'text_fields' : 'mic';
+        }
+        // Скрываем плеер при смене записи
+        const playerPanel = document.getElementById('player-panel');
+        if (playerPanel) { playerPanel.classList.add('hidden'); playerPanel.classList.remove('flex'); }
+      }
+
+      // Тогол плеера — клик на иконку записи
+      const btnTogglePlayer = document.getElementById('btn-toggle-player');
+      if (btnTogglePlayer) {
+        btnTogglePlayer.addEventListener('click', () => {
+          const panel = document.getElementById('player-panel');
+          if (!panel) return;
+          const isHidden = panel.classList.contains('hidden');
+          panel.classList.toggle('hidden', !isHidden);
+          panel.classList.toggle('flex', isHidden);
+        });
+      }
+
+      // Настройка Магнита капсулы — сохраняем + передаём в капсулу
+      const magnetToggle = document.getElementById('setting-capsule-magnet');
+      if (magnetToggle) {
+        // Восстанавливаем сохранённое значение (null = по умолчанию true)
+        const saved = localStorage.getItem('capsuleMagnet');
+        magnetToggle.checked = saved === null ? true : saved === 'true';
+
+        magnetToggle.addEventListener('change', () => {
+          localStorage.setItem('capsuleMagnet', magnetToggle.checked);
+          if (window.__TAURI__) {
+            window.__TAURI__.event.emit('capsule-magnet-changed', magnetToggle.checked).catch(() => {});
+          }
+        });
       }
 
       window.selectHistoryEntry = function(id) {

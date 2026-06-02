@@ -393,11 +393,45 @@
       if (window.__TAURI__) {
         const appWindow = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
         const { WebviewWindow } = window.__TAURI__.webviewWindow;
+        const PhysicalPosition = window.__TAURI__.dpi.PhysicalPosition;
 
-        // Перетаскивание (не по кнопкам)
+        // ── Запоминание позиции ──────────────────────────────────────────
+        // Восстанавливаем позицию при загрузке
+        (async () => {
+          try {
+            const savedX = localStorage.getItem('widgetPosX');
+            const savedY = localStorage.getItem('widgetPosY');
+            if (savedX !== null && savedY !== null) {
+              const x = parseInt(savedX, 10);
+              const y = parseInt(savedY, 10);
+              // Проверяем что координаты в разумных пределах (не за пределами всех мониторов)
+              if (x > -4000 && x < 8000 && y > -2000 && y < 6000) {
+                await appWindow.setPosition(new PhysicalPosition(x, y));
+              }
+            }
+          } catch (e) {
+            console.warn('[Widget] Не удалось восстановить позицию:', e);
+          }
+        })();
+
+        // Сохраняем позицию через 300ms после окончания перетаскивания
+        let savePositionTimer = null;
         document.getElementById('widget-container').addEventListener('mousedown', (e) => {
           if (e.buttons === 1 && !e.target.closest('button') && !e.target.closest('input') && !e.target.closest('.dropdown-menu')) {
             appWindow.startDragging();
+            // После drag — сохраняем новую позицию
+            const onMouseUp = async () => {
+              clearTimeout(savePositionTimer);
+              savePositionTimer = setTimeout(async () => {
+                try {
+                  const pos = await appWindow.outerPosition();
+                  localStorage.setItem('widgetPosX', pos.x);
+                  localStorage.setItem('widgetPosY', pos.y);
+                } catch (_) {}
+              }, 300);
+              window.removeEventListener('mouseup', onMouseUp);
+            };
+            window.addEventListener('mouseup', onMouseUp);
           }
         });
 
@@ -419,7 +453,13 @@
         });
 
         window.__TAURI__.event.emit('widget-visibility-changed', true);
-        appWindow.onCloseRequested(() => {
+        appWindow.onCloseRequested(async () => {
+          // Сохраняем финальную позицию перед закрытием
+          try {
+            const pos = await appWindow.outerPosition();
+            localStorage.setItem('widgetPosX', pos.x);
+            localStorage.setItem('widgetPosY', pos.y);
+          } catch (_) {}
           window.__TAURI__.event.emit('widget-visibility-changed', false);
         });
       }
