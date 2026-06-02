@@ -137,11 +137,14 @@
               </div>
 
               <!-- Плеер + стенограмма -->
+              <!-- Плеер + Combo Box переключения вида -->
               <div class="px-5 py-3 border-t border-[#4a4455]/20 flex justify-between items-center gap-3 flex-shrink-0">
-                <button class="text-[#7bd6d1] hover:text-[#98f2ed] flex items-center gap-1 text-[11px] font-semibold transition-colors focus:outline-none" id="spoiler-toggle">
-                  <span class="material-symbols-outlined text-[14px]" id="spoiler-icon">expand_more</span>
-                  <span>Стенограмма</span>
-                </button>
+                <!-- Combo Box: Транскрипция / AI-результаты -->
+                <select class="bg-[#1f1f24] border border-[#4a4455]/30 text-[#ccc3d8] rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:border-[#d2bbff] flex-1 max-w-[200px]"
+                        id="dashboard-view-combo"
+                        onchange="onDashboardViewChange()">
+                  <option value="transcript">📝 Транскрипция</option>
+                </select>
                 <div class="bg-[#2a292f] h-7 rounded-full border border-[#4a4455]/30 flex items-center px-2 gap-2 w-40 shrink-0">
                   <button class="text-[#e4e1e9] hover:text-[#d2bbff] transition-colors flex-shrink-0 focus:outline-none" id="player-play" title="Воспроизвести">
                     <span class="material-symbols-outlined text-[18px]" id="player-play-icon" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
@@ -153,8 +156,9 @@
                 </div>
               </div>
 
-              <!-- Раскрываемая стенограмма -->
-              <div class="spoiler-content px-5 pb-4 text-[12px] leading-relaxed text-[#ccc3d8] hidden" id="spoiler-content"></div>
+              <!-- Транскрипция (раскрывается через combo) — теперь часть основного блока -->
+              <div class="px-5 pb-4 text-[12px] leading-relaxed text-[#ccc3d8] hidden" id="spoiler-content"></div>
+
             </div>
 
             <!-- Bento-панель снизу: 3 колонки -->
@@ -882,82 +886,68 @@
           const mins = Math.floor(entry.duration_secs / 60);
           const secs = entry.duration_secs % 60;
           const durationStr = mins > 0 ? `${mins}м ${secs}с` : `${secs} сек`;
-          const icon = getPresetIcon(entry.preset);
-          const color = getPresetColor(entry.preset);
+          
           const isExpanded = expandedHistoryId === entry.id;
-          const isError = entry.preset === 'error';
-          const isCancelled = entry.preset === 'cancelled';
-          const isPlaying = historyPlayingId === entry.id;
-
-          // Превью текста (60 символов в закрытом виде)
-          const textPreview = entry.transcript.substring(0, 120) + (entry.transcript.length > 120 ? '...' : '');
+          const firstAi = entry.ai_results && entry.ai_results.length > 0 ? entry.ai_results[0] : null;
+          const textPreview = (firstAi ? firstAi.text : (entry.raw_transcript || '')).substring(0, 120);
+          const entryPresetLabel = firstAi ? firstAi.preset_label : (entry.raw_transcript ? 'Транскрипция' : 'Отменено');
+          const entryPreset = firstAi ? firstAi.preset : (entry.raw_transcript ? 'transcript' : 'cancelled');
+          const isError = entryPreset === 'error';
 
           return `
             <div class="rounded-xl border transition-all duration-200 overflow-hidden"
                  style="background: ${isError ? 'rgba(240,84,84,0.05)' : isExpanded ? '#1a1a22' : '#141419'};
-                        border-color: ${isExpanded ? color + '40' : 'rgba(74,68,85,0.25)'};"
+                        border-color: ${isExpanded ? getPresetColor(entryPreset) + '40' : 'rgba(74,68,85,0.25)'};"
                  id="hcard-${entry.id}">
-              <!-- Шапка карточки -->
-              <div class="flex items-start gap-3 p-3 cursor-pointer select-none"
-                   onclick="toggleHistoryCard('${entry.id}', '${entry.audio_path.replace(/\\/g, '\\\\')}')"
-                   style="user-select: none;">
-                <!-- Иконка пресета -->
+              <div class="flex items-start gap-3 p-3 cursor-pointer" onclick="toggleHistoryCard('${entry.id}')">
                 <div class="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center mt-0.5"
-                     style="background: ${color}18;">
-                  <span class="material-symbols-outlined text-[16px]" style="color: ${color}; font-variation-settings: 'FILL' 1;">${icon}</span>
+                     style="background: ${getPresetColor(entryPreset)}18;">
+                  <span class="material-symbols-outlined text-[16px]" style="color: ${getPresetColor(entryPreset)}; font-variation-settings: 'FILL' 1;">${getPresetIcon(entryPreset)}</span>
                 </div>
-                <!-- Инфо -->
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2 mb-0.5">
-                    <span class="text-[12px] font-semibold" style="color: ${color};">${entry.preset_label}</span>
+                    <span class="text-[12px] font-semibold" style="color: ${getPresetColor(entryPreset)};">${entryPresetLabel}</span>
                     <span class="text-[10px] text-[#888]">${entry.timestamp} • ${durationStr}</span>
                   </div>
-                  <p class="text-[12px] text-[#ccc3d8] leading-[1.4] ${isExpanded ? 'hidden' : ''}"
-                     id="hcard-preview-${entry.id}">${textPreview}</p>
+                  <p class="text-[12px] text-[#ccc3d8] leading-[1.4] ${isExpanded ? 'hidden' : ''}">${textPreview}</p>
                 </div>
-                <!-- Кнопки справа -->
                 <div class="flex items-center gap-1 flex-shrink-0">
-                  <button class="p-1.5 rounded text-[#ccc3d8] hover:text-[#d2bbff] hover:bg-[#2a292f] transition-all focus:outline-none"
-                          onclick="event.stopPropagation(); openFolder('${entry.audio_path.replace(/\\/g, '\\\\')}')"
-                          title="Открыть файл">
+                  <button class="p-1.5 rounded text-[#ccc3d8] hover:text-[#d2bbff] hover:bg-[#2a292f] transition-all"
+                          onclick="event.stopPropagation(); openFolder('${entry.audio_path.replace(/\\/g, '\\\\')}')">
                     <span class="material-symbols-outlined text-[15px]">folder_open</span>
                   </button>
-                  <button class="p-1.5 rounded text-[#ccc3d8] hover:text-[#ffb4ab] hover:bg-[#2a292f] transition-all focus:outline-none"
-                          onclick="event.stopPropagation(); deleteEntry('${entry.id}')"
-                          title="Удалить">
+                  <button class="p-1.5 rounded text-[#ccc3d8] hover:text-[#ffb4ab] hover:bg-[#2a292f] transition-all"
+                          onclick="event.stopPropagation(); deleteEntry('${entry.id}')">
                     <span class="material-symbols-outlined text-[15px]">delete</span>
                   </button>
-                  <span class="material-symbols-outlined text-[15px] text-[#555] transition-transform duration-200"
-                        style="transform: rotate(${isExpanded ? 180 : 0}deg); display: block;">
-                    expand_more
-                  </span>
                 </div>
               </div>
 
-              <!-- Развёрнутое содержимое — аккордеон -->
               <div class="${isExpanded ? '' : 'hidden'}" id="hcard-body-${entry.id}">
                 <div class="px-3 pb-3">
-                  <!-- Текст записи -->
-                  <div class="bg-[#0e0e13] rounded-lg p-3 mb-2 text-[12px] leading-[1.6] text-[#ccc3d8] whitespace-pre-wrap max-h-48 overflow-y-auto"
-                       style="border-left: 2px solid ${color}40;">
-                    ${entry.transcript}
+                  <select class="bg-[#0e0e13] border border-[#4a4455]/30 text-[#e4e1e9] rounded-lg px-2 py-1 text-[11px] mb-2 w-full focus:outline-none"
+                          id="hcard-view-${entry.id}"
+                          onchange="switchHistoryView('${entry.id}')">
+                    <option value="transcript">📝 Транскрипция</option>
+                    ${(entry.ai_results || []).map((r, i) =>
+                      `<option value="ai_${i}">✨ Результат ${i+1} (${r.preset_label})</option>`
+                    ).join('')}
+                  </select>
+                  <div class="bg-[#0e0e13] rounded-lg p-3 mb-2 text-[13px] leading-[1.7] text-[#ccc3d8] max-h-56 overflow-y-auto"
+                       id="hcard-text-${entry.id}">
+                    ${(firstAi ? firstAi.text : entry.raw_transcript) || '—'}
                   </div>
-                  <!-- Мини-плеер аудио -->
                   <div class="flex items-center gap-2 bg-[#1f1f24] rounded-lg px-3 py-2">
-                    <button class="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all focus:outline-none"
-                            style="background: ${color}20;"
+                    <button class="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all"
                             onclick="toggleHistoryPlay('${entry.id}', '${entry.audio_path.replace(/\\/g, '\\\\')}')" 
                             id="hplay-btn-${entry.id}">
-                      <span class="material-symbols-outlined text-[16px]" style="color: ${color}; font-variation-settings: 'FILL' 1;" id="hplay-icon-${entry.id}">${isPlaying ? 'pause' : 'play_arrow'}</span>
+                      <span class="material-symbols-outlined text-[16px]" style="color: ${getPresetColor(entryPreset)};" id="hplay-icon-${entry.id}">${historyPlayingId === entry.id ? 'pause' : 'play_arrow'}</span>
                     </button>
-                    <div class="flex-1 h-1 bg-[#35343a] rounded-full overflow-hidden cursor-pointer" id="hprogress-bar-${entry.id}">
-                      <div class="h-full rounded-full transition-all" style="width: 0%; background: ${color};" id="hprogress-${entry.id}"></div>
+                    <div class="flex-1 h-1 bg-[#35343a] rounded-full overflow-hidden" id="hprogress-bar-${entry.id}">
+                      <div class="h-full rounded-full transition-all" style="width: 0%; background: ${getPresetColor(entryPreset)};" id="hprogress-${entry.id}"></div>
                     </div>
-                    <span class="text-[10px] text-[#888] font-mono w-12 text-right" id="htime-${entry.id}">
-                      0:00 / ${Math.floor(entry.duration_secs/60)}:${(entry.duration_secs%60).toString().padStart(2,'0')}
-                    </span>
-                    <button class="p-1 rounded text-[#ccc3d8] hover:text-[#d2bbff] transition-all focus:outline-none"
-                            onclick="copyHistoryText('${entry.id}')" title="Копировать текст">
+                    <span class="text-[10px] text-[#888] font-mono w-12 text-right" id="htime-${entry.id}">0:00</span>
+                    <button class="p-1 rounded text-[#ccc3d8] hover:text-[#d2bbff]" onclick="copyHistoryText('${entry.id}')">
                       <span class="material-symbols-outlined text-[14px]">content_copy</span>
                     </button>
                   </div>
@@ -968,94 +958,129 @@
         }).join('');
       }
 
-      function toggleHistoryCard(id, audioPath) {
-        if (expandedHistoryId === id) {
-          // Сворачиваем
-          expandedHistoryId = null;
-          if (historyAudio) { historyAudio.pause(); historyAudio = null; historyPlayingId = null; }
-        } else {
-          // Разворачиваем, предыдущий закрываем
-          if (historyAudio) { historyAudio.pause(); historyAudio = null; historyPlayingId = null; }
-          expandedHistoryId = id;
-        }
+      const lastViewMode = {};
+      function switchHistoryView(entryId) {
+        const entry = currentHistory.find(e => e.id === entryId);
+        if (!entry) return;
+        const sel = document.getElementById(`hcard-view-${entryId}`);
+        const textEl = document.getElementById(`hcard-text-${entryId}`);
+        if (!sel || !textEl) return;
+        const val = sel.value;
+        lastViewMode[entryId] = val;
+        textEl.textContent = getDisplayText(entry, val) || '—';
+      }
+
+      function toggleHistoryCard(id) {
+        expandedHistoryId = (expandedHistoryId === id) ? null : id;
         renderHistory();
+        if (expandedHistoryId) {
+            const sel = document.getElementById(`hcard-view-${id}`);
+            if (sel && lastViewMode[id]) sel.value = lastViewMode[id];
+        }
       }
 
       function toggleHistoryPlay(id, audioPath) {
         if (historyPlayingId === id && historyAudio) {
           historyAudio.pause();
           historyPlayingId = null;
-          const icon = document.getElementById(`hplay-icon-${id}`);
-          if (icon) icon.textContent = 'play_arrow';
+          document.getElementById(`hplay-icon-${id}`).textContent = 'play_arrow';
           return;
         }
-        // Останавливаем предыдущий
-        if (historyAudio) { historyAudio.pause(); historyAudio = null; }
+        if (historyAudio) historyAudio.pause();
         historyAudio = new Audio(audioPath);
         historyPlayingId = id;
-        const icon = document.getElementById(`hplay-icon-${id}`);
-        const progress = document.getElementById(`hprogress-${id}`);
-        const timeEl = document.getElementById(`htime-${id}`);
-        const entry = currentHistory.find(e => e.id === id);
-        const totalDurStr = entry ? `${Math.floor(entry.duration_secs/60)}:${(entry.duration_secs%60).toString().padStart(2,'0')}` : '?';
-
-        if (icon) icon.textContent = 'pause';
+        document.getElementById(`hplay-icon-${id}`).textContent = 'pause';
+        
         historyAudio.addEventListener('timeupdate', () => {
           if (historyAudio.duration) {
             const pct = (historyAudio.currentTime / historyAudio.duration) * 100;
-            if (progress) progress.style.width = `${pct}%`;
-            const cm = Math.floor(historyAudio.currentTime / 60);
-            const cs = Math.floor(historyAudio.currentTime % 60).toString().padStart(2, '0');
-            if (timeEl) timeEl.textContent = `${cm}:${cs} / ${totalDurStr}`;
+            document.getElementById(`hprogress-${id}`).style.width = `${pct}%`;
           }
         });
         historyAudio.addEventListener('ended', () => {
           historyPlayingId = null;
-          if (icon) icon.textContent = 'play_arrow';
-          if (progress) progress.style.width = '0%';
-          historyAudio = null;
+          document.getElementById(`hplay-icon-${id}`).textContent = 'play_arrow';
         });
         historyAudio.play().catch(e => console.error('Аудио ошибка:', e));
       }
 
-      function copyHistoryText(id) {
-        const entry = currentHistory.find(e => e.id === id);
+      function copyHistoryText(entryId) {
+        const entry = currentHistory.find(e => e.id === entryId);
         if (!entry) return;
-        navigator.clipboard.writeText(entry.transcript).then(() => {
+        const sel = document.getElementById(`hcard-view-${entryId}`);
+        const viewMode = sel ? sel.value : 'ai_0';
+        const text = getDisplayText(entry, viewMode);
+        navigator.clipboard.writeText(text || '').then(() => {
           showToast('Текст скопирован', false);
         });
       }
 
-      // Оставляем selectHistoryEntry для обратной совместимости, но больше не переключает вкладку
-      function selectHistoryEntry(id) {
         toggleHistoryCard(id, (currentHistory.find(e => e.id === id) || {}).audio_path || '');
+      }
+
+      // Утилита: получить текущий текст для активной карточки
+      function getDisplayText(entry, viewMode) {
+        if (!entry) return '';
+        if (!viewMode || viewMode === 'transcript') return entry.raw_transcript || '';
+        const idx = parseInt(viewMode.replace('ai_', ''));
+        const ai = entry.ai_results && entry.ai_results[idx];
+        return ai ? ai.text : (entry.raw_transcript || '');
+      }
+
+      let dashboardViewMode = localStorage.getItem('dashboardViewMode') || 'ai_0';
+
+      function onDashboardViewChange() {
+        const combo = document.getElementById('dashboard-view-combo');
+        if (!combo) return;
+        dashboardViewMode = combo.value;
+        localStorage.setItem('dashboardViewMode', dashboardViewMode);
+        if (!currentActiveEntry) return;
+        const summaryText = document.getElementById('summary-text');
+        const displayText = getDisplayText(currentActiveEntry, dashboardViewMode);
+        if (summaryText) summaryText.innerHTML = (displayText || '—').replace(/\n/g, '<br>');
       }
 
       function renderActiveCard(entry) {
         currentActiveEntry = entry;
         const summaryText = document.getElementById('summary-text');
         const activityTime = document.getElementById('activity-time');
+        const activityModel = document.getElementById('activity-model');
         const spoilerContent = document.getElementById('spoiler-content');
-        
+        const spoilerToggle = document.getElementById('spoiler-toggle');
+
         if (!entry) {
-          summaryText.textContent = "Нет недавней активности. Запишите аудио с помощью левитирующей капсулы.";
-          activityTime.textContent = "--:--";
-          spoilerContent.textContent = "Здесь появится расшифровка аудиозаписи.";
-          document.getElementById('player-time').textContent = "00:00";
-          document.getElementById('player-progress').style.width = "0%";
-          audioPlayerElement.src = "";
+          if (summaryText) summaryText.textContent = 'Нет данных. Создайте первую запись через капсулу (Ctrl+Win).';
+          if (activityTime) activityTime.textContent = '—';
           return;
         }
-        
-        if (entry.preset === 'transcript') {
-          summaryText.innerHTML = `<span class="italic text-[#d2bbff]">Дословная стенограмма:</span><br>${entry.transcript.replace(/\n/g, '<br>')}`;
-          spoilerContent.textContent = entry.transcript;
-        } else {
-          summaryText.innerHTML = entry.transcript.replace(/\n/g, '<br>');
-          spoilerContent.textContent = `Дословная расшифровка (ИИ-анализ по пресету "${entry.preset_label}"):\n\n${entry.transcript}`;
+
+        // Обновляем Combo Box главной карточки
+        const dashCombo = document.getElementById('dashboard-view-combo');
+        if (dashCombo) {
+          dashCombo.innerHTML = `<option value="transcript">📝 Транскрипция</option>`
+            + (entry.ai_results || []).map((r, i) =>
+              `<option value="ai_${i}">✨ ${entry.ai_results.length > 1 ? 'Результат ' + (i+1) + ' — ' : ''}${r.preset_label}</option>`
+            ).join('');
+          // Восстанавливаем последний выбранный вид
+          const saved = localStorage.getItem('dashboardViewMode') || 'ai_0';
+          if (dashCombo.querySelector(`option[value="${saved}"]`)) {
+            dashCombo.value = saved;
+            dashboardViewMode = saved;
+          } else {
+            dashCombo.value = entry.ai_results && entry.ai_results.length > 0 ? 'ai_0' : 'transcript';
+            dashboardViewMode = dashCombo.value;
+          }
         }
-        
-        activityTime.textContent = `${entry.timestamp} (${entry.preset_label})`;
+
+        // Отображаем текст
+        const displayText = getDisplayText(entry, dashboardViewMode);
+        if (summaryText) summaryText.innerHTML = (displayText || '—').replace(/\n/g, '<br>');
+        if (spoilerContent) spoilerContent.textContent = entry.raw_transcript || '—';
+        if (activityTime) activityTime.textContent = entry.timestamp || '—';
+        if (activityModel) {
+          const firstAi = entry.ai_results && entry.ai_results[0];
+          activityModel.textContent = firstAi ? firstAi.preset_label : 'Транскрипция';
+        }
         
         if (window.__TAURI__) {
           try {

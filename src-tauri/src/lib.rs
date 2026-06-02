@@ -157,16 +157,26 @@ pub struct AppConfig {
 
 fn default_ui_lang() -> String { "ru".to_string() }
 fn default_dictation_lang() -> String { "auto".to_string() }
-fn default_ai_model() -> String { "gemini-2.0-pro-exp".to_string() }
+fn default_ai_model() -> String { "gemini-2.0-flash".to_string() }
+
+// Один AI-результат (может быть несколько на одну запись)
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct AiResult {
+    pub preset: String,
+    pub preset_label: String,
+    pub text: String,
+    pub timestamp: String,
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct HistoryEntry {
     pub id: String,
     pub timestamp: String,
     pub duration_secs: u32,
-    pub preset: String,
-    pub preset_label: String,
-    pub transcript: String,
+    // Дословная транскрипция очищенная от слов-паразитов
+    pub raw_transcript: String,
+    // Список AI-результатов (preset1, preset2, ...)
+    pub ai_results: Vec<AiResult>,
     pub audio_path: String,
 }
 
@@ -333,9 +343,8 @@ async fn save_audio(
             id: id.clone(),
             timestamp,
             duration_secs,
-            preset: "cancelled".to_string(),
-            preset_label: "Отменено".to_string(),
-            transcript: "[Запись отменена пользователем]".to_string(),
+            raw_transcript: "[Запись отменена пользователем]".to_string(),
+            ai_results: vec![],
             audio_path: file_path.to_string_lossy().to_string(),
         };
         save_to_history_internal(&app_handle, entry.clone())?;
@@ -346,15 +355,18 @@ async fn save_audio(
     // Проверяем наличие API-ключа
     let config = load_config_internal(&app_handle)?;
     if config.api_key.trim().is_empty() {
-        // Нет API-ключа — сохраняем аудио в историю с пометкой
-        let error_msg = "[Ошибка: API-ключ Gemini не настроен. Укажите его в Настройках дашборда и переотправьте запись]";
+        let ts_clone = timestamp.clone();
         let entry = HistoryEntry {
             id: id.clone(),
             timestamp,
             duration_secs,
-            preset: "error".to_string(),
-            preset_label: "Ошибка API".to_string(),
-            transcript: error_msg.to_string(),
+            raw_transcript: "[Ошибка: API-ключ Gemini не настроен]".to_string(),
+            ai_results: vec![AiResult {
+                preset: "error".to_string(),
+                preset_label: "Ошибка API".to_string(),
+                text: "Укажите API-ключ в Настройках и переотправьте запись.".to_string(),
+                timestamp: ts_clone,
+            }],
             audio_path: file_path.to_string_lossy().to_string(),
         };
         save_to_history_internal(&app_handle, entry.clone())?;
@@ -364,92 +376,170 @@ async fn save_audio(
 
     let base64_audio = STANDARD.encode(&bytes);
 
-    let (prompt_text, preset_label) = if let Some(ref cp) = custom_prompt {
+    // Определяем пользовательский пресет
+    let (user_preset_prompt, preset_label_str) = if let Some(ref cp) = custom_prompt {
         if !cp.trim().is_empty() {
-            (cp.as_str(), "Свой промпт")
+            // Берём первые 60 символов промпта как заголовок
+            let short = if cp.len() > 60 { format!("{}...", &cp[..60]) } else { cp.clone() };
+            (cp.clone(), format!("Свой: {}", short))
         } else {
-            get_preset_prompt_and_label(&preset)
+            let (p, l) = get_preset_prompt_and_label(&preset);
+            (p.to_string(), l.to_string())
         }
     } else {
-        get_preset_prompt_and_label(&preset)
+        let (p, l) = get_preset_prompt_and_label(&preset);
+        (p.to_string(), l.to_string())
     };
 
-    let client = reqwest::Client::new();
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-        config.ai_model, config.api_key
+    // Единый JSON-промпт: транскрипция + AI-результат в одном запросе
+    let combined_prompt = format!(
+        r#"Ответь СТРОГО в формате JSON без markdown, без пояснений, без ```json, только чистый JSON:
+{{"transcript":"...","ai_result":"..."}}
+
+Правила:
+- "transcript": дословная транскрипция аудио, очищенная от слов-паразитов (ну, э-э, значит, как бы, короче, вот). Сохрани ВСЕ мысли и порядок изложения говорящего. Не сокращай.
+- "ai_result": {}
+
+В JSON-строках экранируй кавычки через \" и переносы строк через \n."#,
+        user_preset_prompt
     );
 
     let request_payload = serde_json::json!({
-        "contents": [
-            {
-                "parts": [
-                    {
-                        "inlineData": {
-                            "mimeType": "audio/webm",
-                            "data": base64_audio
-                        }
-                    },
-                    {
-                        "text": prompt_text
-                    }
-                ]
-            }
-        ]
+        "contents": [{
+            "parts": [
+                {"inlineData": {"mimeType": "audio/webm", "data": base64_audio}},
+                {"text": combined_prompt}
+            ]
+        }],
+        "generationConfig": {
+            "temperature": 0.2,
+            "responseMimeType": "application/json"
+        }
     });
 
-    // Выполняем запрос к Gemini и при любой ошибке всё равно сохраняем в историю
-    let gemini_result = async {
-        let res = client.post(&url)
-            .json(&request_payload)
-            .send()
-            .await
-            .map_err(|e| format!("Ошибка отправки запроса в Gemini: {}", e))?;
+    // Fallback цепочка моделей: основная → резерв 1 → резерв 2
+    let primary_model = if config.ai_model.is_empty() {
+        "gemini-2.0-flash".to_string()
+    } else {
+        config.ai_model.clone()
+    };
+    let fallback_models = vec![
+        primary_model.clone(),
+        "gemini-2.5-flash".to_string(),
+        "gemini-2.0-flash".to_string(),
+        "gemini-1.5-flash".to_string(),
+    ];
+    // Убираем дубли, сохраняем порядок
+    let mut seen = std::collections::HashSet::new();
+    let fallback_models: Vec<String> = fallback_models.into_iter()
+        .filter(|m| seen.insert(m.clone()))
+        .collect();
 
-        let status = res.status();
-        if !status.is_success() {
-            let err_text = res.text().await.unwrap_or_default();
-            return Err(format!("Gemini API вернул ошибку (код {}): {}", status, err_text));
+    let client = reqwest::Client::new();
+    let api_key = config.api_key.trim().to_string();
+
+    // Пробуем модели по очереди
+    let mut last_err = String::new();
+    let mut gemini_text: Option<String> = None;
+    for model in &fallback_models {
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            model, api_key
+        );
+        match client.post(&url).json(&request_payload).send().await {
+            Err(e) => { last_err = format!("Сетевая ошибка ({}): {}", model, e); continue; }
+            Ok(res) => {
+                let status = res.status();
+                if status.as_u16() == 429 || status.as_u16() == 503 {
+                    // Лимит исчерпан — пробуем следующую модель
+                    last_err = format!("Лимит исчерпан для {}", model);
+                    continue;
+                }
+                if !status.is_success() {
+                    let err_text = res.text().await.unwrap_or_default();
+                    last_err = format!("Ошибка {} ({}): {}", status, model, err_text);
+                    continue;
+                }
+                match res.json::<GeminiResponse>().await {
+                    Err(e) => { last_err = format!("Парсинг ответа ({}): {}", model, e); continue; }
+                    Ok(gr) => {
+                        if let Some(text) = gr.candidates
+                            .and_then(|c| c.into_iter().next())
+                            .and_then(|c| c.content)
+                            .and_then(|c| c.parts)
+                            .and_then(|p| p.into_iter().next())
+                            .and_then(|p| p.text)
+                        {
+                            gemini_text = Some(text);
+                            break;
+                        } else {
+                            last_err = format!("Пустой ответ от {}", model);
+                        }
+                    }
+                }
+            }
         }
+    }
 
-        let gemini_res: GeminiResponse = res.json()
-            .await
-            .map_err(|e| format!("Ошибка парсинга ответа Gemini: {}", e))?;
-
-        gemini_res.candidates
-            .and_then(|c| c.into_iter().next())
-            .and_then(|c| c.content)
-            .and_then(|c| c.parts)
-            .and_then(|p| p.into_iter().next())
-            .and_then(|p| p.text)
-            .ok_or_else(|| "Gemini вернул пустой ответ или не смог распознать аудио.".to_string())
-    }.await;
-
-    // В любом случае сохраняем запись в историю
-    let (final_preset, final_label, final_transcript) = match gemini_result {
-        Ok(text) => {
-            let lbl = if preset_label == "Свой промпт" { "custom".to_string() } else { preset.clone() };
-            (lbl, preset_label.to_string(), text)
-        },
-        Err(err_msg) => {
-            // Ошибка API — сохраняем с пометкой
+    // Парсим JSON-ответ от Gemini
+    let (raw_transcript, ai_result_text, is_error) = match gemini_text {
+        None => {
             (
-                "error".to_string(),
-                "Ошибка API".to_string(),
-                format!("[Ошибка Gemini API: {}]", err_msg),
+                format!("[Ошибка: все модели недоступны. {}]", last_err),
+                String::new(),
+                true,
             )
         }
+        Some(raw_json) => {
+            // Пытаемся распарсить JSON
+            match serde_json::from_str::<serde_json::Value>(&raw_json) {
+                Ok(v) => {
+                    let tr = v["transcript"].as_str().unwrap_or("").to_string();
+                    let ai = v["ai_result"].as_str().unwrap_or("").to_string();
+                    (tr, ai, false)
+                }
+                Err(_) => {
+                    // Gemini не вернул JSON — весь текст кладём как транскрипцию
+                    (raw_json, String::new(), false)
+                }
+            }
+        }
+    };
+
+    let preset_key = if custom_prompt.as_deref().map(|s| !s.is_empty()).unwrap_or(false) {
+        "custom".to_string()
+    } else {
+        preset.clone()
+    };
+
+    let ts = timestamp.clone(); // клон для ai_results
+    let ai_results = if is_error {
+        vec![AiResult {
+            preset: "error".to_string(),
+            preset_label: "Ошибка API".to_string(),
+            text: ai_result_text,
+            timestamp: ts,
+        }]
+    } else if !ai_result_text.is_empty() {
+        vec![AiResult {
+            preset: preset_key,
+            preset_label: preset_label_str.clone(),
+            text: ai_result_text,
+            timestamp: ts,
+        }]
+    } else {
+        vec![]
     };
 
     let entry = HistoryEntry {
         id: id.clone(),
         timestamp,
         duration_secs,
-        preset: final_preset,
-        preset_label: final_label,
-        transcript: final_transcript,
+        raw_transcript,
+        ai_results,
         audio_path: file_path.to_string_lossy().to_string(),
     };
+
 
     save_to_history_internal(&app_handle, entry.clone())?;
     let _ = app_handle.emit("history-updated", entry.clone());
