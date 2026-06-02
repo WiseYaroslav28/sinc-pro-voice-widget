@@ -885,10 +885,13 @@
           
           const isExpanded = expandedHistoryId === entry.id;
           const firstAi = entry.ai_results && entry.ai_results.length > 0 ? entry.ai_results[0] : null;
-          const textPreview = (firstAi ? firstAi.text : (entry.raw_transcript || '')).substring(0, 120);
-          const entryPresetLabel = firstAi ? firstAi.preset_label : (entry.raw_transcript ? 'Транскрипция' : 'Отменено');
-          const entryPreset = firstAi ? firstAi.preset : (entry.raw_transcript ? 'transcript' : 'cancelled');
+          // Обратная совместимость: старые записи используют transcript + preset + preset_label
+          const baseText = entry.raw_transcript || entry.transcript || '';
+          const textPreview = (firstAi ? firstAi.text : baseText).substring(0, 120);
+          const entryPresetLabel = firstAi ? firstAi.preset_label : (entry.preset_label || (baseText ? 'Запись' : 'Отменено'));
+          const entryPreset = firstAi ? firstAi.preset : (entry.preset || (baseText ? 'transcript' : 'cancelled'));
           const isError = entryPreset === 'error';
+
 
           return `
             <div class="rounded-xl border transition-all duration-200 overflow-hidden"
@@ -1014,12 +1017,20 @@
 
 
       // Утилита: получить текущий текст для активной карточки
+      // Поддерживает обе структуры: старую (transcript) и новую (raw_transcript + ai_results)
       function getDisplayText(entry, viewMode) {
         if (!entry) return '';
-        if (!viewMode || viewMode === 'transcript') return entry.raw_transcript || '';
+        // Определяем базовый текст: новый raw_transcript или старый transcript
+        const baseText = entry.raw_transcript || entry.transcript || '';
+        if (!viewMode || viewMode === 'transcript') return baseText;
+        if (viewMode === 'ai_0' && (!entry.ai_results || entry.ai_results.length === 0)) {
+          // Старая структура: transcript содержит уже AI-результат
+          return baseText;
+        }
         const idx = parseInt(viewMode.replace('ai_', ''));
         const ai = entry.ai_results && entry.ai_results[idx];
-        return ai ? ai.text : (entry.raw_transcript || '');
+        return ai ? ai.text : baseText;
+
       }
 
       let dashboardViewMode = localStorage.getItem('dashboardViewMode') || 'ai_0';

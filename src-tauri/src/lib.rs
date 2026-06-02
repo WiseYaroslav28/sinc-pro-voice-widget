@@ -173,9 +173,19 @@ pub struct HistoryEntry {
     pub id: String,
     pub timestamp: String,
     pub duration_secs: u32,
-    // Дословная транскрипция очищенная от слов-паразитов
+    // Новое поле: дословная транскрипция
+    #[serde(default)]
     pub raw_transcript: String,
-    // Список AI-результатов (preset1, preset2, ...)
+    // Обратная совместимость со старыми записями (transcript вместо raw_transcript)
+    #[serde(default)]
+    pub transcript: String,
+    // Пресет (для обратной совместимости)
+    #[serde(default)]
+    pub preset: String,
+    #[serde(default)]
+    pub preset_label: String,
+    // Список AI-результатов
+    #[serde(default)]
     pub ai_results: Vec<AiResult>,
     pub audio_path: String,
 }
@@ -208,7 +218,7 @@ fn load_config_internal(app_handle: &tauri::AppHandle) -> Result<AppConfig, Stri
             ui_lang: "ru".to_string(),
             dictation_lang: "auto".to_string(),
             api_key: "".to_string(),
-            ai_model: "gemini-2.0-pro-exp".to_string(),
+            ai_model: "gemini-2.0-flash".to_string(),
         });
     }
     let json_str = std::fs::read_to_string(config_path).map_err(|e| e.to_string())?;
@@ -344,6 +354,9 @@ async fn save_audio(
             timestamp,
             duration_secs,
             raw_transcript: "[Запись отменена пользователем]".to_string(),
+            transcript: String::new(),
+            preset: "cancelled".to_string(),
+            preset_label: "Отменено".to_string(),
             ai_results: vec![],
             audio_path: file_path.to_string_lossy().to_string(),
         };
@@ -361,6 +374,9 @@ async fn save_audio(
             timestamp,
             duration_secs,
             raw_transcript: "[Ошибка: API-ключ Gemini не настроен]".to_string(),
+            transcript: String::new(),
+            preset: "error".to_string(),
+            preset_label: "Ошибка API".to_string(),
             ai_results: vec![AiResult {
                 preset: "error".to_string(),
                 preset_label: "Ошибка API".to_string(),
@@ -536,6 +552,9 @@ async fn save_audio(
         timestamp,
         duration_secs,
         raw_transcript,
+        transcript: String::new(),
+        preset: String::new(),
+        preset_label: String::new(),
         ai_results,
         audio_path: file_path.to_string_lossy().to_string(),
     };
