@@ -321,9 +321,28 @@
 
     </div>
 
-    <!-- Toast Уведомление — позиционирован В ВЕРХНЕЙ части чтобы не перекрывать кнопки снизу -->
+    <!-- Toast Уведомление -->
     <div style="position: absolute; top: 4px; left: 50%; transform: translateX(-50%); width: 290px;" class="bg-[#1c1b23]/97 text-[#e4e1e9] text-[10.5px] px-3.5 py-2.5 rounded-xl shadow-2xl border border-[#8e52ff]/40 transition-all duration-300 opacity-0 pointer-events-none z-[500] text-center font-semibold leading-snug" id="capsule-toast">
       Уведомление
+    </div>
+
+    <!-- Result Popup — появляется когда авто-вставка не сработала -->
+    <div id="result-popup" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; align-items:center; justify-content:center;">
+      <div style="background:#1c1b23; border:1px solid #8e52ff55; border-radius:16px; padding:16px; width:320px; max-height:80vh; display:flex; flex-direction:column; gap:10px; box-shadow:0 8px 32px rgba(0,0,0,0.7);">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="color:#d2bbff; font-size:12px; font-weight:700; letter-spacing:0.05em;">✨ РЕЗУЛЬТАТ</span>
+          <button id="popup-close" style="background:none; border:none; color:#ccc3d8; cursor:pointer; font-size:16px; padding:2px 6px; border-radius:6px;" onmouseover="this.style.background='#35343a'" onmouseout="this.style.background='none'">✕</button>
+        </div>
+        <textarea id="popup-text" style="flex:1; min-height:120px; max-height:300px; background:#111118; color:#e4e1e9; border:1px solid #4a4455; border-radius:10px; padding:10px; font-size:12px; line-height:1.6; resize:vertical; font-family:inherit; outline:none;"></textarea>
+        <div style="display:flex; gap:8px;">
+          <button id="popup-insert" style="flex:1; background:#8e52ff; color:white; border:none; border-radius:10px; padding:8px; font-size:11px; font-weight:700; cursor:pointer; transition:background 0.2s;" onmouseover="this.style.background='#a377ff'" onmouseout="this.style.background='#8e52ff'">
+            ⌨️ Вставить в курсор
+          </button>
+          <button id="popup-copy" style="background:#2a292f; color:#ccc3d8; border:1px solid #4a4455; border-radius:10px; padding:8px 14px; font-size:11px; font-weight:600; cursor:pointer; transition:background 0.2s;" onmouseover="this.style.background='#35343a'" onmouseout="this.style.background='#2a292f'">
+            📋 Копировать
+          </button>
+        </div>
+      </div>
     </div>
 
     <script>
@@ -684,8 +703,46 @@
       });
 
       // ======================================================================
-      // НАВЕДЕНИЕ МЫШИ — только CSS, никаких ресайзов
+      // RESULT POPUP
       // ======================================================================
+      function showResultPopup(text) {
+        const popup = document.getElementById('result-popup');
+        const textArea = document.getElementById('popup-text');
+        if (!popup || !textArea) return;
+        textArea.value = text;
+        popup.style.display = 'flex';
+
+        document.getElementById('popup-close').onclick = () => {
+          popup.style.display = 'none';
+        };
+
+        document.getElementById('popup-insert').onclick = async () => {
+          const t = textArea.value;
+          try {
+            if (invoke) await invoke('paste_text', { text: t });
+            showToast('Текст вставлен!', false);
+          } catch (e) {
+            showToast('Не удалось вставить. Скопируйте вручную.', true);
+          }
+          popup.style.display = 'none';
+        };
+
+        document.getElementById('popup-copy').onclick = async () => {
+          try {
+            await navigator.clipboard.writeText(textArea.value);
+            showToast('Скопировано!', false);
+          } catch (e) {
+            showToast('Ошибка копирования', true);
+          }
+          popup.style.display = 'none';
+        };
+
+        // Закрыть по клику на фон
+        popup.onclick = (e) => {
+          if (e.target === popup) popup.style.display = 'none';
+        };
+      }
+
 
       let collapseTimer = null;
 
@@ -929,12 +986,30 @@
               preset: currentPreset,
               customPrompt: promptToSend.trim().length > 0 ? promptToSend : null
             });
-            // Показываем статус в зависимости от результата
-            if (entry.preset === 'error') {
-              showToast(`Ошибка Gemini: ${entry.transcript.substring(0, 80)}`, true);
+
+            // Извлекаем текст результата (поддерживаем обе структуры)
+            const firstAi = entry.ai_results && entry.ai_results.length > 0 ? entry.ai_results[0] : null;
+            const resultText = firstAi ? firstAi.text : (entry.raw_transcript || entry.transcript || '');
+            const isError = (entry.preset === 'error') || (firstAi && firstAi.preset === 'error');
+
+            if (isError) {
+              showToast(`Ошибка: ${resultText.substring(0, 80)}`, true);
             } else {
-              await invoke('paste_text', { text: entry.transcript });
-              showToast('Готово! Текст вставлен в активное поле.', false);
+              // Пробуем авто-вставить в предыдущий фокус
+              let pasted = false;
+              try {
+                await invoke('paste_text', { text: resultText });
+                pasted = true;
+              } catch (e) {
+                console.warn('Авто-вставка не удалась:', e);
+              }
+
+              if (pasted) {
+                showToast('Готово! Текст вставлен.', false);
+              } else {
+                // Показываем popup для ручного копирования/редактирования
+                showResultPopup(resultText);
+              }
             }
           }
         } catch (err) {
