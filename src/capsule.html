@@ -391,6 +391,10 @@
       let cachedScaleFactor = 1;
       let maybeDragging = false;
 
+      // Режим Магнит: прижиматься к нижней части монитора с курсором
+      const magnetSaved = localStorage.getItem('capsuleMagnet');
+      let isMagnetEnabled = magnetSaved === null ? true : magnetSaved === 'true';
+
       // Размеры окна по состоянию (логические пиксели)
       const WIN_WIDTH      = 320;
       const WIN_HEIGHT_IDLE   = 52;   // только пилюля
@@ -403,7 +407,6 @@
         if (!invoke || !lastBottomCenterX_phys || !lastBottomY_phys) return;
 
         // Если растём из idle — читаем актуальную позицию окна
-        // чтобы компенсировать любой drift после перетаскивания
         if (currentState === 'idle' && appWindow) {
           try {
             const size = await appWindow.innerSize();
@@ -418,6 +421,21 @@
                 : WIN_HEIGHT_ACTIVE;
         const w_phys  = Math.round(WIN_WIDTH * cachedScaleFactor);
         const h_phys  = Math.round(h * cachedScaleFactor);
+
+        // Режим Магнит выключен: позиционирование только по ширине (X), по Y не меняем
+        if (!isMagnetEnabled) {
+          // Просто меняем размер, центрируем по X, Y остаётся
+          try {
+            const pos = await appWindow.outerPosition();
+            const x_phys = Math.round(pos.x + (pos.width || w_phys) / 2 - w_phys / 2);
+            await invoke('resize_capsule', { width: w_phys, height: h_phys, x: Math.max(0, x_phys), y: pos.y });
+          } catch (_) {
+            await invoke('resize_capsule', { width: w_phys, height: h_phys, x: Math.round(lastBottomCenterX_phys - w_phys / 2), y: Math.round(lastBottomY_phys - h_phys) });
+          }
+          return;
+        }
+
+        // Режим Магнит включён: прижимаемся к нижней части активного монитора
 
         // Клэмпинг по горизонтали
         const screenWidth_phys = Math.round(screen.width * cachedScaleFactor);
@@ -1213,6 +1231,12 @@
           } else if (currentState === 'pause') {
             if (pausePresetsFan) pausePresetsFan.classList.add('hidden');
           }
+        });
+
+        // Настройка Магнита — переключение из дашборда
+        window.__TAURI__.event.listen('capsule-magnet-changed', (event) => {
+          isMagnetEnabled = !!event.payload;
+          localStorage.setItem('capsuleMagnet', isMagnetEnabled);
         });
       }
     </script>
