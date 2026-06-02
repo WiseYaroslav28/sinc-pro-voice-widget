@@ -47,7 +47,9 @@
             <span class="material-symbols-outlined text-[20px]">history</span>
             <span class="text-[12px] sidebar-item-text">История записей</span>
           </button>
-          <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left mt-auto" style="background-color: transparent; border: none; cursor: pointer;" data-tab="tab-settings">
+          <!-- Настройки — пиннем к низу -->
+          <div class="flex-1"></div>
+          <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="background-color: transparent; border: none; cursor: pointer;" data-tab="tab-settings">
             <span class="material-symbols-outlined text-[20px]">settings</span>
             <span class="text-[12px] sidebar-item-text">Настройки</span>
           </button>
@@ -421,19 +423,10 @@
         }
       });
 
-      // Спойлер стенограммы
-      const spoilerToggle = document.getElementById('spoiler-toggle');
+      // Спойлер стенограммы — элемент больше не используется (заменён Combo Box)
+      // Оставляем пустые переменные для обратной совместимости
       const spoilerContent = document.getElementById('spoiler-content');
-      const spoilerIcon = document.getElementById('spoiler-icon');
-
-      spoilerToggle.addEventListener('click', () => {
-        spoilerContent.classList.toggle('hidden');
-        if (spoilerContent.classList.contains('hidden')) {
-          spoilerIcon.textContent = 'expand_more';
-        } else {
-          spoilerIcon.textContent = 'expand_less';
-        }
-      });
+      const spoilerToggle = null; // удалён, не падаем с ошибкой
 
       // Тестовый «танец окна» по клику на логотип
       const logo = document.querySelector('.sidebar-logo');
@@ -1214,7 +1207,104 @@
         setupAudioPlayer();
         await loadConfig();
         await refreshHistory();
+        // Запускаем self-test через 500мс после загрузки
+        setTimeout(runSelfTest, 500);
       });
+
+      // ==========================================================================
+      // ВСТРОЕННЫЙ SELF-TEST
+      // ==========================================================================
+      function runSelfTest() {
+        const results = [];
+        const PASS = '✅';
+        const FAIL = '❌';
+
+        function check(name, fn) {
+          try {
+            const ok = fn();
+            results.push({ name, ok: !!ok, error: null });
+          } catch (e) {
+            results.push({ name, ok: false, error: e.message });
+          }
+        }
+
+        // --- DOM элементы ---
+        const REQUIRED_IDS = [
+          'tab-home', 'tab-history', 'tab-ocr', 'tab-settings',
+          'history-list', 'setting-api-key', 'setting-ai-model',
+          'dashboard-view-combo', 'summary-text', 'activity-time',
+          'win-minimize', 'win-maximize', 'win-close',
+          'sidebar-toggle', 'player-play', 'player-progress',
+          'api-status-text', 'api-status-dot',
+        ];
+        REQUIRED_IDS.forEach(id => {
+          check(`DOM: #${id} существует`, () => !!document.getElementById(id));
+        });
+
+        // --- Навигация ---
+        const navTabs = ['tab-home', 'tab-ocr', 'tab-history', 'tab-settings'];
+        navTabs.forEach(tabId => {
+          check(`NAV: sidebar-item[data-tab="${tabId}"] кликабелен`, () => {
+            const btn = document.querySelector(`.sidebar-item[data-tab="${tabId}"]`);
+            return btn && btn.tagName === 'BUTTON';
+          });
+        });
+
+        check('NAV: switchTab переключает вкладку', () => {
+          switchTab('tab-history');
+          const historyTab = document.getElementById('tab-history');
+          const visible = historyTab && historyTab.style.display !== 'none';
+          switchTab('tab-home'); // возвращаем назад
+          return visible;
+        });
+
+        // --- Sidebar toggle ---
+        check('UI: sidebar-toggle существует и кликабелен', () => {
+          const btn = document.getElementById('sidebar-toggle');
+          return btn && typeof btn.click === 'function';
+        });
+
+        // --- Combo Box ---
+        check('UI: dashboard-view-combo имеет опции', () => {
+          const combo = document.getElementById('dashboard-view-combo');
+          return combo && combo.options.length >= 1;
+        });
+
+        // --- API статус ---
+        check('API: api-status-text не пустой', () => {
+          const el = document.getElementById('api-status-text');
+          return el && el.textContent.trim().length > 0;
+        });
+
+        // --- History list ---
+        check('DATA: history-list существует', () => {
+          return !!document.getElementById('history-list');
+        });
+
+        // --- Вывод результатов ---
+        const passed = results.filter(r => r.ok).length;
+        const failed = results.filter(r => !r.ok).length;
+        const total = results.length;
+
+        console.group(`%c🧪 SINC PRO Self-Test: ${passed}/${total} passed`, 
+          `color: ${failed === 0 ? '#7bd6d1' : '#ffb4ab'}; font-weight: bold; font-size: 14px;`);
+        results.forEach(r => {
+          if (r.ok) {
+            console.log(`%c${PASS} ${r.name}`, 'color: #7bd6d1');
+          } else {
+            console.warn(`%c${FAIL} ${r.name}${r.error ? ': ' + r.error : ''}`, 'color: #ffb4ab; font-weight: bold');
+          }
+        });
+        if (failed === 0) {
+          console.log('%c✨ Все проверки пройдены!', 'color: #d2bbff; font-weight: bold');
+        } else {
+          console.error(`%c⚠️ ${failed} проверок провалено — нужна доработка`, 'color: #ff6b6b; font-weight: bold');
+        }
+        console.groupEnd();
+
+        // Сохраняем результат глобально для Playwright
+        window.__SINC_TEST_RESULTS__ = { passed, failed, total, results };
+      }
 
       // ==========================================================================
       // ТАУРИ ВЗАИМОДЕЙСТВИЕ И СОБЫТИЯ
