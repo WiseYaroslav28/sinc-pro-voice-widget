@@ -297,11 +297,19 @@
                   <input type="password" id="setting-api-key" placeholder="Введите ваш API ключ от Google AI Studio" class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#d2bbff]" />
                 </div>
                 <div class="flex flex-col gap-2">
-                  <label class="text-[11px] text-[#ccc3d8]">Модель ИИ</label>
+                  <div class="flex items-center justify-between">
+                    <label class="text-[11px] text-[#ccc3d8]">Модель ИИ</label>
+                    <span class="text-[10px] text-[#ccc3d8] hidden" id="models-loading-badge">
+                      <span class="inline-block w-2 h-2 rounded-full bg-[#d2bbff] animate-pulse mr-1"></span>Загрузка...
+                    </span>
+                    <button class="text-[10px] text-[#d2bbff] hover:text-white transition-colors hidden" id="btn-refresh-models" title="Обновить список моделей">
+                      <span class="material-symbols-outlined text-[14px]">refresh</span>
+                    </button>
+                  </div>
                   <select class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#d2bbff]" id="setting-ai-model">
-                    <option value="gemini-2.0-pro-exp">Gemini 2.0 Pro Experimental (Рекомендуется)</option>
-                    <option value="gemini-2.0-flash">Gemini 2.0 Flash (Высокая скорость)</option>
+                    <option value="">— Введите API ключ для загрузки моделей —</option>
                   </select>
+                  <div class="hidden text-[11px] text-[#ccc3d8] bg-[#1b1b20] rounded-lg p-2 border border-[#4a4455]/20" id="model-info-box"></div>
                 </div>
               </div>
             </div>
@@ -504,19 +512,20 @@
         if (invoke) {
           try {
             const config = await invoke('load_config');
-            document.getElementById('setting-ui-lang').value = config.ui_lang;
-            document.getElementById('setting-dictation-lang').value = config.dictation_lang;
-            document.getElementById('setting-api-key').value = config.api_key;
-            document.getElementById('setting-ai-model').value = config.ai_model;
-            
+            document.getElementById('setting-ui-lang').value = config.ui_lang || 'ru';
+            document.getElementById('setting-dictation-lang').value = config.dictation_lang || 'auto';
+            document.getElementById('setting-api-key').value = config.api_key || '';
+            // Сначала грузим модели, потом восстанавливаем выбор
+            await fetchAndPopulateModels(config.api_key, config.ai_model);
             updateApiStatus(config.api_key);
           } catch (err) {
-            console.error("Ошибка загрузки настроек:", err);
+            console.error('Ошибка загрузки настроек:', err);
           }
         } else {
-          // Mock данные
-          document.getElementById('setting-api-key').value = "AIzaSyMockKeyForTestingGeminiAPI";
-          updateApiStatus("AIzaSyMockKeyForTestingGeminiAPI");
+          // Dev/mock режим — пробуем реальный ключ если есть
+          const mockKey = '';
+          document.getElementById('setting-api-key').value = mockKey;
+          updateApiStatus(mockKey);
         }
       }
 
@@ -541,25 +550,160 @@
       function updateApiStatus(apiKey) {
         const statusText = document.getElementById('api-status-text');
         const statusDot = document.getElementById('api-status-dot');
-        
         if (statusText && statusDot) {
           if (apiKey && apiKey.trim().length > 0) {
-            statusText.textContent = "Подключено";
-            statusText.className = "text-[10px] text-[#7bd6d1] font-semibold";
-            statusDot.className = "w-1.5 h-1.5 rounded-full bg-[#7bd6d1] shadow-[0_0_6px_rgba(123,214,209,0.6)]";
+            statusText.textContent = 'Подключено';
+            statusText.className = 'text-[10px] text-[#7bd6d1] font-semibold';
+            statusDot.className = 'w-2 h-2 rounded-full bg-[#7bd6d1]';
+            statusDot.style.boxShadow = '0 0 6px rgba(123,214,209,0.6)';
           } else {
-            statusText.textContent = "Отключено";
-            statusText.className = "text-[10px] text-[#ffb4ab] font-semibold";
-            statusDot.className = "w-1.5 h-1.5 rounded-full bg-[#ffb4ab] shadow-[0_0_6px_rgba(255,180,171,0.6)]";
+            statusText.textContent = 'Нет ключа';
+            statusText.className = 'text-[10px] text-[#ffb4ab] font-semibold';
+            statusDot.className = 'w-2 h-2 rounded-full bg-[#ffb4ab]';
+            statusDot.style.boxShadow = '0 0 6px rgba(255,180,171,0.6)';
           }
+        }
+      }
+
+      // Известные лимиты Free Tier (обновляется из документации)
+      const MODEL_LIMITS_KNOWN = {
+        'gemini-2.5-pro':         { rpm: 5,   rpd: 25,   tpm: 1000000, note: 'Самая мощная, лимиты Free Tier' },
+        'gemini-2.5-flash':       { rpm: 10,  rpd: 500,  tpm: 1000000, note: 'Баланс скорость/качество ✓' },
+        'gemini-2.5-flash-lite':  { rpm: 30,  rpd: 1500, tpm: 1000000, note: 'Макс. скорость, Free Tier' },
+        'gemini-2.0-flash':       { rpm: 15,  rpd: 1500, tpm: 1000000, note: 'Стабильная, рекомендуется' },
+        'gemini-2.0-flash-lite':  { rpm: 30,  rpd: 1500, tpm: 1000000, note: 'Быстрая и экономная' },
+        'gemini-1.5-flash':       { rpm: 15,  rpd: 1500, tpm: 1000000, note: 'Проверенная модель' },
+        'gemini-1.5-pro':         { rpm: 2,   rpd: 50,   tpm: 32000,   note: 'Сложные задачи, малый лимит' },
+      };
+
+      async function fetchAndPopulateModels(apiKey, savedModel) {
+        if (!apiKey || apiKey.trim().length < 10) return;
+
+        const select = document.getElementById('setting-ai-model');
+        const loadingBadge = document.getElementById('models-loading-badge');
+        const refreshBtn = document.getElementById('btn-refresh-models');
+        const infoBox = document.getElementById('model-info-box');
+
+        // Показываем индикатор загрузки
+        loadingBadge.classList.remove('hidden');
+        refreshBtn.classList.add('hidden');
+        select.disabled = true;
+
+        try {
+          const resp = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.trim()}&pageSize=100`
+          );
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data = await resp.json();
+
+          // Фильтруем только generateContent модели
+          const models = (data.models || []).filter(m =>
+            m.supportedGenerationMethods?.includes('generateContent') &&
+            !m.name.includes('embedding') &&
+            !m.name.includes('aqa')
+          );
+
+          // Сортируем: сначала новее
+          models.sort((a, b) => b.name.localeCompare(a.name));
+
+          select.innerHTML = '';
+          models.forEach(m => {
+            const id = m.name.replace('models/', '');
+            const display = m.displayName || id;
+            const limits = MODEL_LIMITS_KNOWN[id];
+            let label = display;
+            if (limits) label += ` — ${limits.rpd} зап/день, ${limits.rpm} RPM`;
+            const opt = document.createElement('option');
+            opt.value = id;
+            opt.textContent = label;
+            select.appendChild(opt);
+          });
+
+          // Восстанавливаем сохранённую модель
+          if (savedModel && select.querySelector(`option[value="${savedModel}"]`)) {
+            select.value = savedModel;
+          } else if (select.options.length > 0) {
+            // Автовыбор: предпочитаем gemini-2.0-flash
+            const preferred = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+            for (const p of preferred) {
+              if (select.querySelector(`option[value="${p}"]`)) { select.value = p; break; }
+            }
+          }
+
+          // Обновляем инфо-блок под селектором
+          updateModelInfo(select.value);
+          loadingBadge.classList.add('hidden');
+          refreshBtn.classList.remove('hidden');
+
+          // Статус API → Активен
+          const statusText = document.getElementById('api-status-text');
+          const statusDot = document.getElementById('api-status-dot');
+          if (statusText) {
+            statusText.textContent = 'Активен';
+            statusText.className = 'text-[10px] text-[#7bd6d1] font-semibold';
+            statusDot.className = 'w-2 h-2 rounded-full bg-[#7bd6d1]';
+            statusDot.style.boxShadow = '0 0 6px rgba(123,214,209,0.6)';
+          }
+
+        } catch (err) {
+          select.innerHTML = '<option value="gemini-2.0-flash">gemini-2.0-flash (офлайн-фолбек)</option>';
+          loadingBadge.classList.add('hidden');
+          refreshBtn.classList.remove('hidden');
+          const statusText = document.getElementById('api-status-text');
+          if (statusText) {
+            statusText.textContent = 'Ошибка ключа';
+            statusText.className = 'text-[10px] text-[#ffb4ab] font-semibold';
+          }
+          console.error('[Models] Ошибка загрузки моделей:', err);
+        } finally {
+          select.disabled = false;
+        }
+      }
+
+      function updateModelInfo(modelId) {
+        const infoBox = document.getElementById('model-info-box');
+        if (!infoBox) return;
+        const limits = MODEL_LIMITS_KNOWN[modelId];
+        if (limits) {
+          infoBox.innerHTML = `
+            <div class="flex flex-wrap gap-2">
+              <span class="bg-[#2a292f] px-2 py-0.5 rounded text-[10px] border border-[#4a4455]/30">
+                <span class="text-[#d2bbff] font-semibold">${limits.rpm}</span> запросов/мин
+              </span>
+              <span class="bg-[#2a292f] px-2 py-0.5 rounded text-[10px] border border-[#4a4455]/30">
+                <span class="text-[#d2bbff] font-semibold">${limits.rpd}</span> запросов/день
+              </span>
+              <span class="bg-[#2a292f] px-2 py-0.5 rounded text-[10px] border border-[#4a4455]/30">
+                <span class="text-[#7bd6d1] font-semibold">${(limits.tpm/1000).toFixed(0)}K</span> токенов/мин
+              </span>
+            </div>
+            <p class="text-[10px] text-[#ccc3d8] mt-1">${limits.note}</p>
+          `;
+          infoBox.classList.remove('hidden');
+        } else {
+          infoBox.classList.add('hidden');
         }
       }
 
       // Привязываем автосохранение настроек
       document.getElementById('setting-ui-lang').addEventListener('change', saveConfig);
       document.getElementById('setting-dictation-lang').addEventListener('change', saveConfig);
-      document.getElementById('setting-api-key').addEventListener('input', debounce(saveConfig, 1000));
-      document.getElementById('setting-ai-model').addEventListener('change', saveConfig);
+      document.getElementById('setting-api-key').addEventListener('input', debounce(async () => {
+        const key = document.getElementById('setting-api-key').value;
+        const currentModel = document.getElementById('setting-ai-model').value;
+        await fetchAndPopulateModels(key, currentModel);
+        saveConfig();
+      }, 1200));
+      document.getElementById('setting-ai-model').addEventListener('change', () => {
+        updateModelInfo(document.getElementById('setting-ai-model').value);
+        saveConfig();
+      });
+      // Кнопка ручного обновления списка моделей
+      document.getElementById('btn-refresh-models').addEventListener('click', () => {
+        const key = document.getElementById('setting-api-key').value;
+        const currentModel = document.getElementById('setting-ai-model').value;
+        fetchAndPopulateModels(key, currentModel);
+      });
 
       function debounce(func, wait) {
         let timeout;
