@@ -379,7 +379,7 @@
         }
         const targetTab = document.getElementById(tabId);
         if (targetTab) {
-          targetTab.style.display = 'block';
+          targetTab.style.display = 'flex';
         }
       }
 
@@ -942,8 +942,11 @@
                       <div class="h-full rounded-full transition-all" style="width: 0%; background: ${getPresetColor(entryPreset)};" id="hprogress-${entry.id}"></div>
                     </div>
                     <span class="text-[10px] text-[#888] font-mono w-12 text-right" id="htime-${entry.id}">0:00</span>
-                    <button class="p-1 rounded text-[#ccc3d8] hover:text-[#d2bbff]" onclick="copyHistoryText('${entry.id}')">
+                    <button class="p-1 rounded text-[#ccc3d8] hover:text-[#d2bbff]" onclick="copyHistoryText('${entry.id}')" title="Копировать">
                       <span class="material-symbols-outlined text-[14px]">content_copy</span>
+                    </button>
+                    <button class="p-1 rounded text-[#ccc3d8] hover:text-[#7bd6d1]" onclick="editHistoryCard('${entry.id}')" title="Редактировать" id="hbtn-edit-${entry.id}">
+                      <span class="material-symbols-outlined text-[14px]">edit</span>
                     </button>
                   </div>
                 </div>
@@ -963,6 +966,82 @@
         const val = sel.value;
         lastViewMode[entryId] = val;
         textEl.textContent = getDisplayText(entry, val) || '—';
+      }
+
+      function editHistoryCard(entryId) {
+        const textEl = document.getElementById(`hcard-text-${entryId}`);
+        const editBtn = document.getElementById(`hbtn-edit-${entryId}`);
+        if (!textEl || textEl.tagName === 'TEXTAREA') return; // уже в режиме редактирования
+
+        const originalText = textEl.textContent.trim();
+
+        // Заменяем div на textarea
+        const ta = document.createElement('textarea');
+        ta.value = originalText;
+        ta.id = `hcard-text-${entryId}`;
+        ta.className = 'bg-[#0e0e13] rounded-lg p-3 mb-2 text-[13px] leading-[1.7] text-[#e4e1e9] w-full resize-none border border-[#7bd6d1]/40 focus:outline-none focus:border-[#7bd6d1]';
+        ta.rows = 6;
+        ta.style.cssText = 'font-family: inherit; max-height: 224px; overflow-y: auto;';
+        textEl.replaceWith(ta);
+        ta.focus();
+
+        // Добавляем кнопки Сохранить / Отмена
+        const btnRow = document.createElement('div');
+        btnRow.id = `hcard-edit-btns-${entryId}`;
+        btnRow.className = 'flex gap-2 mb-2';
+        btnRow.innerHTML = `
+          <button onclick="saveHistoryEdit('${entryId}')"
+                  class="flex-1 bg-[#7bd6d1]/20 border border-[#7bd6d1]/40 text-[#7bd6d1] rounded-lg px-3 py-1.5 text-[11px] font-semibold hover:bg-[#7bd6d1]/30 transition-all">
+            ✓ Сохранить
+          </button>
+          <button onclick="cancelHistoryEdit('${entryId}', ${JSON.stringify(originalText)})"
+                  class="bg-[#2a292f] border border-[#4a4455]/40 text-[#ccc3d8] rounded-lg px-3 py-1.5 text-[11px] font-semibold hover:bg-[#35343a] transition-all">
+            Отмена
+          </button>
+        `;
+        ta.after(btnRow);
+
+        if (editBtn) editBtn.querySelector('span').textContent = 'edit_off';
+      }
+
+      function saveHistoryEdit(entryId) {
+        const ta = document.getElementById(`hcard-text-${entryId}`);
+        if (!ta) return;
+        const newText = ta.value.trim();
+
+        // Обновляем данные в памяти
+        const entry = currentHistory.find(e => e.id === entryId);
+        if (entry) {
+          const sel = document.getElementById(`hcard-view-${entryId}`);
+          const viewVal = sel ? sel.value : 'transcript';
+          if (viewVal === 'transcript') {
+            if (entry.raw_transcript !== undefined) entry.raw_transcript = newText;
+            else entry.transcript = newText;
+          } else if (viewVal.startsWith('ai_')) {
+            const idx = parseInt(viewVal.replace('ai_', ''));
+            if (entry.ai_results && entry.ai_results[idx]) {
+              entry.ai_results[idx].text = newText;
+            }
+          }
+        }
+
+        cancelHistoryEdit(entryId, newText); // восстанавливаем div с новым текстом
+      }
+
+      function cancelHistoryEdit(entryId, text) {
+        const ta = document.getElementById(`hcard-text-${entryId}`);
+        const btnRow = document.getElementById(`hcard-edit-btns-${entryId}`);
+        const editBtn = document.getElementById(`hbtn-edit-${entryId}`);
+        if (!ta) return;
+
+        const div = document.createElement('div');
+        div.id = `hcard-text-${entryId}`;
+        div.className = 'bg-[#0e0e13] rounded-lg p-3 mb-2 text-[13px] leading-[1.7] text-[#ccc3d8] max-h-56 overflow-y-auto';
+        div.style.userSelect = 'text';
+        div.textContent = text;
+        ta.replaceWith(div);
+        if (btnRow) btnRow.remove();
+        if (editBtn) editBtn.querySelector('span').textContent = 'edit';
       }
 
       function toggleHistoryCard(id) {
@@ -1217,6 +1296,24 @@
         });
       }
 
+      // Тоггл: Виджет
+      const toggleWidget = document.getElementById('toggle-widget');
+      if (toggleWidget) {
+        toggleWidget.addEventListener('change', async () => {
+          if (!invoke) return;
+          try {
+            if (toggleWidget.checked) {
+              await invoke('show_widget_window').catch(() => {});
+            } else {
+              await invoke('hide_widget_window').catch(() => {});
+            }
+          } catch (err) {
+            console.error('Ошибка управления виджетом:', err);
+          }
+        });
+      }
+
+
       // Функция показа тостов (уведомлений)
       function showToast(message, isError = false) {
         const toast = document.getElementById('dashboard-toast');
@@ -1398,18 +1495,7 @@
           });
         }
 
-        if (toggleWidget) {
-          toggleWidget.addEventListener('change', async (e) => {
-            const win = WebviewWindow.getByLabel('widget');
-            if (win) {
-              if (e.target.checked) {
-                await win.show();
-              } else {
-                await win.hide();
-              }
-            }
-          });
-        }
+        // Тогглы окон (Tauri-блок) — слушаем только обратные события видимости
 
         // Слушаем события
         window.__TAURI__.event.listen('open-settings', () => {

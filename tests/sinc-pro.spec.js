@@ -84,7 +84,7 @@ test.describe('Навигация', () => {
     await page.locator('.sidebar-item[data-tab="tab-history"]').click();
     await page.waitForFunction(() => {
       const el = document.getElementById('tab-history');
-      return el && el.style.display === 'block';
+      return el && el.style.display !== 'none' && el.style.display !== '';
     }, { timeout: 5000 });
   });
 
@@ -93,7 +93,7 @@ test.describe('Навигация', () => {
     await page.locator('.sidebar-item[data-tab="tab-settings"]').click();
     await page.waitForFunction(() => {
       const el = document.getElementById('tab-settings');
-      return el && el.style.display === 'block';
+      return el && el.style.display !== 'none' && el.style.display !== '';
     }, { timeout: 5000 });
   });
 
@@ -102,12 +102,12 @@ test.describe('Навигация', () => {
     await page.locator('.sidebar-item[data-tab="tab-history"]').click();
     await page.waitForFunction(() => {
       const el = document.getElementById('tab-history');
-      return el && el.style.display === 'block';
+      return el && el.style.display !== 'none' && el.style.display !== '';
     }, { timeout: 3000 });
     await page.locator('.sidebar-item[data-tab="tab-home"]').click();
     await page.waitForFunction(() => {
       const el = document.getElementById('tab-home');
-      return el && el.style.display === 'block';
+      return el && el.style.display !== 'none' && el.style.display !== '';
     }, { timeout: 5000 });
   });
 

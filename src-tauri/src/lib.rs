@@ -158,6 +158,21 @@ async fn hide_capsule_window(app_handle: tauri::AppHandle) -> Result<(), String>
     Ok(())
 }
 
+#[tauri::command]
+async fn show_widget_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+    if let Some(w) = app_handle.get_webview_window("widget") {
+        w.show().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn hide_widget_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+    if let Some(w) = app_handle.get_webview_window("widget") {
+        w.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AppConfig {
@@ -885,6 +900,8 @@ pub fn run() {
             set_capsule_active,
             show_capsule_window,
             hide_capsule_window,
+            show_widget_window,
+            hide_widget_window,
             resize_bottom_up_phys
         ])
         .run(tauri::generate_context!())
