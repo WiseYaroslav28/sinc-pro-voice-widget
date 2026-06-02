@@ -402,46 +402,59 @@
       const WIN_HEIGHT_ACTIVE = 200;  // запись / пауза / отмена
       const WIN_HEIGHT = WIN_HEIGHT_ACTIVE; // для инициализации
 
-      // Динамическое изменение высоты окна под состояние
+      // Динамическое изменение высоты окна под состояние (DRY: одна функция для обоих режимов)
       async function resizeToState(state) {
-        if (!invoke || !lastBottomCenterX_phys || !lastBottomY_phys) return;
-
-        // Если растём из idle — читаем актуальную позицию окна
-        if (currentState === 'idle' && appWindow) {
-          try {
-            const size = await appWindow.innerSize();
-            const pos  = await appWindow.outerPosition();
-            lastBottomCenterX_phys = pos.x + size.width / 2;
-            lastBottomY_phys       = pos.y + size.height;
-          } catch (_) {}
-        }
+        if (!invoke) return;
 
         const h = state === 'idle' ? WIN_HEIGHT_IDLE
                 : state === 'hover' ? WIN_HEIGHT_HOVER
                 : WIN_HEIGHT_ACTIVE;
-        const w_phys  = Math.round(WIN_WIDTH * cachedScaleFactor);
-        const h_phys  = Math.round(h * cachedScaleFactor);
+        const w_phys = Math.round(WIN_WIDTH * cachedScaleFactor);
+        const h_phys = Math.round(h * cachedScaleFactor);
 
-        // Режим Магнит выключен: меняем размер окна, центрируем по X, Y остаётся
-        if (!isMagnetEnabled) {
+        let anchorX_phys, anchorY_phys;  // центр X и нижний Y — единственное что меняется
+
+        if (isMagnetEnabled) {
+          // Магнит ON: якорь = центр низа монитора ГДЕ КУРСОР (через Win32)
           try {
-            const curPos  = await appWindow.outerPosition();
-            const curSize = await appWindow.innerSize();
-            // Центрируем по текущей центра X и сохраняем Y (нижний край окна)
-            const centerX = curPos.x + curSize.width / 2;
-            const newX    = Math.max(0, Math.round(centerX - w_phys / 2));
-            const newY    = curPos.y + curSize.height - h_phys;
-            await invoke('resize_capsule', { width: w_phys, height: h_phys, x: newX, y: Math.max(0, newY) });
-          } catch (_) {}
-          return;
+            const mon = await invoke('get_cursor_monitor');
+            // Координаты mon — физические пиксели первичного монитора (без DPI scale)
+            // rc_work уже в физических пикселях (SetWindowPos работает в физических)
+            anchorX_phys = mon.work_left + Math.round((mon.work_right  - mon.work_left) / 2);
+            anchorY_phys = mon.work_bottom - Math.round(6);  // 6px над taskbar
+          } catch (e) {
+            // Fallback: текущий экран по screen.availWidth
+            anchorX_phys = Math.round(screen.availWidth  * cachedScaleFactor / 2);
+            anchorY_phys = Math.round(screen.availHeight * cachedScaleFactor) - 6;
+          }
+        } else {
+          // Магнит OFF: якорь = нижний центр текущей позиции окна
+          if (!lastBottomCenterX_phys || !lastBottomY_phys) {
+            // Первый запуск: читаем реальную позицию окна
+            if (appWindow) {
+              try {
+                const size = await appWindow.innerSize();
+                const pos  = await appWindow.outerPosition();
+                lastBottomCenterX_phys = pos.x + size.width / 2;
+                lastBottomY_phys       = pos.y + size.height;
+              } catch (_) { return; }
+            } else { return; }
+          } else if (currentState === 'idle' && appWindow) {
+            // Обновляем якорь из текущей позиции (вдруг перетащили в idle)
+            try {
+              const size = await appWindow.innerSize();
+              const pos  = await appWindow.outerPosition();
+              lastBottomCenterX_phys = pos.x + size.width / 2;
+              lastBottomY_phys       = pos.y + size.height;
+            } catch (_) {}
+          }
+          anchorX_phys = lastBottomCenterX_phys;
+          anchorY_phys = lastBottomY_phys;
         }
 
-        // Режим Магнит включён: центр низа доступного экрана (учитывает taskbar)
-        const availW_phys = Math.round(screen.availWidth  * cachedScaleFactor);
-        const availH_phys = Math.round(screen.availHeight * cachedScaleFactor);
-
-        const x_phys = Math.max(0, Math.round((availW_phys - w_phys) / 2));
-        const y_phys = Math.max(0, availH_phys - h_phys - Math.round(4 * cachedScaleFactor));
+        // Единая логика позиционирования (DRY): окно растёт вверх от якорной точки
+        const x_phys = Math.max(0, Math.round(anchorX_phys - w_phys / 2));
+        const y_phys = Math.max(0, anchorY_phys - h_phys);
 
         try {
           await invoke('resize_bottom_up_phys', { width: w_phys, height: h_phys, x: x_phys, y: y_phys });

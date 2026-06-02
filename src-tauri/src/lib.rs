@@ -1,4 +1,4 @@
-﻿use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager};
 use serde::{Serialize, Deserialize};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::Local;
@@ -856,6 +856,68 @@ fn resize_bottom_up_phys(
     Err("resize_bottom_up_phys реализован только для Windows".into())
 }
 
+#[derive(Serialize, Clone, Debug)]
+pub struct CursorMonitorInfo {
+    pub work_left:   i32,
+    pub work_top:    i32,
+    pub work_right:  i32,
+    pub work_bottom: i32,
+}
+
+#[tauri::command]
+#[cfg(target_os = "windows")]
+fn get_cursor_monitor() -> Result<CursorMonitorInfo, String> {
+    #[repr(C)]
+    #[derive(Default)]
+    struct POINTL { x: i32, y: i32 }
+
+    #[repr(C)]
+    struct RECT { left: i32, top: i32, right: i32, bottom: i32 }
+    impl Default for RECT { fn default() -> Self { RECT { left:0, top:0, right:0, bottom:0 } } }
+
+    #[repr(C)]
+    struct MONITORINFO {
+        cb_size:    u32,
+        rc_monitor: RECT,
+        rc_work:    RECT,
+        dw_flags:   u32,
+    }
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetCursorPos(lp_point: *mut POINTL) -> i32;
+        fn MonitorFromPoint(pt: POINTL, dw_flags: u32) -> isize;
+        fn GetMonitorInfoW(h_monitor: isize, lp_mi: *mut MONITORINFO) -> i32;
+    }
+
+    const MONITOR_DEFAULTTONEAREST: u32 = 2;
+
+    unsafe {
+        let mut pt = POINTL::default();
+        GetCursorPos(&mut pt);
+        let hmon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+        let mut mi = MONITORINFO {
+            cb_size:    std::mem::size_of::<MONITORINFO>() as u32,
+            rc_monitor: RECT::default(),
+            rc_work:    RECT::default(),
+            dw_flags:   0,
+        };
+        GetMonitorInfoW(hmon, &mut mi);
+        Ok(CursorMonitorInfo {
+            work_left:   mi.rc_work.left,
+            work_top:    mi.rc_work.top,
+            work_right:  mi.rc_work.right,
+            work_bottom: mi.rc_work.bottom,
+        })
+    }
+}
+
+#[tauri::command]
+#[cfg(not(target_os = "windows"))]
+fn get_cursor_monitor() -> Result<CursorMonitorInfo, String> {
+    Err("get_cursor_monitor реализован только для Windows".into())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -902,7 +964,8 @@ pub fn run() {
             hide_capsule_window,
             show_widget_window,
             hide_widget_window,
-            resize_bottom_up_phys
+            resize_bottom_up_phys,
+            get_cursor_monitor
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
