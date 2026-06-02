@@ -1,1 +1,0 @@
-{"voice": "\u0421\u0432\u0435\u0442\u043b\u0430\u043d\u0430 (RU)", "rate": 1.25, "font_size": 15, "markdown_enabled": true, "translate_to": "ru", "translate_hotkey": "ctrl+alt+t", "speak_hotkey": "ctrl+shift", "translation_engine": "google_cache", "ollama_model": "gemma2", "ollama_url": "http://localhost:11434", "msty_model": "Gemma 4", "msty_url": "http://localhost:11964"}

@@ -176,10 +176,11 @@
             
             <!-- Веер пресетов по ховеру (парящие слова) -->
             <div class="absolute bottom-full mb-2 w-0 h-0 flex justify-center items-center hidden" id="hover-presets-menu">
-              <button class="preset-btn" style="bottom: 15px; left: -75px; transform: translate(-50%, 50%);" data-preset="summary">Суть</button>
-              <button class="preset-btn" style="bottom: 45px; left: -30px; transform: translate(-50%, 50%);" data-preset="tasks">Задачи</button>
-              <button class="preset-btn" style="bottom: 45px; left: 30px; transform: translate(-50%, 50%);" data-preset="email">Письмо</button>
-              <button class="preset-btn" style="bottom: 15px; left: 75px; transform: translate(-50%, 50%);" data-preset="custom">Промпт</button>
+              <button class="preset-btn" style="bottom: 15px; left: -90px; transform: translate(-50%, 50%);" data-preset="summary">Суть</button>
+              <button class="preset-btn" style="bottom: 50px; left: -45px; transform: translate(-50%, 50%);" data-preset="tasks">Задачи</button>
+              <button class="preset-btn" style="bottom: 50px; left: 15px; transform: translate(-50%, 50%);" data-preset="email">Письмо</button>
+              <button class="preset-btn" style="bottom: 15px; left: 60px; transform: translate(-50%, 50%);" data-preset="transcript">Текст</button>
+              <button class="preset-btn" style="bottom: -15px; left: -15px; transform: translate(-50%, 50%);" data-preset="custom">Промпт</button>
             </div>
           </div>
 
@@ -405,9 +406,27 @@
       let cachedScaleFactor = 1;
       let maybeDragging = false;
 
-      // Размер окна (логические пиксели) — НИКОГДА не меняется
-      const WIN_WIDTH = 320;
-      const WIN_HEIGHT = 200;
+      // Размеры окна по состоянию (логические пиксели)
+      const WIN_WIDTH      = 320;
+      const WIN_HEIGHT_IDLE   = 52;   // только пилюля
+      const WIN_HEIGHT_HOVER  = 170;  // пилюля + кнопки + пресеты
+      const WIN_HEIGHT_ACTIVE = 200;  // запись / пауза / отмена
+      const WIN_HEIGHT = WIN_HEIGHT_ACTIVE; // для инициализации
+
+      // Динамическое изменение высоты окна под состояние
+      async function resizeToState(state) {
+        if (!invoke || !lastBottomCenterX_phys || !lastBottomY_phys) return;
+        const h = state === 'idle' ? WIN_HEIGHT_IDLE
+                : state === 'hover' ? WIN_HEIGHT_HOVER
+                : WIN_HEIGHT_ACTIVE;
+        const w_phys  = Math.round(WIN_WIDTH * cachedScaleFactor);
+        const h_phys  = Math.round(h * cachedScaleFactor);
+        const x_phys  = Math.round(lastBottomCenterX_phys - w_phys / 2);
+        const y_phys  = Math.round(lastBottomY_phys - h_phys);
+        try {
+          await invoke('resize_bottom_up_phys', { width: w_phys, height: h_phys, x: x_phys, y: y_phys });
+        } catch (e) { console.warn('[Capsule] resize failed:', e); }
+      }
 
       // Таймер отмены
       let cancelInterval = null;
@@ -627,21 +646,22 @@
 
         if (state === 'idle') {
           stateIdle.classList.add('active');
-          // В idle — весь экран прозрачен для мыши; ловим только по proximity
           if (appWindow && appWindow.setIgnoreCursorEvents) {
             appWindow.setIgnoreCursorEvents(true).catch(() => {});
           }
+          resizeToState('idle');
         } else if (state === 'hover') {
           stateHover.classList.add('active');
-          // В hover — принимаем события
           if (appWindow && appWindow.setIgnoreCursorEvents) {
             appWindow.setIgnoreCursorEvents(false).catch(() => {});
           }
+          resizeToState('hover');
         } else if (state === 'recording') {
           stateRecording.classList.add('active');
           if (appWindow && appWindow.setIgnoreCursorEvents) {
             appWindow.setIgnoreCursorEvents(false).catch(() => {});
           }
+          resizeToState('active');
           if (recordingMagicArea) {
             if (isMouseOver) {
               recordingMagicArea.classList.remove('opacity-0', 'pointer-events-none');
@@ -657,6 +677,7 @@
           if (appWindow && appWindow.setIgnoreCursorEvents) {
             appWindow.setIgnoreCursorEvents(false).catch(() => {});
           }
+          resizeToState('active');
           if (pauseMagicArea) {
             if (isMouseOver) {
               pauseMagicArea.classList.remove('opacity-0', 'pointer-events-none');
@@ -673,6 +694,7 @@
           if (appWindow && appWindow.setIgnoreCursorEvents) {
             appWindow.setIgnoreCursorEvents(false).catch(() => {});
           }
+          resizeToState('active');
         }
 
         if (invoke) {
@@ -684,11 +706,11 @@
       // ======================================================================
       // PROXIMITY DETECTION — отслеживаем близость курсора к пилюле в idle
       // ======================================================================
-      const PROXIMITY_PX = 14; // зона реакции вокруг пилюли (пикселей)
+      const PROXIMITY_PX = 3; // минимальная зона вокруг пилюли (пикселей)
 
       document.addEventListener('mousemove', (e) => {
         if (currentState !== 'idle' || !appWindow || !appWindow.setIgnoreCursorEvents) return;
-        const pillEl = stateIdle; // элемент пилюли
+        const pillEl = stateIdle;
         if (!pillEl) return;
         const rect = pillEl.getBoundingClientRect();
         const near = e.clientX >= rect.left - PROXIMITY_PX
