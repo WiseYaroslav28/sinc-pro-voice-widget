@@ -93,13 +93,55 @@
         </header>
 
         <!-- Scrollable Content Canvas -->
-        <div class="flex-1 overflow-y-auto px-6 pb-16 flex flex-col gap-4 container mx-auto max-w-5xl">
+        <div class="flex-1 flex flex-col px-6 min-h-0 container mx-auto max-w-5xl w-full">
           
           <!-- ВКЛАДКА 1: ГЛАВНАЯ (HOME) -->
-          <section class="tab-content flex flex-col gap-3 h-full" id="tab-home">
+          <section class="tab-content flex flex-col gap-2 flex-1 min-h-0 py-4" id="tab-home">
 
-            <!-- Центральная карточка: Последняя активность -->
-            <div class="bg-[#1f1f24] rounded-xl border border-[#4a4455]/20 flex flex-col overflow-hidden relative neon-glow transition-shadow duration-300 flex-1 min-h-0" style="min-height: 220px;">
+            <!-- Компактный Bento-бар сверху (примагничен к верхней границе) -->
+            <div class="flex items-center gap-3 bg-[#1b1b20] rounded-xl border border-[#4a4455]/25 px-4 py-2 flex-shrink-0">
+              <!-- Хоткеи -->
+              <div class="flex items-center gap-1.5 border-r border-[#4a4455]/25 pr-3">
+                <span class="text-[9px] text-[#ccc3d8]/50 uppercase tracking-wider mr-1">Хоткеи</span>
+                <div class="flex items-center gap-1 bg-[#1f1f24] px-2 py-0.5 rounded-lg border border-[#4a4455]/20" title="Диктовка: Ctrl+Win">
+                  <span class="material-symbols-outlined text-[12px] text-[#ccc3d8]">mic</span>
+                  <span class="text-[9px] text-[#ccc3d8]/70 font-mono">Ctrl+Win</span>
+                </div>
+                <div class="flex items-center gap-1 bg-[#1f1f24] px-2 py-0.5 rounded-lg border border-[#4a4455]/20" title="Отправить: Ctrl+Alt">
+                  <span class="material-symbols-outlined text-[12px] text-[#ccc3d8]">send</span>
+                  <span class="text-[9px] text-[#ccc3d8]/70 font-mono">Ctrl+Alt</span>
+                </div>
+              </div>
+              <!-- Окна: тумблеры -->
+              <div class="flex items-center gap-3 border-r border-[#4a4455]/25 pr-3">
+                <span class="text-[9px] text-[#ccc3d8]/50 uppercase tracking-wider">Окна</span>
+                <label class="flex items-center gap-1.5 cursor-pointer group">
+                  <span class="text-[11px] text-[#ccc3d8] group-hover:text-white transition-colors">Капсула</span>
+                  <label class="switch" style="transform: scale(0.75); transform-origin: left center;"><input type="checkbox" id="toggle-capsule" checked><span class="slider"></span></label>
+                </label>
+                <label class="flex items-center gap-1.5 cursor-pointer group">
+                  <span class="text-[11px] text-[#ccc3d8] group-hover:text-white transition-colors">Виджет</span>
+                  <label class="switch" style="transform: scale(0.75); transform-origin: left center;"><input type="checkbox" id="toggle-widget"><span class="slider"></span></label>
+                </label>
+              </div>
+              <!-- Сервисы: статус-индикаторы -->
+              <div class="flex items-center gap-3 flex-1">
+                <span class="text-[9px] text-[#ccc3d8]/50 uppercase tracking-wider">Сервисы</span>
+                <div class="flex items-center gap-1.5">
+                  <span class="text-[11px] text-[#e4e1e9]">Gemini AI</span>
+                  <span class="text-[10px] font-semibold" id="api-status-text">—</span>
+                  <span class="w-1.5 h-1.5 rounded-full" id="api-status-dot"></span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <span class="text-[11px] text-[#e4e1e9]">Микрофон</span>
+                  <span class="text-[10px] text-[#7bd6d1] font-semibold">Готов</span>
+                  <span class="w-1.5 h-1.5 rounded-full bg-[#7bd6d1]" style="box-shadow: 0 0 4px rgba(123,214,209,0.6);"></span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Центральная карточка: Последняя активность — flex-1 заполняет всё -->
+            <div class="bg-[#1f1f24] rounded-xl border border-[#4a4455]/20 flex flex-col overflow-hidden relative neon-glow transition-shadow duration-300 flex-1 min-h-0">
               <!-- Акцентная фиолетовая полоска сверху -->
               <div class="h-0.5 w-full flex-shrink-0" style="background: linear-gradient(to right, #d2bbff, transparent);"></div>
 
@@ -163,7 +205,7 @@
               <!-- Текст сводки — занимает всё свободное место -->
               <div class="flex-1 relative overflow-hidden">
                 <div class="p-5 h-full overflow-y-auto">
-                  <p class="text-[13px] leading-[1.7] text-[#ccc3d8] whitespace-pre-wrap" id="summary-text">Нет данных. Создайте первую запись через капсулу (Ctrl+Win).</p>
+                  <p class="text-[13px] leading-[1.7] text-[#ccc3d8] whitespace-pre-wrap" id="summary-text" style="user-select: text; -webkit-user-select: text;">Нет данных. Создайте первую запись через капсулу (Ctrl+Win).</p>
                 </div>
                 <div class="absolute bottom-0 left-0 w-full h-10 pointer-events-none" style="background: linear-gradient(to top, #1f1f24, transparent);"></div>
               </div>
@@ -185,57 +227,13 @@
               <div class="px-5 pb-4 text-[12px] leading-relaxed text-[#ccc3d8] hidden" id="spoiler-content"></div>
             </div>
 
-            <!-- Компактный Bento-бар снизу -->
-            <div class="flex items-center gap-3 bg-[#1b1b20] rounded-xl border border-[#4a4455]/25 px-4 py-2 flex-shrink-0">
-
-              <!-- Быстрые действия: иконки с подсказками -->
-              <div class="flex items-center gap-1.5 border-r border-[#4a4455]/25 pr-3">
-                <span class="text-[9px] text-[#ccc3d8]/50 uppercase tracking-wider mr-1">Хоткеи</span>
-                <div class="flex items-center gap-1 bg-[#1f1f24] px-2 py-0.5 rounded-lg border border-[#4a4455]/20" title="Диктовка: Ctrl+Win">
-                  <span class="material-symbols-outlined text-[12px] text-[#ccc3d8]">mic</span>
-                  <span class="text-[9px] text-[#ccc3d8]/70 font-mono">Ctrl+Win</span>
-                </div>
-                <div class="flex items-center gap-1 bg-[#1f1f24] px-2 py-0.5 rounded-lg border border-[#4a4455]/20" title="Отправить: Ctrl+Alt">
-                  <span class="material-symbols-outlined text-[12px] text-[#ccc3d8]">send</span>
-                  <span class="text-[9px] text-[#ccc3d8]/70 font-mono">Ctrl+Alt</span>
-                </div>
-              </div>
-
-              <!-- Окна: тумблеры -->
-              <div class="flex items-center gap-3 border-r border-[#4a4455]/25 pr-3">
-                <span class="text-[9px] text-[#ccc3d8]/50 uppercase tracking-wider">Окна</span>
-                <label class="flex items-center gap-1.5 cursor-pointer group">
-                  <span class="text-[11px] text-[#ccc3d8] group-hover:text-white transition-colors">Капсула</span>
-                  <label class="switch" style="transform: scale(0.75); transform-origin: left center;"><input type="checkbox" id="toggle-capsule" checked><span class="slider"></span></label>
-                </label>
-                <label class="flex items-center gap-1.5 cursor-pointer group">
-                  <span class="text-[11px] text-[#ccc3d8] group-hover:text-white transition-colors">Виджет</span>
-                  <label class="switch" style="transform: scale(0.75); transform-origin: left center;"><input type="checkbox" id="toggle-widget"><span class="slider"></span></label>
-                </label>
-              </div>
-
-              <!-- Сервисы: статус-индикаторы -->
-              <div class="flex items-center gap-3 flex-1">
-                <span class="text-[9px] text-[#ccc3d8]/50 uppercase tracking-wider">Сервисы</span>
-                <div class="flex items-center gap-1.5">
-                  <span class="text-[11px] text-[#e4e1e9]">Gemini AI</span>
-                  <span class="text-[10px] font-semibold" id="api-status-text">—</span>
-                  <span class="w-1.5 h-1.5 rounded-full" id="api-status-dot"></span>
-                </div>
-                <div class="flex items-center gap-1.5">
-                  <span class="text-[11px] text-[#e4e1e9]">Микрофон</span>
-                  <span class="text-[10px] text-[#7bd6d1] font-semibold">Готов</span>
-                  <span class="w-1.5 h-1.5 rounded-full bg-[#7bd6d1]" style="box-shadow: 0 0 4px rgba(123,214,209,0.6);"></span>
-                </div>
-              </div>
-            </div>
           </section>
 
 
 
 
           <!-- ВКЛАДКА 2: ПЕРЕВОД ЭКРАНА -->
-          <section class="tab-content flex flex-col gap-4" id="tab-ocr" style="display: none;">
+          <section class="tab-content flex flex-col gap-4 flex-1 overflow-y-auto py-4" id="tab-ocr" style="display: none;">
             <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-8 text-center flex flex-col items-center justify-center">
               <span class="material-symbols-outlined text-[48px] text-[#d2bbff] mb-4">screenshot_region</span>
               <h3 class="text-[16px] font-semibold text-white mb-2">Оверлей переводчика OCR готов к работе</h3>
@@ -250,7 +248,8 @@
 
 
           <!-- ВКЛАДКА 3: ИСТОРИЯ ЗАПИСЕЙ -->
-          <section class="tab-content flex flex-col gap-3" id="tab-history" style="display: none;">
+          <section class="tab-content flex flex-col gap-3 flex-1 min-h-0 overflow-y-auto py-4" id="tab-history" style="display: none;">
+
             <!-- Заголовок секции с поиском -->
             <div class="flex items-center justify-between">
               <h3 class="text-[13px] font-bold text-[#e4e1e9] flex items-center gap-2">
@@ -267,7 +266,7 @@
 
 
           <!-- ВКЛАДКА 4: НАСТРОЙКИ (SETTINGS) -->
-          <section class="tab-content flex flex-col gap-4" id="tab-settings" style="display: none;">
+          <section class="tab-content flex flex-col gap-4 flex-1 overflow-y-auto py-4" id="tab-settings" style="display: none;">
             <!-- Блок 1: Локализация -->
             <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-5">
               <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-4">Локализация системы</h3>
@@ -1149,31 +1148,71 @@
         }
       };
 
-      // Кнопки действий на главной карточке
-      const activeCardCopyBtn = document.querySelector('#tab-home button[title="Копировать сводку"]');
+      // ================================================================
+      // КНОПКИ ДЕЙСТВИЙ НА ГЛАВНОЙ КАРТОЧКЕ
+      // ================================================================
+
+      // Копировать
+      const activeCardCopyBtn = document.getElementById('btn-copy-active');
       if (activeCardCopyBtn) {
         activeCardCopyBtn.addEventListener('click', async () => {
-          if (currentActiveEntry) {
-            try {
-              if (window.__TAURI__ && window.__TAURI__.clipboardManager) {
-                await window.__TAURI__.clipboardManager.writeText(currentActiveEntry.transcript);
-              } else {
-                await navigator.clipboard.writeText(currentActiveEntry.transcript);
-              }
-              showToast('Текст скопирован в буфер обмена!', false);
-            } catch (err) {
-              console.error(err);
-              showToast('Ошибка при копировании', true);
+          if (!currentActiveEntry) return showToast('Нет активной записи', true);
+          const text = getDisplayText(currentActiveEntry, dashboardViewMode);
+          try {
+            if (window.__TAURI__ && window.__TAURI__.clipboardManager) {
+              await window.__TAURI__.clipboardManager.writeText(text);
+            } else {
+              await navigator.clipboard.writeText(text);
             }
+            showToast('Скопировано в буфер обмена!', false);
+          } catch (err) {
+            console.error(err);
+            showToast('Ошибка при копировании', true);
           }
         });
       }
 
-      const activeCardDeleteBtn = document.querySelector('#tab-home button[title="Удалить запись"]');
+      // Удалить
+      const activeCardDeleteBtn = document.getElementById('btn-delete-active');
       if (activeCardDeleteBtn) {
         activeCardDeleteBtn.addEventListener('click', () => {
-          if (currentActiveEntry) {
-            deleteEntry(currentActiveEntry.id);
+          if (currentActiveEntry) deleteEntry(currentActiveEntry.id);
+        });
+      }
+
+      // Озвучить
+      const btnSpeakText = document.getElementById('btn-speak-text');
+      if (btnSpeakText) {
+        btnSpeakText.addEventListener('click', () => {
+          if (!currentActiveEntry) return;
+          const text = getDisplayText(currentActiveEntry, dashboardViewMode);
+          if (!text) return;
+          if ('speechSynthesis' in window) {
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'ru-RU';
+            utterance.rate = 1.0;
+            window.speechSynthesis.speak(utterance);
+            showToast('Озвучивание...', false);
+          } else {
+            showToast('Синтез речи не поддерживается', true);
+          }
+        });
+      }
+
+      // Тоггл: Капсула
+      const toggleCapsule = document.getElementById('toggle-capsule');
+      if (toggleCapsule) {
+        toggleCapsule.addEventListener('change', async () => {
+          if (!invoke) return;
+          try {
+            if (toggleCapsule.checked) {
+              await invoke('show_capsule_window');
+            } else {
+              await invoke('hide_capsule_window');
+            }
+          } catch (err) {
+            console.error('Ошибка управления капсулой:', err);
           }
         });
       }

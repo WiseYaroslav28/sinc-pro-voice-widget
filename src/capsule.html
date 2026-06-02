@@ -608,10 +608,21 @@
 
         if (state === 'idle') {
           stateIdle.classList.add('active');
+          // В idle — весь экран прозрачен для мыши; ловим только по proximity
+          if (appWindow && appWindow.setIgnoreCursorEvents) {
+            appWindow.setIgnoreCursorEvents(true).catch(() => {});
+          }
         } else if (state === 'hover') {
           stateHover.classList.add('active');
+          // В hover — принимаем события
+          if (appWindow && appWindow.setIgnoreCursorEvents) {
+            appWindow.setIgnoreCursorEvents(false).catch(() => {});
+          }
         } else if (state === 'recording') {
           stateRecording.classList.add('active');
+          if (appWindow && appWindow.setIgnoreCursorEvents) {
+            appWindow.setIgnoreCursorEvents(false).catch(() => {});
+          }
           if (recordingMagicArea) {
             if (isMouseOver) {
               recordingMagicArea.classList.remove('opacity-0', 'pointer-events-none');
@@ -624,6 +635,9 @@
           if (recordingPresetsFan) recordingPresetsFan.classList.add('hidden');
         } else if (state === 'pause') {
           statePause.classList.add('active');
+          if (appWindow && appWindow.setIgnoreCursorEvents) {
+            appWindow.setIgnoreCursorEvents(false).catch(() => {});
+          }
           if (pauseMagicArea) {
             if (isMouseOver) {
               pauseMagicArea.classList.remove('opacity-0', 'pointer-events-none');
@@ -637,6 +651,9 @@
           syncPresetUI(currentPreset);
         } else if (state === 'cancel-confirm') {
           stateCancelConfirm.classList.add('active');
+          if (appWindow && appWindow.setIgnoreCursorEvents) {
+            appWindow.setIgnoreCursorEvents(false).catch(() => {});
+          }
         }
 
         if (invoke) {
@@ -644,6 +661,27 @@
           invoke('set_capsule_active', { active: isActive }).catch(console.error);
         }
       }
+
+      // ======================================================================
+      // PROXIMITY DETECTION — отслеживаем близость курсора к пилюле в idle
+      // ======================================================================
+      const PROXIMITY_PX = 14; // зона реакции вокруг пилюли (пикселей)
+
+      document.addEventListener('mousemove', (e) => {
+        if (currentState !== 'idle' || !appWindow || !appWindow.setIgnoreCursorEvents) return;
+        const pillEl = stateIdle; // элемент пилюли
+        if (!pillEl) return;
+        const rect = pillEl.getBoundingClientRect();
+        const near = e.clientX >= rect.left - PROXIMITY_PX
+                  && e.clientX <= rect.right + PROXIMITY_PX
+                  && e.clientY >= rect.top - PROXIMITY_PX
+                  && e.clientY <= rect.bottom + PROXIMITY_PX;
+        if (near) {
+          appWindow.setIgnoreCursorEvents(false).catch(() => {});
+        } else {
+          appWindow.setIgnoreCursorEvents(true).catch(() => {});
+        }
+      });
 
       // ======================================================================
       // НАВЕДЕНИЕ МЫШИ — только CSS, никаких ресайзов

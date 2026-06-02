@@ -142,6 +142,22 @@ fn set_capsule_active(active: bool) {
     RECORDING_OR_PAUSED.store(active, Ordering::SeqCst);
 }
 
+#[tauri::command]
+async fn show_capsule_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+    if let Some(w) = app_handle.get_webview_window("capsule") {
+        w.show().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn hide_capsule_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+    if let Some(w) = app_handle.get_webview_window("capsule") {
+        w.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AppConfig {
@@ -867,6 +883,8 @@ pub fn run() {
             save_audio,
             paste_text,
             set_capsule_active,
+            show_capsule_window,
+            hide_capsule_window,
             resize_bottom_up_phys
         ])
         .run(tauri::generate_context!())
