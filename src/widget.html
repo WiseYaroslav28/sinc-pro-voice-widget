@@ -111,24 +111,16 @@
       <!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
       <div class="flex items-center px-2 py-2 gap-1" id="slim-row">
 
-        <!-- 🔊 Голос + язык (dropdown вверх) -->
+        <!-- 🔊 Голос + язык (dropdown вниз, динамически) -->
         <div class="relative" id="voice-wrapper">
           <button class="pill-btn" id="btn-voice" title="Голос озвучки">
             <span class="material-symbols-outlined text-[16px] text-[#ccc3d8]/60" style="font-variation-settings:'FILL' 1;">volume_up</span>
-            <span id="selected-voice-label">RU (Алёна)</span>
+            <span id="selected-voice-label">Загрузка...</span>
             <span class="material-symbols-outlined text-[14px] text-[#4a4455]">expand_more</span>
           </button>
-          <div class="dropdown-menu" id="voice-menu" style="min-width: 160px;">
-            <div class="menu-section-label">Голос</div>
-            <div class="dropdown-item selected" data-lang="ru" data-voice-name="Алёна" data-label="RU (Алёна)">
-              <span>🇷🇺</span><span>RU (Алёна)</span>
-            </div>
-            <div class="dropdown-item" data-lang="en" data-voice-name="" data-label="EN (Google)">
-              <span>🇺🇸</span><span>EN (Google)</span>
-            </div>
-            <div class="dropdown-item" data-lang="de" data-voice-name="" data-label="DE (Google)">
-              <span>🇩🇪</span><span>DE (Google)</span>
-            </div>
+          <div class="dropdown-menu" id="voice-menu" style="min-width: 200px; max-height: 280px; overflow-y: auto;">
+            <div class="menu-section-label">Голоса</div>
+            <!-- Пополняется через JS после загрузки системных голосов -->
           </div>
         </div>
 
@@ -214,8 +206,8 @@
       // =====================================================================
       // ЕДИНЫЙ ИСТОЧНИК ПРАВДЫ — состояние виджета
       // =====================================================================
-      let currentLang      = 'ru';
-      let currentVoiceName = 'Алёна';
+      let currentLang      = 'ru';   // будет обновлено buildVoiceMenu()
+      let currentVoiceName = '';     // будет обновлено buildVoiceMenu()
       let currentRate      = 1.0;
       let translateEnabled = false;
       let isPlaying        = false;
@@ -235,28 +227,93 @@
       document.addEventListener('click', closeAllMenus);
 
       // =====================================================================
-      // ГОЛОС — dropdown
+      // ГОЛОС — динамическая загрузка системных голосов
       // =====================================================================
       const btnVoice        = document.getElementById('btn-voice');
       const voiceMenu       = document.getElementById('voice-menu');
       const selectedVoiceLabel = document.getElementById('selected-voice-label');
+
+      function buildVoiceMenu(voices) {
+        // Группируем по языку, показываем только уникальные по языку
+        const LANG_GROUPS = [
+          { code: 'ru', flag: '🇷🇺', label: 'Русский' },
+          { code: 'en', flag: '🇺🇸', label: 'English' },
+          { code: 'de', flag: '🇩🇪', label: 'Deutsch' },
+          { code: 'fr', flag: '🇫🇷', label: 'Français' },
+          { code: 'es', flag: '🇪🇸', label: 'Español' },
+        ];
+
+        // Сортировка: Natural > Online > другие
+        const rank = v => /natural/i.test(v.name) ? 0 : /online/i.test(v.name) ? 1 : /premium/i.test(v.name) ? 2 : /microsoft/i.test(v.name) ? 3 : 4;
+
+        let html = '';
+        let firstVoice = null;
+
+        for (const grp of LANG_GROUPS) {
+          const grpVoices = voices
+            .filter(v => v.lang.toLowerCase().startsWith(grp.code))
+            .sort((a, b) => rank(a) - rank(b));
+          if (grpVoices.length === 0) continue;
+
+          html += `<div class="menu-section-label">${grp.flag} ${grp.label}</div>`;
+
+          for (const v of grpVoices) {
+            // Короткое имя: убираем префикс Microsoft/Google
+            const shortName = v.name.replace(/^Microsoft /, '').replace(/^Google /, '');
+            const quality = /natural/i.test(v.name) ? ' ★' : /online/i.test(v.name) ? ' ○' : '';
+            html += `<div class="dropdown-item" data-lang="${grp.code}" data-voice-name="${v.name}" data-label="${grp.flag} ${shortName}">
+              <span>${grp.flag}</span><span>${shortName}${quality}</span>
+            </div>`;
+            if (!firstVoice && grp.code === 'ru') firstVoice = { lang: grp.code, name: v.name, label: `${grp.flag} ${shortName}${quality}` };
+          }
+        }
+
+        // Если голосов нет — показываем все доступные
+        if (!html) {
+          html = voices.slice(0, 20).map(v =>
+            `<div class="dropdown-item" data-lang="${v.lang.slice(0,2)}" data-voice-name="${v.name}" data-label="${v.name}">
+              <span>${v.name}</span></div>`
+          ).join('');
+        }
+
+        voiceMenu.innerHTML = html;
+
+        // Устанавливаем первый русский голос по умолчанию
+        if (firstVoice) {
+          currentLang = firstVoice.lang;
+          currentVoiceName = firstVoice.name;
+          selectedVoiceLabel.textContent = firstVoice.label;
+          voiceMenu.querySelector(`[data-voice-name="${firstVoice.name}"]`)?.classList.add('selected');
+        }
+
+        // Привязываем обработчики на все пункты
+        voiceMenu.querySelectorAll('.dropdown-item').forEach(item => {
+          item.addEventListener('click', (e) => {
+            e.stopPropagation();
+            voiceMenu.querySelectorAll('.dropdown-item').forEach(i => i.classList.remove('selected'));
+            item.classList.add('selected');
+            currentLang      = item.dataset.lang;
+            currentVoiceName = item.dataset.voiceName || '';
+            selectedVoiceLabel.textContent = item.dataset.label;
+            closeAllMenus();
+          });
+        });
+      }
+
+      // Загружаем голоса при готовности
+      function loadVoices() {
+        const voices = synth.getVoices();
+        if (voices.length > 0) { buildVoiceMenu(voices); return; }
+        // Chrome/Edge требует событие
+        speechSynthesis.onvoiceschanged = () => buildVoiceMenu(synth.getVoices());
+      }
 
       btnVoice.addEventListener('click', (e) => {
         e.stopPropagation();
         voiceMenu.classList.contains('open') ? closeAllMenus() : openMenu(voiceMenu);
       });
 
-      voiceMenu.querySelectorAll('.dropdown-item').forEach(item => {
-        item.addEventListener('click', (e) => {
-          e.stopPropagation();
-          voiceMenu.querySelectorAll('.dropdown-item').forEach(i => i.classList.remove('selected'));
-          item.classList.add('selected');
-          currentLang      = item.dataset.lang;
-          currentVoiceName = item.dataset.voiceName || '';
-          selectedVoiceLabel.textContent = item.dataset.label;
-          closeAllMenus();
-        });
-      });
+      loadVoices();
 
       // =====================================================================
       // СКОРОСТЬ — dropdown
@@ -334,14 +391,42 @@
         currentUtterance = new SpeechSynthesisUtterance(text);
         currentUtterance.rate = currentRate;
 
-        const voices  = synth.getVoices();
-        const langMap = { ru: 'ru-RU', en: 'en-US', de: 'de-DE' };
+        // Ждём пока голоса загрузятся (на Windows может требоваться небольшая задержка)
+        let voices = synth.getVoices();
+        if (voices.length === 0) {
+          await new Promise(resolve => {
+            const onVoices = () => { resolve(); };
+            speechSynthesis.onvoiceschanged = onVoices;
+            setTimeout(resolve, 1000); // fallback таймаут
+          });
+          voices = synth.getVoices();
+        }
+
+        const langMap = { ru: 'ru', en: 'en', de: 'de' };
         const langCode = langMap[currentLang] || currentLang;
-        const voice = voices.find(v =>
-          (currentVoiceName && v.name.includes(currentVoiceName)) ||
-          v.lang.startsWith(langCode) || v.lang.startsWith(currentLang)
-        );
+
+        // Если указан конкретный голос по имени — ищем его
+        let voice = currentVoiceName
+          ? voices.find(v => v.name.includes(currentVoiceName))
+          : null;
+
+        if (!voice) {
+          // Приоритет: Natural/Online > Premium > любой для языка
+          // (Microsoft Svetlana Online (Natural), Microsoft Dmitry Online (Natural) и т.п.)
+          const forLang = voices.filter(v =>
+            v.lang.toLowerCase().startsWith(langCode.toLowerCase())
+          );
+
+          voice = forLang.find(v => /natural/i.test(v.name))          // Высший приоритет: Natural
+               || forLang.find(v => /online/i.test(v.name))           // Online (Premium)
+               || forLang.find(v => /premium/i.test(v.name))          // Premium
+               || forLang.find(v => /microsoft/i.test(v.name))        // Любой Microsoft
+               || forLang[0]                                           // Первый подходящий
+               || voices.find(v => v.lang.toLowerCase().startsWith(langCode.toLowerCase())); // Fallback
+        }
+
         if (voice) currentUtterance.voice = voice;
+        currentUtterance.lang = voice?.lang || (langCode + '-' + langCode.toUpperCase());
 
         currentUtterance.onend   = stopPlayback;
         currentUtterance.onerror = (e) => { console.error('TTS error:', e); stopPlayback(); };

@@ -398,7 +398,7 @@
       // Размеры окна по состоянию (логические пиксели)
       const WIN_WIDTH      = 320;
       const WIN_HEIGHT_IDLE   = 52;   // только пилюля
-      const WIN_HEIGHT_HOVER  = 210;  // пилюля + 3 кнопки (Промпт сверху на 75px от кнопки)
+      const WIN_HEIGHT_HOVER  = 180;  // пилюля + 3 кнопки (Промпт сверху на 52px от кнопки)
       const WIN_HEIGHT_ACTIVE = 200;  // запись / пауза / отмена
       const WIN_HEIGHT = WIN_HEIGHT_ACTIVE; // для инициализации
 
@@ -476,12 +476,12 @@
       // Чтобы добавить/убрать пресет — меняй ТОЛЬКО этот массив.
       // ======================================================================
 
-      // Позиции в веере — Промпт сверху, Суть и Текст по бокам
+      // Позиции в веере — Промпт чуть выше центра, Суть и Текст по бокам (кучнее)
       // bottom/left в px относительно центра контейнера (transform: translate(-50%,50%))
       const PRESETS = [
-        { id: 'summary',    label: 'Суть',   pos: { bottom: 20, left: -68 } },
-        { id: 'custom',     label: 'Промпт', pos: { bottom: 75, left:  -8 } },
-        { id: 'transcript', label: 'Текст',  pos: { bottom: 20, left:  52 } },
+        { id: 'summary',    label: 'Суть',   pos: { bottom: 18, left: -62 } },
+        { id: 'custom',     label: 'Промпт', pos: { bottom: 52, left:  -6 } },
+        { id: 'transcript', label: 'Текст',  pos: { bottom: 18, left:  50 } },
       ];
 
       // Рендерит кнопки пресетов в контейнер с нужным data-атрибутом
