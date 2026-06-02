@@ -452,6 +452,16 @@
           if (t) t.checked = event.payload;
         });
 
+        // Слушаем запрос на озвучку из дашборда/других окон
+        window.__TAURI__.event.listen('tts-speak-clipboard', async () => {
+          try {
+            const text = await getClipboardText();
+            if (text && text.trim()) speakText(text.trim());
+          } catch (e) {
+            console.warn('[Widget TTS] Ошибка при чтении буфера:', e);
+          }
+        });
+
         window.__TAURI__.event.emit('widget-visibility-changed', true);
         appWindow.onCloseRequested(async () => {
           // Сохраняем финальную позицию перед закрытием

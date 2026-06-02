@@ -1227,6 +1227,45 @@
         });
       }
 
+      // Озвучить — отправляем текст в виджет озвучки (с его настройками голоса/скорости)
+      const btnSpeakText = document.getElementById('btn-speak-text');
+      if (btnSpeakText) {
+        btnSpeakText.addEventListener('click', async () => {
+          if (!currentActiveEntry) return;
+          const text = getDisplayText(currentActiveEntry, dashboardViewMode);
+          if (!text) return;
+
+          if (window.__TAURI__) {
+            try {
+              // Пишем текст в буфер обмена и просим виджет воспроизвести
+              await window.__TAURI__.clipboardManager.writeText(text);
+              await window.__TAURI__.event.emit('tts-speak-clipboard', {});
+              showToast('Отправлено в виджет озвучки', false);
+            } catch (e) {
+              // Фоллбэк: стандартный синтез (если виджет недоступен)
+              if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+                const utt = new SpeechSynthesisUtterance(text);
+                utt.lang = 'ru-RU';
+                window.speechSynthesis.speak(utt);
+              }
+              showToast('Озвучивание...', false);
+            }
+          } else {
+            // В браузере (не Tauri) — стандартный синтез
+            if ('speechSynthesis' in window) {
+              window.speechSynthesis.cancel();
+              const utt = new SpeechSynthesisUtterance(text);
+              utt.lang = 'ru-RU';
+              window.speechSynthesis.speak(utt);
+              showToast('Озвучивание...', false);
+            } else {
+              showToast('Синтез речи не поддерживается', true);
+            }
+          }
+        });
+      }
+
       // Настройка Магнита капсулы — сохраняем + передаём в капсулу
       const magnetToggle = document.getElementById('setting-capsule-magnet');
       if (magnetToggle) {
@@ -1320,25 +1359,6 @@
         });
       }
 
-      // Озвучить
-      const btnSpeakText = document.getElementById('btn-speak-text');
-      if (btnSpeakText) {
-        btnSpeakText.addEventListener('click', () => {
-          if (!currentActiveEntry) return;
-          const text = getDisplayText(currentActiveEntry, dashboardViewMode);
-          if (!text) return;
-          if ('speechSynthesis' in window) {
-            window.speechSynthesis.cancel();
-            const utterance = new SpeechSynthesisUtterance(text);
-            utterance.lang = 'ru-RU';
-            utterance.rate = 1.0;
-            window.speechSynthesis.speak(utterance);
-            showToast('Озвучивание...', false);
-          } else {
-            showToast('Синтез речи не поддерживается', true);
-          }
-        });
-      }
 
       // Тоггл: Капсула
       const toggleCapsule = document.getElementById('toggle-capsule');
