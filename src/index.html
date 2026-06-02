@@ -1,0 +1,1144 @@
+<!doctype html>
+<html class="dark" lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SINC PRO - Панель управления</title>
+    <!-- Подключаем Tailwind CSS скомпилированный локально -->
+    <link rel="stylesheet" href="styles.css" />
+    <!-- Подключаем Google Material Symbols -->
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+  </head>
+
+  <body class="bg-[#131318] text-[#e4e1e9] font-sans h-screen overflow-hidden flex selection:bg-[#a377ff]/30 selection:text-white">
+    <div class="dashboard-container flex w-screen h-screen overflow-hidden relative">
+      <!-- Область перетаскивания окна Tauri (смещена на 200px для сайдбара) -->
+      <div class="drag-region" id="drag-region" data-tauri-drag-region></div>
+
+      <!-- 1. Левый сворачиваемый сайдбар (дизайн Stitch) -->
+      <aside class="sidebar w-[200px] h-screen flex-shrink-0 bg-[#1b1b20] border-r border-[#4a4455]/30 flex flex-col py-6 px-4 z-20 transition-all duration-300 relative" id="sidebar">
+        <div class="flex items-center justify-between mb-8 sidebar-header">
+          <div class="logo-area">
+            <h1 class="font-bold text-[#d2bbff] tracking-tight text-[20px] sidebar-logo">SINC PRO</h1>
+            <p class="text-[10px] text-[#ccc3d8] uppercase tracking-wider mt-1 sidebar-subtext">Audio Intelligence</p>
+          </div>
+          <button class="text-[#ccc3d8] hover:text-[#d2bbff] transition-colors focus:outline-none" id="sidebar-toggle" title="Свернуть панель">
+            <span class="material-symbols-outlined text-[20px]" id="toggle-icon">keyboard_double_arrow_left</span>
+          </button>
+        </div>
+
+        <!-- Кнопка Новая запись -->
+        <button class="w-full bg-[#a377ff] text-[#36007d] hover:bg-[#eaddff] transition-colors rounded-lg py-2 px-4 flex items-center justify-center gap-2 mb-6 text-[12px] font-semibold shadow-sm focus:outline-none btn-new-rec" style="border: none; cursor: pointer;" id="btn-new-recording">
+          <span class="material-symbols-outlined text-[18px]">add</span>
+          <span class="sidebar-item-text">Новая запись</span>
+        </button>
+
+        <!-- Меню -->
+        <div class="flex flex-col gap-1 flex-1">
+          <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#d2bbff] font-bold border-r-2 border-[#d2bbff] bg-[#1f1f24] opacity-90 transition-all focus:outline-none w-full text-left active" style="background-color: #1f1f24; border: none; border-right: 2px solid #d2bbff; cursor: pointer;" data-tab="tab-home">
+            <span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">home</span>
+            <span class="text-[12px] sidebar-item-text">Главная</span>
+          </button>
+          <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="background-color: transparent; border: none; cursor: pointer;" data-tab="tab-ocr">
+            <span class="material-symbols-outlined text-[20px]">screenshot_region</span>
+            <span class="text-[12px] sidebar-item-text">Перевод экрана</span>
+          </button>
+          <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="background-color: transparent; border: none; cursor: pointer;" data-tab="tab-history">
+            <span class="material-symbols-outlined text-[20px]">history</span>
+            <span class="text-[12px] sidebar-item-text">История записей</span>
+          </button>
+          <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left mt-auto" style="background-color: transparent; border: none; cursor: pointer;" data-tab="tab-settings">
+            <span class="material-symbols-outlined text-[20px]">settings</span>
+            <span class="text-[12px] sidebar-item-text">Настройки</span>
+          </button>
+        </div>
+      </aside>
+
+      <!-- 2. Правая контентная область -->
+      <main class="flex-1 flex flex-col h-full overflow-hidden relative bg-[#131318]">
+        <!-- Кнопки управления окном Tauri -->
+        <div style="position: absolute; top: 12px; right: 16px; display: flex; gap: 2px; z-index: 200;">
+          <button id="win-minimize" style="background: transparent; border: none; cursor: pointer; padding: 6px; border-radius: 6px;" class="text-[#ccc3d8] hover:text-white hover:bg-[#2a292f] transition-all focus:outline-none" title="Свернуть">
+            <span class="material-symbols-outlined text-[16px]">minimize</span>
+          </button>
+          <button id="win-maximize" style="background: transparent; border: none; cursor: pointer; padding: 6px; border-radius: 6px;" class="text-[#ccc3d8] hover:text-white hover:bg-[#2a292f] transition-all focus:outline-none" title="Развернуть/Восстановить">
+            <span class="material-symbols-outlined text-[14px]">square</span>
+          </button>
+          <button id="win-close" style="background: transparent; border: none; cursor: pointer; padding: 6px; border-radius: 6px;" class="text-[#ccc3d8] hover:text-[#ffb4ab] hover:bg-[#93000a]/30 transition-all focus:outline-none" title="Закрыть">
+            <span class="material-symbols-outlined text-[16px]">close</span>
+          </button>
+        </div>
+
+        <!-- TopAppBar / Шапка контента -->
+        <header class="h-16 w-full flex justify-between items-center px-6 py-4 bg-transparent flex-shrink-0">
+          <div class="flex items-center gap-4">
+            <h2 class="text-[20px] text-[#e4e1e9] font-semibold tracking-tight" id="greeting-title">Привет, Ярослав</h2>
+            <div class="hidden md:flex items-center gap-2 bg-[#1b1b20] border border-[#4a4455]/30 rounded-full px-3 py-1 mt-1">
+              <span class="w-2 h-2 rounded-full bg-[#7bd6d1] shadow-[0_0_8px_rgba(123,214,209,0.6)]"></span>
+              <span class="text-[11px] font-medium text-[#ccc3d8]">Все системы онлайн</span>
+            </div>
+          </div>
+          <div class="flex items-center gap-4 pr-24"> <!-- Смещение от кнопок окна -->
+            <button class="text-[#ccc3d8] hover:text-[#d2bbff] transition-colors focus:outline-none p-1 rounded-full hover:bg-[#1f1f24]" style="background: transparent; border: none; cursor: pointer;">
+              <span class="material-symbols-outlined text-[20px]">notifications</span>
+            </button>
+            <div class="flex items-center gap-2 border-l border-[#4a4455]/30 pl-4">
+              <div class="w-8 h-8 rounded-full bg-[#35343a] border border-[#4a4455]/30 flex items-center justify-center overflow-hidden">
+                <span class="material-symbols-outlined text-[#ccc3d8] text-[20px]">account_circle</span>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <!-- Scrollable Content Canvas -->
+        <div class="flex-1 overflow-y-auto px-6 pb-16 flex flex-col gap-4 container mx-auto max-w-5xl">
+          
+          <!-- ВКЛАДКА 1: ГЛАВНАЯ (HOME) -->
+          <section class="tab-content flex flex-col gap-3 h-full" id="tab-home">
+
+            <!-- Центральная карточка: Последняя активность -->
+            <div class="bg-[#1f1f24] rounded-xl border border-[#4a4455]/20 flex flex-col overflow-hidden relative group neon-glow transition-shadow duration-300 flex-1 min-h-0" style="min-height: 220px;">
+              <!-- Акцентная фиолетовая полоска сверху -->
+              <div class="h-0.5 w-full flex-shrink-0" style="background: linear-gradient(to right, #d2bbff, transparent);"></div>
+              <!-- Шапка карточки -->
+              <div class="px-5 py-3 border-b border-[#4a4455]/20 flex justify-between items-center bg-[#2a292f]/30 flex-shrink-0">
+                <div class="flex items-center gap-3">
+                  <div class="bg-[#d2bbff]/10 p-1.5 rounded-lg flex-shrink-0">
+                    <span class="material-symbols-outlined text-[#d2bbff] text-[18px]" style="font-variation-settings: 'FILL' 1;">graphic_eq</span>
+                  </div>
+                  <div>
+                    <h3 class="text-[13px] font-semibold text-[#e4e1e9]">Последняя активность</h3>
+                    <div class="flex items-center gap-2 mt-0.5">
+                      <span class="text-[10px] text-[#d2bbff] bg-[#1f1f24] px-1.5 py-0.5 rounded border border-[#4a4455]/30" id="activity-model">Gemini 2.0 Flash</span>
+                      <span class="text-[10px] text-[#ccc3d8] flex items-center gap-1">
+                        <span class="material-symbols-outlined text-[12px]">schedule</span>
+                        <span id="activity-time">—</span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <!-- Hover toolbar -->
+                <div class="opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex gap-1">
+                  <button class="p-1.5 rounded-lg text-[#ccc3d8] hover:text-[#d2bbff] hover:bg-[#35343a] transition-colors" title="Копировать">
+                    <span class="material-symbols-outlined text-[16px]">content_copy</span>
+                  </button>
+                  <button class="p-1.5 rounded-lg text-[#ccc3d8] hover:text-[#ffb4ab] hover:bg-[#35343a] transition-colors" title="Удалить">
+                    <span class="material-symbols-outlined text-[16px]">delete</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Текст сводки -->
+              <div class="flex-1 relative overflow-hidden">
+                <div class="p-5 h-full overflow-y-auto">
+                  <p class="text-[13px] leading-[1.7] text-[#ccc3d8] whitespace-pre-wrap" id="summary-text">Нет данных. Создайте первую запись через капсулу (Ctrl+Win).</p>
+                </div>
+                <div class="absolute bottom-0 left-0 w-full h-10 pointer-events-none" style="background: linear-gradient(to top, #1f1f24, transparent);"></div>
+              </div>
+
+              <!-- Плеер + стенограмма -->
+              <div class="px-5 py-3 border-t border-[#4a4455]/20 flex justify-between items-center gap-3 flex-shrink-0">
+                <button class="text-[#7bd6d1] hover:text-[#98f2ed] flex items-center gap-1 text-[11px] font-semibold transition-colors focus:outline-none" id="spoiler-toggle">
+                  <span class="material-symbols-outlined text-[14px]" id="spoiler-icon">expand_more</span>
+                  <span>Стенограмма</span>
+                </button>
+                <div class="bg-[#2a292f] h-7 rounded-full border border-[#4a4455]/30 flex items-center px-2 gap-2 w-40 shrink-0">
+                  <button class="text-[#e4e1e9] hover:text-[#d2bbff] transition-colors flex-shrink-0 focus:outline-none" id="player-play" title="Воспроизвести">
+                    <span class="material-symbols-outlined text-[18px]" id="player-play-icon" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+                  </button>
+                  <div class="flex-1 h-1 bg-[#35343a] rounded-full overflow-hidden relative cursor-pointer" id="player-scrubber-container">
+                    <div class="absolute top-0 left-0 h-full w-0 bg-[#d2bbff] rounded-full" id="player-progress"></div>
+                  </div>
+                  <span class="text-[10px] text-[#ccc3d8] w-7 text-right font-mono" id="player-time">0:00</span>
+                </div>
+              </div>
+
+              <!-- Раскрываемая стенограмма -->
+              <div class="spoiler-content px-5 pb-4 text-[12px] leading-relaxed text-[#ccc3d8] hidden" id="spoiler-content"></div>
+            </div>
+
+            <!-- Bento-панель снизу: 3 колонки -->
+            <div class="grid gap-3 flex-shrink-0" style="grid-template-columns: 5fr 4fr 3fr;">
+
+              <!-- Быстрые действия -->
+              <div class="bg-[#1b1b20] rounded-xl border border-[#4a4455]/25 p-3 flex flex-col gap-2">
+                <h3 class="text-[10px] text-[#ccc3d8] uppercase tracking-wider font-bold flex items-center gap-1.5">
+                  <span class="material-symbols-outlined text-[14px]">keyboard</span>Быстрые действия
+                </h3>
+                <div class="grid grid-cols-2 gap-2 flex-1">
+                  <div class="bg-[#1f1f24] p-2 rounded-lg border border-[#4a4455]/20 flex flex-col justify-between hover:bg-[#2a292f] transition-colors">
+                    <span class="text-[12px] text-[#e4e1e9]">Диктовка</span>
+                    <div class="flex gap-1 mt-1 flex-wrap">
+                      <kbd class="bg-[#35343a] px-1.5 py-0.5 rounded text-[10px] text-[#ccc3d8] border border-[#4a4455]/30 font-mono">Ctrl</kbd>
+                      <span class="text-[#ccc3d8] text-[10px] self-center">+</span>
+                      <kbd class="bg-[#35343a] px-1.5 py-0.5 rounded text-[10px] text-[#ccc3d8] border border-[#4a4455]/30 font-mono">Win</kbd>
+                    </div>
+                  </div>
+                  <div class="bg-[#1f1f24] p-2 rounded-lg border border-[#4a4455]/20 flex flex-col justify-between hover:bg-[#2a292f] transition-colors">
+                    <span class="text-[12px] text-[#e4e1e9]">Отправить</span>
+                    <div class="flex gap-1 mt-1 flex-wrap">
+                      <kbd class="bg-[#35343a] px-1.5 py-0.5 rounded text-[10px] text-[#ccc3d8] border border-[#4a4455]/30 font-mono">Ctrl</kbd>
+                      <span class="text-[#ccc3d8] text-[10px] self-center">+</span>
+                      <kbd class="bg-[#35343a] px-1.5 py-0.5 rounded text-[10px] text-[#ccc3d8] border border-[#4a4455]/30 font-mono">Alt</kbd>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Окна (тумблеры) -->
+              <div class="bg-[#1b1b20] rounded-xl border border-[#4a4455]/25 p-3 flex flex-col gap-2">
+                <h3 class="text-[10px] text-[#ccc3d8] uppercase tracking-wider font-bold flex items-center gap-1.5">
+                  <span class="material-symbols-outlined text-[14px]">tune</span>Окна
+                </h3>
+                <div class="flex flex-col gap-2 flex-1 justify-center">
+                  <label class="flex items-center justify-between cursor-pointer group">
+                    <span class="text-[12px] text-[#ccc3d8] group-hover:text-white transition-colors flex-1 pr-3">Капсула</span>
+                    <label class="switch"><input type="checkbox" id="toggle-capsule" checked><span class="slider"></span></label>
+                  </label>
+                  <label class="flex items-center justify-between cursor-pointer group">
+                    <span class="text-[12px] text-[#ccc3d8] group-hover:text-white transition-colors flex-1 pr-3">Виджет</span>
+                    <label class="switch"><input type="checkbox" id="toggle-widget"><span class="slider"></span></label>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Сервисы -->
+              <div class="bg-[#1b1b20] rounded-xl border border-[#4a4455]/25 p-3 flex flex-col gap-2">
+                <h3 class="text-[10px] text-[#ccc3d8] uppercase tracking-wider font-bold flex items-center gap-1.5">
+                  <span class="material-symbols-outlined text-[14px]">swap_calls</span>Сервисы
+                </h3>
+                <div class="flex flex-col gap-2 flex-1 justify-center">
+                  <div class="flex justify-between items-center bg-[#1f1f24] px-2 py-1.5 rounded-lg border border-[#4a4455]/20">
+                    <span class="text-[11px] text-[#e4e1e9]">Gemini AI</span>
+                    <div class="flex items-center gap-1.5">
+                      <span class="text-[10px] font-semibold" id="api-status-text">—</span>
+                      <span class="w-2 h-2 rounded-full" id="api-status-dot"></span>
+                    </div>
+                  </div>
+                  <div class="flex justify-between items-center bg-[#1f1f24] px-2 py-1.5 rounded-lg border border-[#4a4455]/20">
+                    <span class="text-[11px] text-[#e4e1e9]">Микрофон</span>
+                    <div class="flex items-center gap-1.5">
+                      <span class="text-[10px] text-[#7bd6d1] font-semibold">Готов</span>
+                      <span class="w-2 h-2 rounded-full bg-[#7bd6d1]" style="box-shadow: 0 0 6px rgba(123,214,209,0.6);"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </section>
+
+
+
+
+          <!-- ВКЛАДКА 2: ПЕРЕВОД ЭКРАНА -->
+          <section class="tab-content flex flex-col gap-4" id="tab-ocr" style="display: none;">
+            <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-8 text-center flex flex-col items-center justify-center">
+              <span class="material-symbols-outlined text-[48px] text-[#d2bbff] mb-4">screenshot_region</span>
+              <h3 class="text-[16px] font-semibold text-white mb-2">Оверлей переводчика OCR готов к работе</h3>
+              <p class="text-[13px] text-[#ccc3d8] max-w-md mb-6 leading-relaxed">
+                Вы можете переместить специальную рамку над текстом, чтобы считать его. Горячая клавиша <strong class="text-[#d2bbff]">Alt + Q</strong> мгновенно вызывает оверлей.
+              </p>
+              <button class="bg-[#a377ff] text-[#36007d] hover:bg-[#eaddff] transition-all font-semibold rounded-lg px-6 py-2.5 text-[13px] focus:outline-none" id="btn-trigger-ocr">
+                Запустить оверлей сейчас
+              </button>
+            </div>
+          </section>
+
+
+          <!-- ВКЛАДКА 3: ИСТОРИЯ ЗАПИСЕЙ -->
+          <section class="tab-content flex flex-col gap-3" id="tab-history" style="display: none;">
+            <!-- Заголовок секции с поиском -->
+            <div class="flex items-center justify-between">
+              <h3 class="text-[13px] font-bold text-[#e4e1e9] flex items-center gap-2">
+                <span class="material-symbols-outlined text-[16px] text-[#d2bbff]">history</span>
+                История записей
+              </h3>
+              <span class="text-[11px] text-[#ccc3d8]" id="history-count">—</span>
+            </div>
+            <!-- Список истории — рендерится JS -->
+            <div class="flex flex-col gap-2" id="history-list">
+              <div class="text-center py-8 text-[#ccc3d8] text-[13px]">Загрузка истории...</div>
+            </div>
+          </section>
+
+
+          <!-- ВКЛАДКА 4: НАСТРОЙКИ (SETTINGS) -->
+          <section class="tab-content flex flex-col gap-4" id="tab-settings" style="display: none;">
+            <!-- Блок 1: Локализация -->
+            <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-5">
+              <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-4">Локализация системы</h3>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="flex flex-col gap-2">
+                  <label class="text-[11px] text-[#ccc3d8]">Язык интерфейса приложения</label>
+                  <select class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#d2bbff]" id="setting-ui-lang">
+                    <option value="ru">Русский (RU)</option>
+                    <option value="en">English (EN)</option>
+                  </select>
+                </div>
+                <div class="flex flex-col gap-2">
+                  <label class="text-[11px] text-[#ccc3d8]">Язык диктовки по умолчанию</label>
+                  <select class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#d2bbff]" id="setting-dictation-lang">
+                    <option value="auto">Автоопределение</option>
+                    <option value="ru">Русский</option>
+                    <option value="en">English</option>
+                    <option value="de">Deutsch</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- Блок 2: Параметры ИИ -->
+            <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-5">
+              <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-4">Параметры Gemini ИИ</h3>
+              <div class="flex flex-col gap-4">
+                <div class="flex flex-col gap-2">
+                  <label class="text-[11px] text-[#ccc3d8]">Ключ API (Gemini API Key)</label>
+                  <input type="password" id="setting-api-key" placeholder="Введите ваш API ключ от Google AI Studio" class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#d2bbff]" />
+                </div>
+                <div class="flex flex-col gap-2">
+                  <label class="text-[11px] text-[#ccc3d8]">Модель ИИ</label>
+                  <select class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#d2bbff]" id="setting-ai-model">
+                    <option value="gemini-2.0-pro-exp">Gemini 2.0 Pro Experimental (Рекомендуется)</option>
+                    <option value="gemini-2.0-flash">Gemini 2.0 Flash (Высокая скорость)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- Блок 3: Горячие клавиши -->
+            <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-5">
+              <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-4">Горячие клавиши (Хоткеи)</h3>
+              <div class="flex flex-col gap-3 text-[13px]">
+                <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
+                  <span class="text-[#ccc3d8]">Запуск смарт-микрофона</span>
+                  <kbd class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] px-2 py-1 rounded font-semibold text-[11px]">Ctrl + Win</kbd>
+                </div>
+                <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
+                  <span class="text-[#ccc3d8]">Быстрый перевод области OCR</span>
+                  <kbd class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] px-2 py-1 rounded font-semibold text-[11px]">Alt + Q</kbd>
+                </div>
+                <div class="flex justify-between items-center py-2">
+                  <span class="text-[#ccc3d8]">Озвучить выделенный фрагмент</span>
+                  <kbd class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] px-2 py-1 rounded font-semibold text-[11px]">Ctrl + Shift + S</kbd>
+                </div>
+              </div>
+            </div>
+          </section>
+
+        </div>
+
+        <!-- Подвал дашборда (Footer Stitch) -->
+        <footer class="absolute bottom-0 right-0 left-0 h-12 bg-[#0e0e13] border-t border-[#4a4455]/30 flex justify-between items-center px-6 z-10 text-[11px]">
+          <span class="font-bold text-[#e4e1e9]">© 2026 SINC PRO. API: Gemini Connected.</span>
+          <div class="flex gap-4">
+            <a class="text-[#ccc3d8] hover:text-[#7bd6d1] transition-opacity" href="#">Статус систем</a>
+            <a class="text-[#ccc3d8] hover:text-[#7bd6d1] transition-opacity" href="#">Помощь</a>
+            <a class="text-[#ccc3d8] hover:text-[#7bd6d1] transition-opacity" href="#">Конфиденциальность</a>
+          </div>
+        </footer>
+      </main>
+    </div>
+
+    <!-- Основной JS скрипт -->
+    <script>
+      // Tauri Core Invoke
+      const invoke = window.__TAURI__ ? window.__TAURI__.core.invoke : null;
+
+      // Глобальные состояния
+      let currentHistory = [];
+      let currentActiveEntry = null;
+      let audioPlayerElement = null;
+      let isPlaying = false;
+
+      // Логика переключения вкладок
+      const menuItems = document.querySelectorAll('.sidebar-item');
+      const tabContents = document.querySelectorAll('.tab-content');
+
+      function switchTab(tabId) {
+        menuItems.forEach(el => {
+          el.classList.remove('active', 'text-[#d2bbff]', 'font-bold', 'border-r-2', 'border-[#d2bbff]', 'bg-[#1f1f24]');
+          el.classList.add('text-[#ccc3d8]');
+        });
+        tabContents.forEach(el => el.style.display = 'none');
+        
+        const targetItem = document.querySelector(`.sidebar-item[data-tab="${tabId}"]`);
+        if (targetItem) {
+          targetItem.classList.add('active', 'text-[#d2bbff]', 'font-bold', 'border-r-2', 'border-[#d2bbff]', 'bg-[#1f1f24]');
+          targetItem.classList.remove('text-[#ccc3d8]');
+        }
+        const targetTab = document.getElementById(tabId);
+        if (targetTab) {
+          targetTab.style.display = 'block';
+        }
+      }
+
+      menuItems.forEach(item => {
+        item.addEventListener('click', () => {
+          const activeTab = item.getAttribute('data-tab');
+          switchTab(activeTab);
+        });
+      });
+
+      // Логика сворачивания сайдбара
+      const sidebar = document.getElementById('sidebar');
+      const toggleBtn = document.getElementById('sidebar-toggle');
+      const toggleIcon = document.getElementById('toggle-icon');
+
+      toggleBtn.addEventListener('click', () => {
+        sidebar.classList.toggle('collapsed');
+        sidebar.classList.toggle('w-[200px]');
+        sidebar.classList.toggle('w-[56px]');
+        
+        const itemsText = document.querySelectorAll('.sidebar-item-text');
+        const logo = document.querySelector('.sidebar-logo');
+        const subtext = document.querySelector('.sidebar-subtext');
+        
+        if (sidebar.classList.contains('collapsed')) {
+          toggleIcon.textContent = 'keyboard_double_arrow_right';
+          toggleBtn.title = "Развернуть панель";
+          itemsText.forEach(el => el.style.display = 'none');
+          if (logo) logo.style.display = 'none';
+          if (subtext) subtext.style.display = 'none';
+        } else {
+          toggleIcon.textContent = 'keyboard_double_arrow_left';
+          toggleBtn.title = "Свернуть панель";
+          itemsText.forEach(el => el.style.display = 'inline');
+          if (logo) logo.style.display = 'block';
+          if (subtext) subtext.style.display = 'block';
+        }
+      });
+
+      // Спойлер стенограммы
+      const spoilerToggle = document.getElementById('spoiler-toggle');
+      const spoilerContent = document.getElementById('spoiler-content');
+      const spoilerIcon = document.getElementById('spoiler-icon');
+
+      spoilerToggle.addEventListener('click', () => {
+        spoilerContent.classList.toggle('hidden');
+        if (spoilerContent.classList.contains('hidden')) {
+          spoilerIcon.textContent = 'expand_more';
+        } else {
+          spoilerIcon.textContent = 'expand_less';
+        }
+      });
+
+      // Тестовый «танец окна» по клику на логотип
+      const logo = document.querySelector('.sidebar-logo');
+      if (logo) {
+        logo.style.cursor = 'pointer';
+        logo.title = "Кликните для авто-теста перемещения окна";
+        logo.addEventListener('click', async () => {
+          if (window.__TAURI__) {
+            try {
+              const appWindow = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
+              const PhysicalPosition = window.__TAURI__.dpi.PhysicalPosition;
+              const startPos = await appWindow.outerPosition();
+              
+              let startTime = null;
+              const duration = 2000; // 2 секунды танца
+              
+              function animate(timestamp) {
+                if (!startTime) startTime = timestamp;
+                const elapsed = timestamp - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                const angle = progress * Math.PI * 4;
+                const ease = Math.sin(progress * Math.PI);
+                const dx = Math.sin(angle) * 80 * ease;
+                const dy = (1 - Math.cos(angle)) * 40 * ease;
+                
+                appWindow.setPosition(new PhysicalPosition(
+                  Math.round(startPos.x + dx),
+                  Math.round(startPos.y + dy)
+                ));
+                
+                if (progress < 1) {
+                  requestAnimationFrame(animate);
+                } else {
+                  appWindow.setPosition(new PhysicalPosition(startPos.x, startPos.y));
+                }
+              }
+              requestAnimationFrame(animate);
+            } catch (err) {
+              console.error('Ошибка авто-теста перемещения:', err);
+            }
+          } else {
+            console.log('[Tauri Mock] Запуск авто-теста движения окна');
+            let angle = 0;
+            const container = document.querySelector('.dashboard-container');
+            if (container) {
+              const interval = setInterval(() => {
+                angle += 0.2;
+                const dx = Math.sin(angle) * 20;
+                const dy = Math.cos(angle) * 10;
+                container.style.transform = `translate(${dx}px, ${dy}px)`;
+                if (angle > Math.PI * 4) {
+                  clearInterval(interval);
+                  container.style.transform = 'none';
+                }
+              }, 30);
+            }
+          }
+        });
+      }
+
+      // Кнопка запуска оверлея из вкладки OCR
+      const btnTriggerOcr = document.getElementById('btn-trigger-ocr');
+      if (btnTriggerOcr) {
+        btnTriggerOcr.addEventListener('click', () => {
+          if (window.__TAURI__) {
+            const ocrWin = window.__TAURI__.webviewWindow.WebviewWindow.getByLabel('ocr');
+            if (ocrWin) {
+              ocrWin.show();
+            }
+          } else {
+            console.log('[Tauri Mock] Запуск оверлея OCR (окно "ocr")');
+          }
+        });
+      }
+
+      // ==========================================================================
+      // ЛОГИКА НАСТРОЕК (КОНФИГ)
+      // ==========================================================================
+      async function loadConfig() {
+        if (invoke) {
+          try {
+            const config = await invoke('load_config');
+            document.getElementById('setting-ui-lang').value = config.ui_lang;
+            document.getElementById('setting-dictation-lang').value = config.dictation_lang;
+            document.getElementById('setting-api-key').value = config.api_key;
+            document.getElementById('setting-ai-model').value = config.ai_model;
+            
+            updateApiStatus(config.api_key);
+          } catch (err) {
+            console.error("Ошибка загрузки настроек:", err);
+          }
+        } else {
+          // Mock данные
+          document.getElementById('setting-api-key').value = "AIzaSyMockKeyForTestingGeminiAPI";
+          updateApiStatus("AIzaSyMockKeyForTestingGeminiAPI");
+        }
+      }
+
+      async function saveConfig() {
+        if (invoke) {
+          const config = {
+            ui_lang: document.getElementById('setting-ui-lang').value,
+            dictation_lang: document.getElementById('setting-dictation-lang').value,
+            api_key: document.getElementById('setting-api-key').value,
+            ai_model: document.getElementById('setting-ai-model').value
+          };
+          try {
+            await invoke('save_config', { config });
+            updateApiStatus(config.api_key);
+            console.log("Настройки сохранены:", config);
+          } catch (err) {
+            console.error("Ошибка сохранения настроек:", err);
+          }
+        }
+      }
+
+      function updateApiStatus(apiKey) {
+        const statusText = document.getElementById('api-status-text');
+        const statusDot = document.getElementById('api-status-dot');
+        
+        if (statusText && statusDot) {
+          if (apiKey && apiKey.trim().length > 0) {
+            statusText.textContent = "Подключено";
+            statusText.className = "text-[10px] text-[#7bd6d1] font-semibold";
+            statusDot.className = "w-1.5 h-1.5 rounded-full bg-[#7bd6d1] shadow-[0_0_6px_rgba(123,214,209,0.6)]";
+          } else {
+            statusText.textContent = "Отключено";
+            statusText.className = "text-[10px] text-[#ffb4ab] font-semibold";
+            statusDot.className = "w-1.5 h-1.5 rounded-full bg-[#ffb4ab] shadow-[0_0_6px_rgba(255,180,171,0.6)]";
+          }
+        }
+      }
+
+      // Привязываем автосохранение настроек
+      document.getElementById('setting-ui-lang').addEventListener('change', saveConfig);
+      document.getElementById('setting-dictation-lang').addEventListener('change', saveConfig);
+      document.getElementById('setting-api-key').addEventListener('input', debounce(saveConfig, 1000));
+      document.getElementById('setting-ai-model').addEventListener('change', saveConfig);
+
+      function debounce(func, wait) {
+        let timeout;
+        return function(...args) {
+          clearTimeout(timeout);
+          timeout = setTimeout(() => func.apply(this, args), wait);
+        };
+      }
+
+      // ==========================================================================
+      // ЛОГИКА АУДИОПЛЕЕРА ДАШБОРДА
+      // ==========================================================================
+      function setupAudioPlayer() {
+        audioPlayerElement = document.createElement('audio');
+        audioPlayerElement.id = 'dashboard-audio-element';
+        document.body.appendChild(audioPlayerElement);
+        
+        const playBtn = document.getElementById('player-play');
+        const playIcon = document.getElementById('player-play-icon');
+        const progressBar = document.getElementById('player-progress');
+        const playerTime = document.getElementById('player-time');
+        const scrubberContainer = document.getElementById('player-scrubber-container');
+        
+        playBtn.addEventListener('click', () => {
+          if (!audioPlayerElement.src) return;
+          
+          if (isPlaying) {
+            audioPlayerElement.pause();
+          } else {
+            audioPlayerElement.play().catch(err => console.error("Ошибка запуска аудио:", err));
+          }
+        });
+        
+        audioPlayerElement.addEventListener('play', () => {
+          isPlaying = true;
+          playIcon.textContent = 'pause';
+          playBtn.title = "Пауза";
+        });
+        
+        audioPlayerElement.addEventListener('pause', () => {
+          isPlaying = false;
+          playIcon.textContent = 'play_arrow';
+          playBtn.title = "Воспроизвести";
+        });
+        
+        audioPlayerElement.addEventListener('timeupdate', () => {
+          if (audioPlayerElement.duration) {
+            const progress = (audioPlayerElement.currentTime / audioPlayerElement.duration) * 100;
+            progressBar.style.width = `${progress}%`;
+            
+            const curMins = Math.floor(audioPlayerElement.currentTime / 60);
+            const curSecs = Math.floor(audioPlayerElement.currentTime % 60).toString().padStart(2, '0');
+            playerTime.textContent = `${curMins}:${curSecs}`;
+          }
+        });
+        
+        audioPlayerElement.addEventListener('ended', () => {
+          isPlaying = false;
+          playIcon.textContent = 'play_arrow';
+          progressBar.style.width = "0%";
+          if (currentActiveEntry) {
+            const mins = Math.floor(currentActiveEntry.duration_secs / 60);
+            const secs = currentActiveEntry.duration_secs % 60;
+            playerTime.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+          }
+        });
+
+        // Перемотка
+        scrubberContainer.addEventListener('click', (e) => {
+          if (!audioPlayerElement.src || !audioPlayerElement.duration) return;
+          const rect = scrubberContainer.getBoundingClientRect();
+          const clickX = e.clientX - rect.left;
+          const width = rect.width;
+          const percentage = clickX / width;
+          audioPlayerElement.currentTime = percentage * audioPlayerElement.duration;
+        });
+      }
+
+      // ==========================================================================
+      // ЛОГИКА ИСТОРИИ И АКТИВНОСТИ
+      // ==========================================================================
+      async function refreshHistory() {
+        if (invoke) {
+          try {
+            currentHistory = await invoke('load_history');
+            renderHistory();
+            if (currentHistory.length > 0) {
+              renderActiveCard(currentHistory[0]);
+            } else {
+              renderActiveCard(null);
+            }
+          } catch (err) {
+            console.error("Ошибка загрузки истории:", err);
+          }
+        } else {
+          // Mock данные для браузера
+          currentHistory = [
+            {
+              id: "rec_1",
+              timestamp: "02.06.2026 • 02:30",
+              duration_secs: 42,
+              preset: "summary",
+              preset_label: "Собрать суть",
+              transcript: "Пользователь предложил реализовать архитектуру оверлея экранного переводчика на базе прерывистых SVG-линий, проходящих через центр слов. Это решает проблему наложения текста и сохраняет полную читаемость исходных шрифтов. В компактном виджете голосового чтения убран фиксированный переключатель языковых пар, заменен на контекстную кнопку перевода, а кнопка выбора голоса дополнена иконкой динамика для ясности назначения.",
+              audio_path: "C:\\Users\\wisey\\AppData\\Local\\tauri-app\\records\\rec_1.webm"
+            },
+            {
+              id: "rec_2",
+              timestamp: "01.06.2026 • 22:45",
+              duration_secs: 72,
+              preset: "tasks",
+              preset_label: "Задачи",
+              transcript: "- Настроить дизайн оверлея на Tailwind CSS.\n- Интегрировать MediaRecorder для записи в формате WebM.\n- Подключить локальный OCR для Bezier-нитей.",
+              audio_path: "C:\\Users\\wisey\\AppData\\Local\\tauri-app\\records\\rec_2.webm"
+            }
+          ];
+          renderHistory();
+          renderActiveCard(currentHistory[0]);
+        }
+      }
+
+      function getPresetIcon(preset) {
+        const icons = {
+          summary: 'auto_awesome',
+          tasks: 'task_alt',
+          email: 'mail',
+          transcript: 'transcribe',
+          custom: 'tune',
+          cancelled: 'cancel',
+          error: 'error'
+        };
+        return icons[preset] || 'mic';
+      }
+
+      function getPresetColor(preset) {
+        const colors = {
+          summary: '#d2bbff',
+          tasks: '#7bd6d1',
+          email: '#a8c7fa',
+          transcript: '#ffd966',
+          custom: '#8e52ff',
+          cancelled: '#888',
+          error: '#f05454'
+        };
+        return colors[preset] || '#ccc3d8';
+      }
+
+      // Текущая развёрнутая карточка в истории
+      let expandedHistoryId = null;
+      // Активный плеер в истории
+      let historyAudio = null;
+      let historyPlayingId = null;
+
+      function renderHistory() {
+        const historyList = document.getElementById('history-list');
+        const historyCount = document.getElementById('history-count');
+        if (!historyList) return;
+
+        if (historyCount) {
+          historyCount.textContent = currentHistory.length > 0
+            ? `${currentHistory.length} записей`
+            : '';
+        }
+
+        if (currentHistory.length === 0) {
+          historyList.innerHTML = `
+            <div class="text-center py-12 flex flex-col items-center gap-3">
+              <span class="material-symbols-outlined text-[40px] text-[#4a4455]">mic_off</span>
+              <p class="text-[13px] text-[#ccc3d8]/60">История пуста. Начните запись через капсулу (Ctrl+Win).</p>
+            </div>
+          `;
+          return;
+        }
+
+        historyList.innerHTML = currentHistory.map(entry => {
+          const mins = Math.floor(entry.duration_secs / 60);
+          const secs = entry.duration_secs % 60;
+          const durationStr = mins > 0 ? `${mins}м ${secs}с` : `${secs} сек`;
+          const icon = getPresetIcon(entry.preset);
+          const color = getPresetColor(entry.preset);
+          const isExpanded = expandedHistoryId === entry.id;
+          const isError = entry.preset === 'error';
+          const isCancelled = entry.preset === 'cancelled';
+          const isPlaying = historyPlayingId === entry.id;
+
+          // Превью текста (60 символов в закрытом виде)
+          const textPreview = entry.transcript.substring(0, 120) + (entry.transcript.length > 120 ? '...' : '');
+
+          return `
+            <div class="rounded-xl border transition-all duration-200 overflow-hidden"
+                 style="background: ${isError ? 'rgba(240,84,84,0.05)' : isExpanded ? '#1a1a22' : '#141419'};
+                        border-color: ${isExpanded ? color + '40' : 'rgba(74,68,85,0.25)'};"
+                 id="hcard-${entry.id}">
+              <!-- Шапка карточки -->
+              <div class="flex items-start gap-3 p-3 cursor-pointer select-none"
+                   onclick="toggleHistoryCard('${entry.id}', '${entry.audio_path.replace(/\\/g, '\\\\')}')"
+                   style="user-select: none;">
+                <!-- Иконка пресета -->
+                <div class="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center mt-0.5"
+                     style="background: ${color}18;">
+                  <span class="material-symbols-outlined text-[16px]" style="color: ${color}; font-variation-settings: 'FILL' 1;">${icon}</span>
+                </div>
+                <!-- Инфо -->
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 mb-0.5">
+                    <span class="text-[12px] font-semibold" style="color: ${color};">${entry.preset_label}</span>
+                    <span class="text-[10px] text-[#888]">${entry.timestamp} • ${durationStr}</span>
+                  </div>
+                  <p class="text-[12px] text-[#ccc3d8] leading-[1.4] ${isExpanded ? 'hidden' : ''}"
+                     id="hcard-preview-${entry.id}">${textPreview}</p>
+                </div>
+                <!-- Кнопки справа -->
+                <div class="flex items-center gap-1 flex-shrink-0">
+                  <button class="p-1.5 rounded text-[#ccc3d8] hover:text-[#d2bbff] hover:bg-[#2a292f] transition-all focus:outline-none"
+                          onclick="event.stopPropagation(); openFolder('${entry.audio_path.replace(/\\/g, '\\\\')}')"
+                          title="Открыть файл">
+                    <span class="material-symbols-outlined text-[15px]">folder_open</span>
+                  </button>
+                  <button class="p-1.5 rounded text-[#ccc3d8] hover:text-[#ffb4ab] hover:bg-[#2a292f] transition-all focus:outline-none"
+                          onclick="event.stopPropagation(); deleteEntry('${entry.id}')"
+                          title="Удалить">
+                    <span class="material-symbols-outlined text-[15px]">delete</span>
+                  </button>
+                  <span class="material-symbols-outlined text-[15px] text-[#555] transition-transform duration-200"
+                        style="transform: rotate(${isExpanded ? 180 : 0}deg); display: block;">
+                    expand_more
+                  </span>
+                </div>
+              </div>
+
+              <!-- Развёрнутое содержимое — аккордеон -->
+              <div class="${isExpanded ? '' : 'hidden'}" id="hcard-body-${entry.id}">
+                <div class="px-3 pb-3">
+                  <!-- Текст записи -->
+                  <div class="bg-[#0e0e13] rounded-lg p-3 mb-2 text-[12px] leading-[1.6] text-[#ccc3d8] whitespace-pre-wrap max-h-48 overflow-y-auto"
+                       style="border-left: 2px solid ${color}40;">
+                    ${entry.transcript}
+                  </div>
+                  <!-- Мини-плеер аудио -->
+                  <div class="flex items-center gap-2 bg-[#1f1f24] rounded-lg px-3 py-2">
+                    <button class="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all focus:outline-none"
+                            style="background: ${color}20;"
+                            onclick="toggleHistoryPlay('${entry.id}', '${entry.audio_path.replace(/\\/g, '\\\\')}')" 
+                            id="hplay-btn-${entry.id}">
+                      <span class="material-symbols-outlined text-[16px]" style="color: ${color}; font-variation-settings: 'FILL' 1;" id="hplay-icon-${entry.id}">${isPlaying ? 'pause' : 'play_arrow'}</span>
+                    </button>
+                    <div class="flex-1 h-1 bg-[#35343a] rounded-full overflow-hidden cursor-pointer" id="hprogress-bar-${entry.id}">
+                      <div class="h-full rounded-full transition-all" style="width: 0%; background: ${color};" id="hprogress-${entry.id}"></div>
+                    </div>
+                    <span class="text-[10px] text-[#888] font-mono w-12 text-right" id="htime-${entry.id}">
+                      0:00 / ${Math.floor(entry.duration_secs/60)}:${(entry.duration_secs%60).toString().padStart(2,'0')}
+                    </span>
+                    <button class="p-1 rounded text-[#ccc3d8] hover:text-[#d2bbff] transition-all focus:outline-none"
+                            onclick="copyHistoryText('${entry.id}')" title="Копировать текст">
+                      <span class="material-symbols-outlined text-[14px]">content_copy</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
+
+      function toggleHistoryCard(id, audioPath) {
+        if (expandedHistoryId === id) {
+          // Сворачиваем
+          expandedHistoryId = null;
+          if (historyAudio) { historyAudio.pause(); historyAudio = null; historyPlayingId = null; }
+        } else {
+          // Разворачиваем, предыдущий закрываем
+          if (historyAudio) { historyAudio.pause(); historyAudio = null; historyPlayingId = null; }
+          expandedHistoryId = id;
+        }
+        renderHistory();
+      }
+
+      function toggleHistoryPlay(id, audioPath) {
+        if (historyPlayingId === id && historyAudio) {
+          historyAudio.pause();
+          historyPlayingId = null;
+          const icon = document.getElementById(`hplay-icon-${id}`);
+          if (icon) icon.textContent = 'play_arrow';
+          return;
+        }
+        // Останавливаем предыдущий
+        if (historyAudio) { historyAudio.pause(); historyAudio = null; }
+        historyAudio = new Audio(audioPath);
+        historyPlayingId = id;
+        const icon = document.getElementById(`hplay-icon-${id}`);
+        const progress = document.getElementById(`hprogress-${id}`);
+        const timeEl = document.getElementById(`htime-${id}`);
+        const entry = currentHistory.find(e => e.id === id);
+        const totalDurStr = entry ? `${Math.floor(entry.duration_secs/60)}:${(entry.duration_secs%60).toString().padStart(2,'0')}` : '?';
+
+        if (icon) icon.textContent = 'pause';
+        historyAudio.addEventListener('timeupdate', () => {
+          if (historyAudio.duration) {
+            const pct = (historyAudio.currentTime / historyAudio.duration) * 100;
+            if (progress) progress.style.width = `${pct}%`;
+            const cm = Math.floor(historyAudio.currentTime / 60);
+            const cs = Math.floor(historyAudio.currentTime % 60).toString().padStart(2, '0');
+            if (timeEl) timeEl.textContent = `${cm}:${cs} / ${totalDurStr}`;
+          }
+        });
+        historyAudio.addEventListener('ended', () => {
+          historyPlayingId = null;
+          if (icon) icon.textContent = 'play_arrow';
+          if (progress) progress.style.width = '0%';
+          historyAudio = null;
+        });
+        historyAudio.play().catch(e => console.error('Аудио ошибка:', e));
+      }
+
+      function copyHistoryText(id) {
+        const entry = currentHistory.find(e => e.id === id);
+        if (!entry) return;
+        navigator.clipboard.writeText(entry.transcript).then(() => {
+          showToast('Текст скопирован', false);
+        });
+      }
+
+      // Оставляем selectHistoryEntry для обратной совместимости, но больше не переключает вкладку
+      function selectHistoryEntry(id) {
+        toggleHistoryCard(id, (currentHistory.find(e => e.id === id) || {}).audio_path || '');
+      }
+
+      function renderActiveCard(entry) {
+        currentActiveEntry = entry;
+        const summaryText = document.getElementById('summary-text');
+        const activityTime = document.getElementById('activity-time');
+        const spoilerContent = document.getElementById('spoiler-content');
+        
+        if (!entry) {
+          summaryText.textContent = "Нет недавней активности. Запишите аудио с помощью левитирующей капсулы.";
+          activityTime.textContent = "--:--";
+          spoilerContent.textContent = "Здесь появится расшифровка аудиозаписи.";
+          document.getElementById('player-time').textContent = "00:00";
+          document.getElementById('player-progress').style.width = "0%";
+          audioPlayerElement.src = "";
+          return;
+        }
+        
+        if (entry.preset === 'transcript') {
+          summaryText.innerHTML = `<span class="italic text-[#d2bbff]">Дословная стенограмма:</span><br>${entry.transcript.replace(/\n/g, '<br>')}`;
+          spoilerContent.textContent = entry.transcript;
+        } else {
+          summaryText.innerHTML = entry.transcript.replace(/\n/g, '<br>');
+          spoilerContent.textContent = `Дословная расшифровка (ИИ-анализ по пресету "${entry.preset_label}"):\n\n${entry.transcript}`;
+        }
+        
+        activityTime.textContent = `${entry.timestamp} (${entry.preset_label})`;
+        
+        if (window.__TAURI__) {
+          try {
+            const audioUrl = window.__TAURI__.core.convertFileSrc(entry.audio_path);
+            audioPlayerElement.src = audioUrl;
+            audioPlayerElement.load();
+          } catch (e) {
+            console.error("Ошибка конвертации локального пути аудио:", e);
+          }
+        } else {
+          audioPlayerElement.src = ""; 
+        }
+        
+        const mins = Math.floor(entry.duration_secs / 60);
+        const secs = entry.duration_secs % 60;
+        document.getElementById('player-time').textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+        document.getElementById('player-progress').style.width = "0%";
+      }
+
+      window.selectHistoryEntry = function(id) {
+        const entry = currentHistory.find(e => e.id === id);
+        if (entry) {
+          renderActiveCard(entry);
+          switchTab('tab-home');
+        }
+      };
+
+      window.openFolder = async function(path) {
+        if (invoke) {
+          try {
+            await invoke('open_audio_folder', { path });
+          } catch (err) {
+            console.error(err);
+            showToast('Не удалось открыть файл: ' + err, true);
+          }
+        } else {
+          console.log('[Tauri Mock] Открытие папки для:', path);
+        }
+      };
+
+      window.deleteEntry = async function(id) {
+        if (confirm('Вы уверены, что хотите удалить эту запись?')) {
+          if (invoke) {
+            try {
+              currentHistory = await invoke('delete_history_entry', { id });
+              renderHistory();
+              if (currentActiveEntry && currentActiveEntry.id === id) {
+                renderActiveCard(currentHistory[0] || null);
+              }
+              showToast('Запись удалена', false);
+            } catch (err) {
+              console.error(err);
+              showToast('Ошибка при удалении: ' + err, true);
+            }
+          } else {
+            currentHistory = currentHistory.filter(e => e.id !== id);
+            renderHistory();
+            if (currentActiveEntry && currentActiveEntry.id === id) {
+              renderActiveCard(currentHistory[0] || null);
+            }
+            showToast('Запись удалена (Mock)', false);
+          }
+        }
+      };
+
+      // Кнопки действий на главной карточке
+      const activeCardCopyBtn = document.querySelector('#tab-home button[title="Копировать сводку"]');
+      if (activeCardCopyBtn) {
+        activeCardCopyBtn.addEventListener('click', async () => {
+          if (currentActiveEntry) {
+            try {
+              if (window.__TAURI__ && window.__TAURI__.clipboardManager) {
+                await window.__TAURI__.clipboardManager.writeText(currentActiveEntry.transcript);
+              } else {
+                await navigator.clipboard.writeText(currentActiveEntry.transcript);
+              }
+              showToast('Текст скопирован в буфер обмена!', false);
+            } catch (err) {
+              console.error(err);
+              showToast('Ошибка при копировании', true);
+            }
+          }
+        });
+      }
+
+      const activeCardDeleteBtn = document.querySelector('#tab-home button[title="Удалить запись"]');
+      if (activeCardDeleteBtn) {
+        activeCardDeleteBtn.addEventListener('click', () => {
+          if (currentActiveEntry) {
+            deleteEntry(currentActiveEntry.id);
+          }
+        });
+      }
+
+      // Функция показа тостов (уведомлений)
+      function showToast(message, isError = false) {
+        const toast = document.getElementById('dashboard-toast');
+        const toastMsg = document.getElementById('dashboard-toast-message');
+        const toastIcon = toast ? toast.querySelector('span.material-symbols-outlined') : null;
+        
+        if (!toast || !toastMsg) return;
+        
+        toastMsg.textContent = message;
+        if (isError) {
+          toast.style.backgroundColor = '#93000a';
+          toast.style.borderColor = 'rgba(240, 84, 84, 0.4)';
+          if (toastIcon) {
+            toastIcon.textContent = 'error';
+            toastIcon.style.color = '#ffb4ab';
+          }
+        } else {
+          toast.style.backgroundColor = '#1f1f24';
+          toast.style.borderColor = 'rgba(142, 82, 255, 0.3)';
+          if (toastIcon) {
+            toastIcon.textContent = 'info';
+            toastIcon.style.color = '#8e52ff';
+          }
+        }
+        
+        toast.classList.remove('opacity-0', 'pointer-events-none');
+        toast.classList.add('opacity-100');
+        
+        setTimeout(() => {
+          toast.classList.remove('opacity-100');
+          toast.classList.add('opacity-0', 'pointer-events-none');
+        }, 4000);
+      }
+
+      // Инициализация при загрузке
+      document.addEventListener('DOMContentLoaded', async () => {
+        setupAudioPlayer();
+        await loadConfig();
+        await refreshHistory();
+      });
+
+      // ==========================================================================
+      // ТАУРИ ВЗАИМОДЕЙСТВИЕ И СОБЫТИЯ
+      // ==========================================================================
+      if (window.__TAURI__) {
+        const appWindow = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
+        const WebviewWindow = window.__TAURI__.webviewWindow.WebviewWindow;
+        
+        const dragRegion = document.getElementById('drag-region');
+        if (dragRegion) {
+          dragRegion.addEventListener('mousedown', (e) => {
+            if (e.buttons === 1) {
+              appWindow.startDragging();
+            }
+          });
+        }
+        
+        document.getElementById('win-minimize').addEventListener('click', () => appWindow.minimize());
+        document.getElementById('win-maximize').addEventListener('click', async () => {
+          if (await appWindow.isMaximized()) {
+            appWindow.unmaximize();
+          } else {
+            appWindow.maximize();
+          }
+        });
+        document.getElementById('win-close').addEventListener('click', () => appWindow.close());
+
+        // Управление видимостью окон через тумблеры на панели
+        const toggleCapsule = document.getElementById('toggle-capsule');
+        const toggleWidget = document.getElementById('toggle-widget');
+
+        if (toggleCapsule) {
+          toggleCapsule.addEventListener('change', async (e) => {
+            const win = WebviewWindow.getByLabel('capsule');
+            if (win) {
+              if (e.target.checked) {
+                await win.show();
+              } else {
+                await win.hide();
+              }
+            }
+          });
+        }
+
+        if (toggleWidget) {
+          toggleWidget.addEventListener('change', async (e) => {
+            const win = WebviewWindow.getByLabel('widget');
+            if (win) {
+              if (e.target.checked) {
+                await win.show();
+              } else {
+                await win.hide();
+              }
+            }
+          });
+        }
+
+        // Слушаем события
+        window.__TAURI__.event.listen('open-settings', () => {
+          appWindow.show();
+          appWindow.setFocus();
+          switchTab('tab-settings');
+        });
+
+        window.__TAURI__.event.listen('open-history', () => {
+          appWindow.show();
+          appWindow.setFocus();
+          switchTab('tab-history');
+        });
+
+        window.__TAURI__.event.listen('capsule-visibility-changed', (event) => {
+          if (toggleCapsule) {
+            toggleCapsule.checked = event.payload;
+          }
+        });
+
+        window.__TAURI__.event.listen('widget-visibility-changed', (event) => {
+          if (toggleWidget) {
+            toggleWidget.checked = event.payload;
+          }
+        });
+
+        // Слушаем событие обновления истории от капсулы
+        window.__TAURI__.event.listen('history-updated', () => {
+          refreshHistory();
+        });
+      }
+    </script>
+
+    <!-- Toast Notification -->
+    <div class="fixed bottom-6 right-6 bg-[#1f1f24] text-white text-[13px] px-4 py-2.5 rounded-xl shadow-2xl border border-[#8e52ff]/30 transition-all duration-300 opacity-0 pointer-events-none z-[100] flex items-center gap-2" id="dashboard-toast">
+      <span class="material-symbols-outlined text-[18px] text-[#8e52ff]">info</span>
+      <span id="dashboard-toast-message">Сообщение</span>
+    </div>
+  </body>
+</html>

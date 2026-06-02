@@ -1,0 +1,1052 @@
+<!doctype html>
+<html class="dark" lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SINC PRO - Капсула</title>
+    <!-- Локальный CSS от Tailwind -->
+    <link rel="stylesheet" href="styles.css" />
+    <!-- Google Material Symbols -->
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+    <style>
+      * {
+        outline: none !important;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+
+      html, body {
+        background: transparent !important;
+        background-color: transparent !important;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+      }
+
+      body {
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        width: 100vw;
+        height: 100vh;
+      }
+      
+      button {
+        background: transparent;
+        border: none;
+        outline: none;
+        box-shadow: none;
+        padding: 0;
+        cursor: pointer;
+        -webkit-appearance: none;
+        appearance: none;
+        -webkit-backface-visibility: hidden;
+        backface-visibility: hidden;
+      }
+
+      .spinner {
+        animation: spin 1s linear infinite;
+      }
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+
+      /* Анимация волновых полос */
+      .waveform-bar {
+        background: linear-gradient(#45a29e, #8e52ff);
+        border-radius: 9999px;
+        width: 3px;
+        animation: 1s infinite alternate pulse-waveform;
+      }
+      @keyframes pulse-waveform {
+        0% { height: 4px; }
+        100% { height: 16px; }
+      }
+      .waveform-bar:nth-child(1) { animation-delay: 0.1s; }
+      .waveform-bar:nth-child(2) { animation-delay: 0.3s; }
+      .waveform-bar:nth-child(3) { animation-delay: 0.5s; }
+      .waveform-bar:nth-child(4) { animation-delay: 0.2s; }
+      .waveform-bar:nth-child(5) { animation-delay: 0.6s; }
+      .waveform-bar:nth-child(6) { animation-delay: 0.4s; }
+      .waveform-bar:nth-child(7) { animation-delay: 0.1s; }
+
+      /* Стиль для парящих веерных кнопок пресетов */
+      .preset-btn {
+        position: absolute;
+        transform: translate(-50%, 50%);
+        white-space: nowrap;
+        background: rgba(27, 27, 37, 0.9);
+        border: 1px solid rgba(74, 68, 85, 0.6);
+        color: #ccc3d8;
+        padding: 5px 12px;
+        border-radius: 9999px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(8px);
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        cursor: pointer;
+        -webkit-backface-visibility: hidden;
+        backface-visibility: hidden;
+      }
+      .preset-btn:hover {
+        background: rgba(142, 82, 255, 0.25);
+        border-color: #8e52ff;
+        color: #a377ff;
+        transform: translate(-50%, 50%) scale(1.08);
+        box-shadow: 0 0 10px rgba(142, 82, 255, 0.4);
+      }
+      .preset-btn.active {
+        background: #8e52ff;
+        border-color: #a377ff;
+        color: white;
+        box-shadow: 0 0 12px rgba(142, 82, 255, 0.6);
+      }
+
+      /* ========================================= */
+      /* Система переходов — ТОЛЬКО opacity,       */
+      /* без transform чтобы не было мерцания      */
+      /* на прозрачном окне Windows/WebView2        */
+      /* ========================================= */
+      .capsule-state {
+        position: absolute !important;
+        bottom: 8px;
+        left: 0;
+        right: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        will-change: opacity;
+        -webkit-backface-visibility: hidden;
+        backface-visibility: hidden;
+        transition: opacity 200ms ease, visibility 0s linear 200ms;
+        z-index: 1;
+      }
+      .capsule-state.active {
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
+        transition: opacity 200ms ease, visibility 0s linear 0s;
+        z-index: 2;
+      }
+
+      /* GPU-слой для интерактивных элементов — предотвращает мерцание при :hover */
+      .gpu-layer {
+        -webkit-backface-visibility: hidden;
+        backface-visibility: hidden;
+        will-change: opacity, border-color;
+      }
+    </style>
+  </head>
+
+  <body class="bg-transparent text-[#e4e1e9] antialiased">
+    <div class="relative flex flex-col items-center justify-end p-2 w-full h-full" id="capsule-container">
+      
+      <!-- СОСТОЯНИЕ 1: Покой (Idle - Тонкая полоска) -->
+      <div class="capsule-state active" id="state-idle">
+        <div class="w-16 h-1.5 bg-[#ccc3d8]/40 rounded-full cursor-pointer shadow-[0_4px_12px_rgba(0,0,0,0.5)] transition-all duration-300 hover:bg-[#8e52ff]/80 hover:w-20 gpu-layer"></div>
+      </div>
+
+      <!-- СОСТОЯНИЕ 2: Наведение (Hover - Левитирующие кнопки) -->
+      <div class="capsule-state" id="state-hover">
+        <div class="flex gap-3 items-center justify-center relative w-full">
+          <!-- Кнопка записи -->
+          <div class="relative group flex flex-col items-center">
+            <button class="w-10 h-10 rounded-full bg-[#1b1b25] border border-[#35343a] flex items-center justify-center text-[#e4e1e9] hover:text-[#8e52ff] hover:border-[#8e52ff] transition-all shadow-lg active:scale-90 gpu-layer" id="btn-start-rec" style="background-color: #1b1b25; border: 1px solid #35343a;">
+              <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">mic</span>
+            </button>
+            <div class="absolute top-full mt-1 bg-[#35343a] text-[#e4e1e9] text-[9px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap border border-[#4a4455]/50 z-[100]">
+              Запись
+            </div>
+          </div>
+
+          <!-- Кнопка ИИ-пресетов -->
+          <div class="relative group flex flex-col items-center" id="hover-presets-container">
+            <button class="w-10 h-10 rounded-full bg-[#1b1b25] border border-[#35343a] flex items-center justify-center text-[#e4e1e9] hover:text-[#45a29e] hover:border-[#45a29e] transition-all shadow-lg active:scale-90 gpu-layer" id="btn-hover-presets" style="background-color: #1b1b25; border: 1px solid #35343a;">
+              <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">auto_awesome</span>
+            </button>
+            <div class="absolute top-full mt-1 bg-[#35343a] text-[#e4e1e9] text-[9px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap border border-[#4a4455]/50 z-[100]">
+              Пресеты
+            </div>
+            
+            <!-- Веер пресетов по ховеру (парящие слова) -->
+            <div class="absolute bottom-full mb-2 w-0 h-0 flex justify-center items-center hidden" id="hover-presets-menu">
+              <button class="preset-btn" style="bottom: 15px; left: -75px; transform: translate(-50%, 50%);" data-preset="summary">Суть</button>
+              <button class="preset-btn" style="bottom: 45px; left: -30px; transform: translate(-50%, 50%);" data-preset="tasks">Задачи</button>
+              <button class="preset-btn" style="bottom: 45px; left: 30px; transform: translate(-50%, 50%);" data-preset="email">Письмо</button>
+              <button class="preset-btn" style="bottom: 15px; left: 75px; transform: translate(-50%, 50%);" data-preset="custom">Промпт</button>
+            </div>
+          </div>
+
+          <!-- Кнопка Журнала -->
+          <div class="relative group flex flex-col items-center">
+            <button class="w-10 h-10 rounded-full bg-[#1b1b25] border border-[#35343a] flex items-center justify-center text-[#e4e1e9] hover:text-white hover:border-white transition-all shadow-lg active:scale-90 gpu-layer" id="btn-open-journal" style="background-color: #1b1b25; border: 1px solid #35343a;">
+              <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">history</span>
+            </button>
+            <div class="absolute top-full mt-1 bg-[#35343a] text-[#e4e1e9] text-[9px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap border border-[#4a4455]/50 z-[100]">
+              Журнал
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- СОСТОЯНИЕ 3: Запись (Active Recording) -->
+      <div class="capsule-state" id="state-recording">
+        <div class="flex flex-col items-center gap-1 w-full">
+          <!-- Парящие пресеты и волшебная палочка во время записи (по ховеру) -->
+          <div class="relative flex justify-center items-center h-11 w-full mb-0.5 opacity-0 pointer-events-none transition-all duration-300" id="recording-magic-area">
+            <button class="w-8 h-8 rounded-full bg-[#1b1b25] border border-[#35343a] flex items-center justify-center text-[#e4e1e9] hover:text-[#45a29e] hover:border-[#45a29e] transition-all shadow-lg active:scale-90 gpu-layer" id="btn-recording-presets" style="background-color: #1b1b25;">
+              <span class="material-symbols-outlined text-[15px]">auto_awesome</span>
+            </button>
+            
+            <!-- Веер пресетов -->
+            <div class="absolute bottom-full mb-1 w-0 h-0 flex justify-center items-center hidden" id="recording-presets-fan">
+              <button class="preset-btn" style="bottom: 12px; left: -65px; transform: translate(-50%, 50%);" data-rec-preset="summary">Суть</button>
+              <button class="preset-btn" style="bottom: 42px; left: -25px; transform: translate(-50%, 50%);" data-rec-preset="tasks">Задачи</button>
+              <button class="preset-btn" style="bottom: 42px; left: 25px; transform: translate(-50%, 50%);" data-rec-preset="email">Письмо</button>
+              <button class="preset-btn" style="bottom: 12px; left: 65px; transform: translate(-50%, 50%);" data-rec-preset="custom">Промпт</button>
+            </div>
+          </div>
+
+          <!-- Пилюля записи -->
+          <div class="bg-[#1b1b25] border border-[#35343a] rounded-full h-10 flex items-center px-3 shadow-[0_8px_24px_rgba(0,0,0,0.6)] gap-2.5 cursor-pointer hover:border-[#8e52ff]/50 transition-all w-[240px] justify-between mx-auto gpu-layer" id="recording-pill">
+            <!-- Left: Mic + Dot -->
+            <div class="flex items-center gap-1.5 border-r border-[#4a4455]/40 pr-2">
+              <span class="material-symbols-outlined text-[#f05454] text-[16px]" style="font-variation-settings: 'FILL' 1;">mic</span>
+              <div class="w-1.5 h-1.5 rounded-full bg-[#f05454] pulse-dot"></div>
+            </div>
+            <!-- Center: Waveform -->
+            <div class="flex items-center gap-[2.5px] h-4 w-20 justify-center" id="recording-waveform">
+              <div class="waveform-bar"></div>
+              <div class="waveform-bar"></div>
+              <div class="waveform-bar"></div>
+              <div class="waveform-bar"></div>
+              <div class="waveform-bar"></div>
+              <div class="waveform-bar"></div>
+              <div class="waveform-bar"></div>
+            </div>
+            <!-- Right: Timer -->
+            <div class="border-l border-[#4a4455]/40 pl-2 font-mono text-[11px] text-[#45a29e] tracking-wider" id="rec-timer">
+              00:00
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- СОСТОЯНИЕ 4: Пауза (Pause/Latch & Send) -->
+      <div class="capsule-state" id="state-pause">
+        <div class="flex flex-col items-center gap-1 w-full">
+          <!-- Парящие пресеты и волшебная палочка во время паузы (по ховеру) -->
+          <div class="relative flex justify-center items-center h-11 w-full mb-0.5 opacity-0 pointer-events-none transition-all duration-300" id="pause-magic-area">
+            <button class="w-8 h-8 rounded-full bg-[#1b1b25]/90 border border-[#35343a] flex items-center justify-center text-[#e4e1e9] hover:text-[#45a29e] hover:border-[#45a29e] transition-all shadow-lg active:scale-90 gpu-layer" id="btn-pause-presets" style="background-color: #1b1b25;">
+              <span class="material-symbols-outlined text-[15px]">auto_awesome</span>
+            </button>
+            
+            <!-- Веер пресетов -->
+            <div class="absolute bottom-full mb-1 w-0 h-0 flex justify-center items-center hidden" id="pause-presets-fan">
+              <button class="preset-btn" style="bottom: 12px; left: -65px; transform: translate(-50%, 50%);" data-pause-preset="summary">Суть</button>
+              <button class="preset-btn" style="bottom: 42px; left: -25px; transform: translate(-50%, 50%);" data-pause-preset="tasks">Задачи</button>
+              <button class="preset-btn" style="bottom: 42px; left: 25px; transform: translate(-50%, 50%);" data-pause-preset="email">Письмо</button>
+              <button class="preset-btn" style="bottom: 12px; left: 65px; transform: translate(-50%, 50%);" data-pause-preset="custom">Промпт</button>
+            </div>
+          </div>
+          
+          <!-- Пилюля паузы — шире чем записи, чтобы вместить все кнопки -->
+          <div class="bg-[#1b1b25] border border-[#35343a] rounded-full h-10 flex items-center px-3 shadow-[0_8px_24px_rgba(0,0,0,0.6)] gap-2 cursor-pointer hover:border-[#ffc107]/50 transition-all w-[280px] justify-between mx-auto gpu-layer" id="pause-pill">
+            <!-- Left: Pause Icon + Yellow Dot -->
+            <div class="flex items-center gap-1.5 border-r border-[#4a4455]/40 pr-2">
+              <span class="material-symbols-outlined text-[#ffc107] text-[16px]" style="font-variation-settings: 'FILL' 1;">pause</span>
+              <div class="w-1.5 h-1.5 rounded-full bg-[#ffc107]"></div>
+            </div>
+            <!-- Center: Waveform (Paused/Static) -->
+            <div class="flex items-center gap-[2.5px] h-4 w-16 justify-center">
+              <div class="waveform-bar" style="animation: none; height: 4px;"></div>
+              <div class="waveform-bar" style="animation: none; height: 4px;"></div>
+              <div class="waveform-bar" style="animation: none; height: 4px;"></div>
+              <div class="waveform-bar" style="animation: none; height: 4px;"></div>
+              <div class="waveform-bar" style="animation: none; height: 4px;"></div>
+              <div class="waveform-bar" style="animation: none; height: 4px;"></div>
+              <div class="waveform-bar" style="animation: none; height: 4px;"></div>
+            </div>
+            <!-- Right: Control Buttons + Stopped Timer -->
+            <div class="flex items-center gap-1.5 border-l border-[#4a4455]/40 pl-2">
+              <button class="text-[#ccc3d8] hover:text-[#8e52ff] bg-transparent border-0 flex items-center justify-center active:scale-90 cursor-pointer p-0 gpu-layer" id="btn-send-ai" title="Отправить в Gemini 🚀">
+                <span class="material-symbols-outlined text-[15px]" style="font-variation-settings: 'FILL' 1;">send</span>
+              </button>
+              <button class="text-[#ccc3d8] hover:text-[#f05454] bg-transparent border-0 flex items-center justify-center active:scale-90 cursor-pointer p-0 gpu-layer" id="btn-cancel-rec" title="Отменить запись">
+                <span class="material-symbols-outlined text-[16px]">close</span>
+              </button>
+              <div class="font-mono text-[11px] text-[#ffc107] tracking-wider" id="pause-timer">
+                00:00
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- СОСТОЯНИЕ 5: Подтверждение отмены (Cancel Confirm) -->
+      <div class="capsule-state" id="state-cancel-confirm">
+        <div class="flex flex-col items-center gap-1.5 w-full">
+          <!-- Крупный баннер предупреждения сверху -->
+          <div class="bg-[#1b1b25]/95 border border-[#f05454]/60 rounded-2xl p-3 shadow-2xl flex flex-col gap-2.5 w-[260px] justify-between items-center backdrop-blur-md" id="cancel-banner">
+            <div class="flex items-center gap-2 text-[#f05454]">
+              <span class="material-symbols-outlined text-[20px]">warning</span>
+              <span class="text-[11px] font-bold uppercase tracking-wider">Отмена записи</span>
+            </div>
+            <div class="text-[10px] text-[#ccc3d8] text-center px-1 font-medium leading-normal" id="cancel-countdown-text">
+              Вся надиктованная запись будет сброшена в архив через 5 сек...
+            </div>
+            <button class="w-full py-1.5 rounded-xl bg-[#8e52ff] hover:bg-[#a377ff] text-white text-[10px] font-bold transition-all shadow-lg active:scale-95 cursor-pointer border-0" id="btn-keep-recording">
+              Оставить запись
+            </button>
+          </div>
+
+          <!-- Пилюля отмены внизу -->
+          <div class="bg-[#1b1b25] border border-[#f05454] rounded-full h-10 flex items-center px-3 shadow-[0_8px_24px_rgba(0,0,0,0.6)] gap-2.5 w-[240px] justify-between" id="cancel-pill">
+            <span class="material-symbols-outlined text-[#f05454] text-[16px]">delete</span>
+            <div class="flex-grow flex items-center justify-center">
+              <div class="w-1.5 h-1.5 rounded-full bg-[#f05454] animate-ping"></div>
+            </div>
+            <div class="font-mono text-[11px] text-[#f05454] tracking-wider" id="cancel-timer">
+              00:00
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Toast Уведомление — позиционирован В ВЕРХНЕЙ части чтобы не перекрывать кнопки снизу -->
+    <div style="position: absolute; top: 4px; left: 50%; transform: translateX(-50%); width: 290px;" class="bg-[#1c1b23]/97 text-[#e4e1e9] text-[10.5px] px-3.5 py-2.5 rounded-xl shadow-2xl border border-[#8e52ff]/40 transition-all duration-300 opacity-0 pointer-events-none z-[500] text-center font-semibold leading-snug" id="capsule-toast">
+      Уведомление
+    </div>
+
+    <script>
+      const invoke = window.__TAURI__ ? window.__TAURI__.core.invoke : null;
+
+      // ======================================================================
+      // ЭЛЕМЕНТЫ UI
+      // ======================================================================
+      const container = document.getElementById('capsule-container');
+      const stateIdle = document.getElementById('state-idle');
+      const stateHover = document.getElementById('state-hover');
+      const stateRecording = document.getElementById('state-recording');
+      const statePause = document.getElementById('state-pause');
+      const stateCancelConfirm = document.getElementById('state-cancel-confirm');
+      const cancelCountdownText = document.getElementById('cancel-countdown-text');
+      const btnKeepRecording = document.getElementById('btn-keep-recording');
+      
+      const btnStartRec = document.getElementById('btn-start-rec');
+      const btnHoverPresets = document.getElementById('btn-hover-presets');
+      const hoverPresetsMenu = document.getElementById('hover-presets-menu');
+      const btnOpenJournal = document.getElementById('btn-open-journal');
+      const btnSendAi = document.getElementById('btn-send-ai');
+      const btnCancelRec = document.getElementById('btn-cancel-rec');
+      const recTimer = document.getElementById('rec-timer');
+      const recordingPill = document.getElementById('recording-pill');
+      const pausePill = document.getElementById('pause-pill');
+
+      const btnRecordingPresets = document.getElementById('btn-recording-presets');
+      const recordingPresetsFan = document.getElementById('recording-presets-fan');
+      const recordingMagicArea = document.getElementById('recording-magic-area');
+      const btnPausePresets = document.getElementById('btn-pause-presets');
+      const pausePresetsFan = document.getElementById('pause-presets-fan');
+      const pauseMagicArea = document.getElementById('pause-magic-area');
+
+      // Кросс-версионное получение текущего окна Tauri 2.0
+      let appWindow = null;
+      if (window.__TAURI__) {
+        if (window.__TAURI__.webviewWindow) {
+          appWindow = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
+        } else if (window.__TAURI__.window) {
+          appWindow = window.__TAURI__.window.getCurrentWindow();
+        }
+      }
+
+      // ======================================================================
+      // СОСТОЯНИЕ
+      // ======================================================================
+      let mediaRecorder = null;
+      let audioStream = null;
+      let audioChunks = [];
+      let recordingInterval = null;
+      let recordSeconds = 0;
+      let currentPreset = 'summary'; 
+      let currentState = 'idle';
+      let isMouseOver = false;
+
+      // Фиксированное позиционирование — координаты устанавливаются ОДИН раз
+      let lastBottomCenterX_phys = null;
+      let lastBottomY_phys = null;
+      let cachedScaleFactor = 1;
+      let maybeDragging = false;
+
+      // Размер окна (логические пиксели) — НИКОГДА не меняется
+      const WIN_WIDTH = 320;
+      const WIN_HEIGHT = 200;
+
+      // Таймер отмены
+      let cancelInterval = null;
+      let cancelSecondsLeft = 5;
+      let preCancelState = 'recording';
+
+      // Машина состояний глобальных хоткеев
+      let isHeld = false;
+      let pressCount = 0;
+      let pressTimeout = null;
+      let pressStartTime = 0;
+      let mode = null; // 'ptt' или 'latch'
+      let clickTimeout = null;
+      let clickCount = 0;
+
+      // Флаг блокировки повторной отправки
+      let isSending = false;
+
+      let customPromptText = "";
+
+      // ======================================================================
+      // ПРЕСЕТЫ — обработчики кликов
+      // ======================================================================
+
+      document.querySelectorAll('#hover-presets-menu button').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const preset = btn.getAttribute('data-preset');
+          if (preset === 'custom') {
+            openCustomPromptWindow();
+          } else {
+            currentPreset = preset;
+            syncPresetUI(currentPreset);
+            hoverPresetsMenu.classList.add('hidden');
+            mode = 'latch';
+            startRecordingProcess();
+          }
+        });
+      });
+
+      document.querySelectorAll('[data-rec-preset]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const preset = btn.getAttribute('data-rec-preset');
+          if (preset === 'custom') {
+            openCustomPromptWindow();
+          } else {
+            currentPreset = preset;
+            syncPresetUI(currentPreset);
+          }
+        });
+      });
+
+      document.querySelectorAll('[data-pause-preset]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const preset = btn.getAttribute('data-pause-preset');
+          if (preset === 'custom') {
+            openCustomPromptWindow();
+          } else {
+            currentPreset = preset;
+            syncPresetUI(currentPreset);
+          }
+        });
+      });
+
+      async function openCustomPromptWindow() {
+        if (!window.__TAURI__) return;
+        try {
+          const { WebviewWindow } = window.__TAURI__.webviewWindow;
+          const PhysicalPosition = window.__TAURI__.dpi.PhysicalPosition;
+          const promptWin = await WebviewWindow.getByLabel('prompt');
+          if (promptWin) {
+            // Позиционируем окно промпта ПРЯМО НАД капсулой
+            const capsulePos = await appWindow.outerPosition();
+            const capsuleSize = await appWindow.outerSize();
+            // Размеры окна промпта (из tauri.conf.json: 450x220)
+            const promptW_phys = Math.round(450 * cachedScaleFactor);
+            const promptH_phys = Math.round(220 * cachedScaleFactor);
+            const gap_phys = Math.round(8 * cachedScaleFactor);
+            // Центрируем по горизонтали над капсулой
+            const px = Math.round(capsulePos.x + capsuleSize.width / 2 - promptW_phys / 2);
+            // Размещаем выше капсулы
+            const py = Math.round(capsulePos.y - promptH_phys - gap_phys);
+            await promptWin.setPosition(new PhysicalPosition(px, py));
+            await window.__TAURI__.event.emitTo('prompt', 'set-current-prompt', customPromptText);
+            await promptWin.show();
+            await promptWin.setFocus();
+          }
+        } catch (e) {
+          console.error('Ошибка открытия окна промпта:', e);
+        }
+      }
+
+      function syncPresetUI(preset) {
+        document.querySelectorAll('[data-preset], [data-rec-preset], [data-pause-preset]').forEach(el => {
+          if (el.getAttribute('data-preset') === preset || 
+              el.getAttribute('data-rec-preset') === preset || 
+              el.getAttribute('data-pause-preset') === preset) {
+            el.classList.add('active');
+          } else {
+            el.classList.remove('active');
+          }
+        });
+      }
+
+      syncPresetUI(currentPreset);
+
+      // ======================================================================
+      // ВЕЕР ПРЕСЕТОВ — ховер-обработчики с дебаунсом
+      // НОЛЬ ресайзов — всё помещается в фиксированном окне 320×200
+      // ======================================================================
+
+      const hoverPresetsContainer = document.getElementById('hover-presets-container');
+      let hoverPresetsTimer = null;
+      if (hoverPresetsContainer) {
+        hoverPresetsContainer.addEventListener('mouseenter', () => {
+          if (hoverPresetsTimer) { clearTimeout(hoverPresetsTimer); hoverPresetsTimer = null; }
+          hoverPresetsMenu.classList.remove('hidden');
+        });
+        hoverPresetsContainer.addEventListener('mouseleave', () => {
+          if (hoverPresetsTimer) clearTimeout(hoverPresetsTimer);
+          hoverPresetsTimer = setTimeout(() => { hoverPresetsMenu.classList.add('hidden'); }, 400);
+        });
+      }
+
+      let recordingPresetsTimer = null;
+      if (recordingMagicArea) {
+        recordingMagicArea.addEventListener('mouseenter', () => {
+          if (recordingPresetsTimer) { clearTimeout(recordingPresetsTimer); recordingPresetsTimer = null; }
+          recordingPresetsFan.classList.remove('hidden');
+        });
+        recordingMagicArea.addEventListener('mouseleave', () => {
+          if (recordingPresetsTimer) clearTimeout(recordingPresetsTimer);
+          recordingPresetsTimer = setTimeout(() => { recordingPresetsFan.classList.add('hidden'); }, 400);
+        });
+      }
+
+      let pausePresetsTimer = null;
+      if (pauseMagicArea) {
+        pauseMagicArea.addEventListener('mouseenter', () => {
+          if (pausePresetsTimer) { clearTimeout(pausePresetsTimer); pausePresetsTimer = null; }
+          pausePresetsFan.classList.remove('hidden');
+        });
+        pauseMagicArea.addEventListener('mouseleave', () => {
+          if (pausePresetsTimer) clearTimeout(pausePresetsTimer);
+          pausePresetsTimer = setTimeout(() => { pausePresetsFan.classList.add('hidden'); }, 400);
+        });
+      }
+
+      let toastActive = false;
+
+      // ======================================================================
+      // ПОЗИЦИОНИРОВАНИЕ ОКНА — ОДИН раз при старте, потом НИКОГДА
+      // ======================================================================
+
+      async function initPosition() {
+        if (!appWindow) return;
+        
+        for (let i = 0; i < 10; i++) {
+          try {
+            const monitor = await appWindow.currentMonitor();
+            if (monitor) {
+              const availWidth = monitor.availableSize.width;
+              const availHeight = monitor.availableSize.height;
+              const availX = monitor.availablePosition.x;
+              const availY = monitor.availablePosition.y;
+              cachedScaleFactor = monitor.scaleFactor;
+              
+              const width_phys = Math.round(WIN_WIDTH * cachedScaleFactor);
+              const height_phys = Math.round(WIN_HEIGHT * cachedScaleFactor);
+              const margin_phys = Math.round(12 * cachedScaleFactor);
+              
+              lastBottomCenterX_phys = availX + availWidth / 2;
+              lastBottomY_phys = availY + availHeight - margin_phys;
+
+              const x_phys = Math.round(lastBottomCenterX_phys - width_phys / 2);
+              const y_phys = Math.round(lastBottomY_phys - height_phys);
+
+              console.log(`[Capsule] Инициализация: ${WIN_WIDTH}×${WIN_HEIGHT}, scale=${cachedScaleFactor}`);
+
+              if (invoke) {
+                await invoke('resize_bottom_up_phys', { 
+                  width: width_phys, height: height_phys, x: x_phys, y: y_phys 
+                });
+              }
+              return;
+            }
+          } catch (e) {
+            console.error('[Capsule] Ошибка инициализации:', e);
+          }
+          await new Promise(r => setTimeout(r, 100));
+        }
+
+        try {
+          const size = await appWindow.innerSize();
+          const pos = await appWindow.outerPosition();
+          lastBottomCenterX_phys = pos.x + size.width / 2;
+          lastBottomY_phys = pos.y + size.height;
+        } catch (e) {
+          console.error('[Capsule] Фоллбэк не удался:', e);
+        }
+      }
+
+      // ======================================================================
+      // ПЕРЕКЛЮЧЕНИЕ СОСТОЯНИЙ — только CSS-классы, НОЛЬ ресайзов
+      // ======================================================================
+
+      function switchState(state) {
+        currentState = state;
+
+        stateIdle.classList.remove('active');
+        stateHover.classList.remove('active');
+        stateRecording.classList.remove('active');
+        statePause.classList.remove('active');
+        stateCancelConfirm.classList.remove('active');
+
+        if (state === 'idle') {
+          stateIdle.classList.add('active');
+        } else if (state === 'hover') {
+          stateHover.classList.add('active');
+        } else if (state === 'recording') {
+          stateRecording.classList.add('active');
+          if (recordingMagicArea) {
+            if (isMouseOver) {
+              recordingMagicArea.classList.remove('opacity-0', 'pointer-events-none');
+              recordingMagicArea.classList.add('opacity-100', 'pointer-events-auto');
+            } else {
+              recordingMagicArea.classList.remove('opacity-100', 'pointer-events-auto');
+              recordingMagicArea.classList.add('opacity-0', 'pointer-events-none');
+            }
+          }
+          if (recordingPresetsFan) recordingPresetsFan.classList.add('hidden');
+        } else if (state === 'pause') {
+          statePause.classList.add('active');
+          if (pauseMagicArea) {
+            if (isMouseOver) {
+              pauseMagicArea.classList.remove('opacity-0', 'pointer-events-none');
+              pauseMagicArea.classList.add('opacity-100', 'pointer-events-auto');
+            } else {
+              pauseMagicArea.classList.remove('opacity-100', 'pointer-events-auto');
+              pauseMagicArea.classList.add('opacity-0', 'pointer-events-none');
+            }
+          }
+          if (pausePresetsFan) pausePresetsFan.classList.add('hidden');
+          syncPresetUI(currentPreset);
+        } else if (state === 'cancel-confirm') {
+          stateCancelConfirm.classList.add('active');
+        }
+
+        if (invoke) {
+          const isActive = (state === 'recording' || state === 'pause' || state === 'cancel-confirm');
+          invoke('set_capsule_active', { active: isActive }).catch(console.error);
+        }
+      }
+
+      // ======================================================================
+      // НАВЕДЕНИЕ МЫШИ — только CSS, никаких ресайзов
+      // ======================================================================
+
+      let collapseTimer = null;
+
+      container.addEventListener('mouseenter', () => {
+        isMouseOver = true;
+        if (collapseTimer) { clearTimeout(collapseTimer); collapseTimer = null; }
+
+        if (currentState === 'idle') {
+          switchState('hover');
+        } else if (currentState === 'recording') {
+          if (recordingMagicArea) {
+            recordingMagicArea.classList.remove('opacity-0', 'pointer-events-none');
+            recordingMagicArea.classList.add('opacity-100', 'pointer-events-auto');
+          }
+        } else if (currentState === 'pause') {
+          if (pauseMagicArea) {
+            pauseMagicArea.classList.remove('opacity-0', 'pointer-events-none');
+            pauseMagicArea.classList.add('opacity-100', 'pointer-events-auto');
+          }
+        }
+      });
+
+      container.addEventListener('mouseleave', () => {
+        isMouseOver = false;
+        
+        if (currentState === 'recording' || currentState === 'pause' || currentState === 'cancel-confirm') {
+          if (currentState === 'recording') {
+            if (recordingPresetsFan) recordingPresetsFan.classList.add('hidden');
+            if (recordingMagicArea) {
+              recordingMagicArea.classList.remove('opacity-100', 'pointer-events-auto');
+              recordingMagicArea.classList.add('opacity-0', 'pointer-events-none');
+            }
+          } else if (currentState === 'pause') {
+            if (pausePresetsFan) pausePresetsFan.classList.add('hidden');
+            if (pauseMagicArea) {
+              pauseMagicArea.classList.remove('opacity-100', 'pointer-events-auto');
+              pauseMagicArea.classList.add('opacity-0', 'pointer-events-none');
+            }
+          }
+          return;
+        }
+        
+        if (collapseTimer) clearTimeout(collapseTimer);
+        collapseTimer = setTimeout(() => {
+          if (!isMouseOver && currentState === 'hover') {
+            hoverPresetsMenu.classList.add('hidden');
+            switchState('idle');
+          }
+        }, 3000); // 3 секунды
+      });
+
+      // ======================================================================
+      // КНОПКИ И TOAST
+      // ======================================================================
+
+      btnOpenJournal.addEventListener('click', async () => {
+        if (window.__TAURI__) {
+          await window.__TAURI__.event.emit('open-history');
+        }
+      });
+
+      async function showToast(message, isError = true) {
+        const toast = document.getElementById('capsule-toast');
+        if (!toast) return;
+        toast.textContent = message;
+        if (isError) {
+          toast.style.backgroundColor = 'rgba(240, 84, 84, 0.95)';
+          toast.style.borderColor = 'rgba(240, 84, 84, 0.6)';
+          toast.style.color = 'white';
+        } else {
+          toast.style.backgroundColor = 'rgba(27, 27, 37, 0.97)';
+          toast.style.borderColor = 'rgba(142, 82, 255, 0.5)';
+          toast.style.color = '#e4e1e9';
+        }
+        toastActive = true;
+        toast.classList.remove('opacity-0', 'pointer-events-none');
+        toast.classList.add('opacity-100');
+        setTimeout(() => {
+          toast.classList.remove('opacity-100');
+          toast.classList.add('opacity-0', 'pointer-events-none');
+          toastActive = false;
+        }, 5000);
+      }
+
+      // ==========================================================================
+      // АУДИОЗАПИСЬ И ПЕРЕДАЧА
+      // ==========================================================================
+
+      async function startRecordingProcess() {
+        try {
+          audioChunks = [];
+          recordSeconds = 0;
+          recTimer.textContent = '00:00';
+
+          audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          
+          let mimeType = 'audio/webm';
+          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+            mimeType = 'audio/webm;codecs=opus';
+          }
+
+          mediaRecorder = new MediaRecorder(audioStream, { mimeType });
+          
+          mediaRecorder.ondataavailable = (event) => {
+            if (event.data && event.data.size > 0) {
+              audioChunks.push(event.data);
+            }
+          };
+
+          mediaRecorder.onstart = () => {
+            switchState('recording');
+            startTimer();
+          };
+
+          mediaRecorder.onpause = () => {
+            stopTimer();
+            document.getElementById('pause-timer').textContent = recTimer.textContent;
+            switchState('pause');
+          };
+
+          mediaRecorder.onresume = () => {
+            switchState('recording');
+            startTimer();
+          };
+
+          mediaRecorder.onstop = () => {
+            stopTimer();
+            if (audioStream) {
+              audioStream.getTracks().forEach(track => track.stop());
+            }
+          };
+
+          mediaRecorder.start(500);
+        } catch (err) {
+          console.error(err);
+          showToast('Доступ к микрофону заблокирован. Проверьте настройки системы.', true);
+          switchState('hover');
+        }
+      }
+
+      function pauseRecordingProcess() {
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+          mediaRecorder.pause();
+        }
+      }
+
+      function resumeRecordingProcess() {
+        if (mediaRecorder && mediaRecorder.state === 'paused') {
+          mediaRecorder.resume();
+        }
+      }
+
+      function startCancelCountdown() {
+        if (currentState !== 'recording' && currentState !== 'pause') return;
+        preCancelState = currentState;
+        pauseRecordingProcess();
+        document.getElementById('cancel-timer').textContent = recTimer.textContent;
+        switchState('cancel-confirm');
+        cancelSecondsLeft = 5;
+        cancelCountdownText.textContent = `Вся надиктованная запись будет сброшена в архив через ${cancelSecondsLeft} сек...`;
+        if (cancelInterval) clearInterval(cancelInterval);
+        cancelInterval = setInterval(() => {
+          cancelSecondsLeft--;
+          if (cancelSecondsLeft <= 0) {
+            clearInterval(cancelInterval);
+            cancelInterval = null;
+            cancelRecordingProcess(true);
+          } else {
+            cancelCountdownText.textContent = `Вся надиктованная запись будет сброшена в архив через ${cancelSecondsLeft} сек...`;
+          }
+        }, 1000);
+      }
+
+      function stopCancelCountdownAndRestore() {
+        if (cancelInterval) { clearInterval(cancelInterval); cancelInterval = null; }
+        if (preCancelState === 'recording') {
+          resumeRecordingProcess();
+        } else {
+          switchState('pause');
+        }
+      }
+
+      async function cancelRecordingProcess(isUserCancelled = true) {
+        if (cancelInterval) { clearInterval(cancelInterval); cancelInterval = null; }
+        let finalSeconds = recordSeconds;
+        stopTimer();
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+          mediaRecorder.stop();
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+        if (isUserCancelled && audioChunks.length > 0) {
+          const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+          try {
+            const arrayBuffer = await audioBlob.arrayBuffer();
+            const uint8Array = new Uint8Array(arrayBuffer);
+            const bytesArray = Array.from(uint8Array);
+            if (invoke) {
+              await invoke('save_audio', {
+                bytes: bytesArray, durationSecs: finalSeconds,
+                preset: 'cancelled', customPrompt: null, isCancelled: true
+              });
+            }
+          } catch (e) {
+            console.error('Ошибка сохранения отмененного аудио:', e);
+          }
+        }
+        audioChunks = [];
+        switchState('idle');
+      }
+
+      async function stopAndSendRecording() {
+        // Защита от двойного нажатия
+        if (isSending) return;
+        if (cancelInterval) { clearInterval(cancelInterval); cancelInterval = null; }
+        if (audioChunks.length === 0) { switchState('idle'); return; }
+
+        isSending = true;
+
+        // Показываем spinner на кнопке Send
+        const sendIcon = btnSendAi ? btnSendAi.querySelector('.material-symbols-outlined') : null;
+        if (sendIcon) sendIcon.textContent = 'progress_activity';
+        if (sendIcon) sendIcon.classList.add('spinner');
+        if (btnSendAi) btnSendAi.style.pointerEvents = 'none';
+
+        switchState('idle');
+        showToast('Отправляется в Gemini...', false);
+
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+          mediaRecorder.stop();
+          await new Promise(resolve => setTimeout(resolve, 250));
+        }
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        try {
+          const arrayBuffer = await audioBlob.arrayBuffer();
+          const uint8Array = new Uint8Array(arrayBuffer);
+          const bytesArray = Array.from(uint8Array);
+          const promptToSend = customPromptText || "";
+          if (invoke) {
+            const entry = await invoke('save_audio', {
+              bytes: bytesArray, durationSecs: recordSeconds,
+              preset: currentPreset,
+              customPrompt: promptToSend.trim().length > 0 ? promptToSend : null
+            });
+            // Показываем статус в зависимости от результата
+            if (entry.preset === 'error') {
+              showToast(`Ошибка Gemini: ${entry.transcript.substring(0, 80)}`, true);
+            } else {
+              await invoke('paste_text', { text: entry.transcript });
+              showToast('Готово! Текст вставлен в активное поле.', false);
+            }
+          }
+        } catch (err) {
+          console.error(err);
+          showToast(typeof err === 'string' ? err : 'Ошибка отправки. Запись сохранена в истории.', true);
+        } finally {
+          audioChunks = [];
+          customPromptText = "";
+          isSending = false;
+          // Восстанавливаем иконку Send
+          if (sendIcon) { sendIcon.textContent = 'send'; sendIcon.classList.remove('spinner'); }
+          if (btnSendAi) btnSendAi.style.pointerEvents = '';
+          syncPresetUI(currentPreset);
+        }
+      }
+
+      // События кнопок
+      btnStartRec.addEventListener('click', () => { mode = 'latch'; startRecordingProcess(); });
+      recordingPill.addEventListener('click', () => { pauseRecordingProcess(); });
+      if (pausePill) {
+        pausePill.addEventListener('click', (e) => {
+          if (e.target.closest('#btn-send-ai') || e.target.closest('#btn-cancel-rec')) return;
+          resumeRecordingProcess();
+        });
+      }
+      btnCancelRec.addEventListener('click', () => { startCancelCountdown(); });
+      btnKeepRecording.addEventListener('click', () => { stopCancelCountdownAndRestore(); });
+      btnSendAi.addEventListener('click', () => { stopAndSendRecording(); });
+
+      function startTimer() {
+        if (recordingInterval) clearInterval(recordingInterval);
+        recordingInterval = setInterval(() => {
+          recordSeconds++;
+          const mins = Math.floor(recordSeconds / 60).toString().padStart(2, '0');
+          const secs = (recordSeconds % 60).toString().padStart(2, '0');
+          recTimer.textContent = `${mins}:${secs}`;
+        }, 1000);
+      }
+
+      function stopTimer() {
+        if (recordingInterval) { clearInterval(recordingInterval); recordingInterval = null; }
+      }
+
+      // Убираем локальный keydown-обработчик Escape — он вызывал двойное
+      // срабатывание когда капсула в фокусе (одновременно с global-escape).
+      // Вся логика Escape обрабатывается через Tauri global hook.
+
+      // ======================================================================
+      // TAURI — инициализация и события
+      // ======================================================================
+
+      if (window.__TAURI__) {
+        initPosition();
+
+        // Обновляем якорь ТОЛЬКО при ручном перетаскивании
+        if (appWindow) {
+          appWindow.onMoved((event) => {
+            if (!maybeDragging) return;
+            const { x, y } = event.payload;
+            const factor = cachedScaleFactor;
+            const currentW = Math.round(WIN_WIDTH * factor);
+            const currentH = Math.round(WIN_HEIGHT * factor);
+            lastBottomCenterX_phys = x + currentW / 2;
+            lastBottomY_phys = y + currentH;
+          });
+        }
+
+        container.addEventListener('mousedown', (e) => {
+          if (e.buttons === 1 && !e.target.closest('button') && !e.target.closest('input') && !e.target.closest('.preset-btn')) {
+            maybeDragging = true;
+            appWindow.startDragging();
+          }
+        });
+        container.addEventListener('mouseup', () => { maybeDragging = false; });
+
+        window.__TAURI__.event.emit('capsule-visibility-changed', true);
+        appWindow.onCloseRequested(() => {
+          window.__TAURI__.event.emit('capsule-visibility-changed', false);
+        });
+
+        // Хоткеи
+        window.__TAURI__.event.listen('global-shortcut-pressed', () => {
+          isHeld = true;
+          const now = Date.now();
+          if (currentState === 'cancel-confirm') { stopCancelCountdownAndRestore(); isHeld = false; return; }
+          if (currentState === 'recording' && mode === 'latch') { pauseRecordingProcess(); return; }
+          if (currentState === 'pause' && mode === 'latch') { resumeRecordingProcess(); return; }
+          if (currentState === 'idle' || currentState === 'hover') {
+            pressStartTime = now;
+            if (pressTimeout) clearTimeout(pressTimeout);
+            pressTimeout = setTimeout(() => { if (isHeld) { mode = 'ptt'; startRecordingProcess(); } }, 250);
+          }
+        });
+
+        window.__TAURI__.event.listen('global-shortcut-released', () => {
+          isHeld = false;
+          if (pressTimeout) { clearTimeout(pressTimeout); pressTimeout = null; }
+          if (mode === 'ptt') { stopAndSendRecording(); mode = null; return; }
+          if (currentState === 'idle' || currentState === 'hover') {
+            const duration = Date.now() - pressStartTime;
+            // Быстрый клик (< 250мс удержания)
+            if (duration < 250) {
+              clickCount++;
+              if (clickCount === 1) {
+                // Ждём 500мс для второго клика
+                clickTimeout = setTimeout(() => { clickCount = 0; }, 500);
+              } else if (clickCount >= 2) {
+                // Двойной быстрый клик → Latch-запись
+                if (clickTimeout) clearTimeout(clickTimeout);
+                clickCount = 0;
+                mode = 'latch';
+                startRecordingProcess();
+              }
+            }
+            // Одиночное долгое нажатие (>= 250мс) в idle/hover — ничего не делаем
+            // Это защита от случайного запуска (не PTT и не двойной клик)
+          }
+        });
+
+        window.__TAURI__.event.listen('global-force-send', () => {
+          if (currentState === 'recording' || currentState === 'pause') stopAndSendRecording();
+        });
+
+        window.__TAURI__.event.listen('global-escape', () => {
+          if (currentState === 'recording' || currentState === 'pause') {
+            // Всегда запускаем 5-секундный таймер, никогда не отменяем мгновенно
+            startCancelCountdown();
+          } else if (currentState === 'cancel-confirm') {
+            // Повторный Escape в режиме подтверждения — перезапускаем таймер
+            // (даём ещё 5 секунд, не отменяем мгновенно)
+            cancelSecondsLeft = 5;
+            cancelCountdownText.textContent = `Вся надиктованная запись будет сброшена в архив через ${cancelSecondsLeft} сек...`;
+          }
+        });
+
+        window.__TAURI__.event.listen('custom-prompt-saved', (event) => {
+          customPromptText = event.payload || '';
+          currentPreset = 'custom';
+          syncPresetUI(currentPreset);
+          if (currentState === 'hover' || currentState === 'idle') {
+            if (hoverPresetsMenu) hoverPresetsMenu.classList.add('hidden');
+            mode = 'latch';
+            startRecordingProcess();
+          } else if (currentState === 'recording') {
+            if (recordingPresetsFan) recordingPresetsFan.classList.add('hidden');
+          } else if (currentState === 'pause') {
+            if (pausePresetsFan) pausePresetsFan.classList.add('hidden');
+          }
+        });
+      }
+    </script>
+  </body>
+</html>

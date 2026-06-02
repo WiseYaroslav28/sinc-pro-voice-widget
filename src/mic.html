@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SINC PRO - Смарт-микрофон</title>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+      body {
+        background: transparent;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+      }
+      
+      /* Анимированное кольцо вокруг микрофона */
+      .mic-glow-ring {
+        position: relative;
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        background-color: var(--bg-surface-lowest);
+        border: 1.5px solid var(--color-purple);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4), 0 0 8px var(--color-purple-glow);
+        cursor: pointer;
+        animation: pulse-ring 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+      }
+
+      @keyframes pulse-ring {
+        0% {
+          box-shadow: 0 0 0 0 rgba(142, 82, 255, 0.6);
+        }
+        70% {
+          box-shadow: 0 0 0 10px rgba(142, 82, 255, 0);
+        }
+        100% {
+          box-shadow: 0 0 0 0 rgba(142, 82, 255, 0);
+        }
+      }
+
+      /* Текст "Слушаю..." */
+      .mic-tooltip {
+        position: absolute;
+        left: 48px;
+        background-color: var(--bg-surface);
+        border: var(--border-light);
+        border-radius: var(--round-md);
+        padding: 4px 8px;
+        font-size: 11px;
+        font-family: var(--font-label);
+        font-weight: 500;
+        color: var(--text-primary);
+        white-space: nowrap;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        opacity: 1;
+        transform: scale(1);
+        transition: opacity var(--transition-normal), transform var(--transition-normal);
+        animation: fade-tooltip 2s forwards 1.5s; /* Исчезнет через 1.5 секунды */
+      }
+
+      @keyframes fade-tooltip {
+        0% { opacity: 1; transform: translateX(0) scale(1); }
+        100% { opacity: 0; transform: translateX(-10px) scale(0.9); }
+      }
+    </style>
+  </head>
+
+  <body>
+    <div style="display: flex; align-items: center; position: relative;" id="mic-container">
+      <!-- Пульсирующее кольцо -->
+      <div class="mic-glow-ring">
+        <i data-lucide-name="mic" style="width: 16px; height: 16px; color: var(--color-purple); fill: rgba(142, 82, 255, 0.2);"></i>
+      </div>
+
+      <!-- Всплывающая подсказка "Слушаю..." -->
+      <div class="mic-tooltip" id="mic-tooltip">Слушаю...</div>
+    </div>
+
+    <script>
+      // Функция безопасного вызова Lucide
+      function updateIcons() {
+        if (typeof lucide !== 'undefined') {
+          try {
+            lucide.createIcons();
+          } catch (e) {
+            console.error('Ошибка Lucide:', e);
+          }
+        }
+      }
+
+      // Инициализация Lucide иконок
+      updateIcons();
+
+      // Автоматическое скрытие виджета через 2.5 секунды для имитации реального смарт-микрофона
+      // (В реальном Tauri-приложении окно будет закрыто системным вызовом)
+      setTimeout(() => {
+        const tooltip = document.getElementById('mic-tooltip');
+        tooltip.style.opacity = '0';
+      }, 1500);
+
+      // Подключение перетаскивания окна Tauri за микрофон
+      if (window.__TAURI__) {
+        const appWindow = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
+        
+        document.getElementById('mic-container').addEventListener('mousedown', (e) => {
+          if (e.buttons === 1) {
+            appWindow.startDragging();
+          }
+        });
+      }
+    </script>
+  </body>
+</html>

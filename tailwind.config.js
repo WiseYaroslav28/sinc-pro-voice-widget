@@ -1,0 +1,88 @@
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: ["./src/**/*.{html,js}"],
+  darkMode: 'class',
+  theme: {
+    extend: {
+      colors: {
+        "on-primary-fixed": "#25005a",
+        "on-primary": "#3e008e",
+        "surface-variant": "#35343a",
+        "on-surface-variant": "#ccc3d8",
+        "inverse-surface": "#e4e1e9",
+        "on-background": "#e4e1e9",
+        "primary": "#d2bbff",
+        "on-secondary": "#003735",
+        "surface-tint": "#d2bbff",
+        "on-secondary-fixed-variant": "#00504d",
+        "primary-fixed": "#eaddff",
+        "on-primary-container": "#36007d",
+        "on-primary-fixed-variant": "#5900c6",
+        "outline-variant": "#4a4455",
+        "tertiary-container": "#918f9c",
+        "secondary-fixed-dim": "#7bd6d1",
+        "secondary": "#7bd6d1",
+        "background": "#131318",
+        "tertiary-fixed": "#e3e1ef",
+        "on-tertiary-fixed": "#1b1b25",
+        "on-error-container": "#ffdad6",
+        "surface-container-lowest": "#0e0e13",
+        "primary-container": "#a377ff",
+        "error-container": "#93000a",
+        "on-tertiary": "#302f3a",
+        "secondary-container": "#007774",
+        "on-tertiary-container": "#292933",
+        "error": "#ffb4ab",
+        "surface-container-high": "#2a292f",
+        "outline": "#958da1",
+        "on-surface": "#e4e1e9",
+        "secondary-fixed": "#98f2ed",
+        "inverse-on-surface": "#303036",
+        "surface-dim": "#131318",
+        "on-secondary-fixed": "#00201f",
+        "surface": "#131318",
+        "on-secondary-container": "#a1fcf7",
+        "surface-container": "#1f1f24",
+        "tertiary": "#c7c5d3",
+        "tertiary-fixed-dim": "#c7c5d3",
+        "surface-container-low": "#1b1b20",
+        "on-error": "#690005",
+        "surface-container-highest": "#35343a",
+        "surface-bright": "#39383e",
+        "on-tertiary-fixed-variant": "#464651",
+        "inverse-primary": "#7330e3",
+        "primary-fixed-dim": "#d2bbff",
+        
+        // Дополнительные цвета SINC PRO из capsule_showcase
+        "sinc-obsidian": "#0B0B10",
+        "sinc-surface": "#1B1B25",
+        "sinc-purple": "#8E52FF",
+        "sinc-teal": "#45A29E",
+        "sinc-ruby": "#F05454"
+      },
+      borderRadius: {
+        "DEFAULT": "0.25rem",
+        "lg": "0.5rem",
+        "xl": "0.75rem",
+        "full": "9999px"
+      },
+      spacing: {
+        "xs": "4px",
+        "sm": "8px",
+        "base": "8px",
+        "md": "16px",
+        "lg": "24px",
+        "xl": "32px"
+      },
+      fontFamily: {
+        "headline-lg": ["Inter", "sans-serif"],
+        "headline-md": ["Inter", "sans-serif"],
+        "label-sm": ["Public Sans", "sans-serif"],
+        "body-md": ["Inter", "sans-serif"],
+        "label": ["Public Sans", "sans-serif"],
+        "mono": ["JetBrains Mono", "monospace"]
+      }
+    },
+  },
+  plugins: [],
+}

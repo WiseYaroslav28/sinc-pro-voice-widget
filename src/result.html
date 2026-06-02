@@ -1,0 +1,138 @@
+<!doctype html>
+<html class="dark" lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SINC PRO - Результат</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+    <style>
+      body {
+        background: transparent !important;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+      }
+      
+      .modal-container {
+        background: rgba(27, 27, 37, 0.95);
+        backdrop-filter: blur(16px);
+        border: 1px solid rgba(142, 82, 255, 0.25);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7);
+        border-radius: 16px;
+        width: calc(100% - 16px);
+        height: calc(100% - 16px);
+        display: flex;
+        flex-col: column;
+        flex-direction: column;
+        padding: 16px;
+        box-sizing: border-box;
+      }
+
+      /* Сброс дефолтных стилей кнопок */
+      button {
+        background: transparent;
+        border: none;
+        outline: none;
+        cursor: pointer;
+        padding: 0;
+      }
+    </style>
+  </head>
+
+  <body class="bg-transparent text-[#e4e1e9] antialiased">
+    <div class="modal-container flex flex-col justify-between">
+      <!-- Header -->
+      <div class="flex justify-between items-center border-b border-[#4a4455]/20 pb-2 drag-region">
+        <div class="flex items-center gap-2">
+          <span class="material-symbols-outlined text-[#8e52ff] text-[18px]">auto_awesome</span>
+          <span class="text-[12px] font-bold tracking-wider uppercase text-[#d2bbff]">Результат обработки</span>
+        </div>
+        <button class="text-[#ccc3d8] hover:text-[#f05454] transition-colors flex items-center justify-center" id="btn-close" title="Закрыть">
+          <span class="material-symbols-outlined text-[18px]">close</span>
+        </button>
+      </div>
+
+      <!-- Content Text Area -->
+      <div class="flex-grow my-3 overflow-y-auto pr-1">
+        <textarea class="w-full h-full bg-[#131318]/50 border border-[#4a4455]/30 rounded-xl p-3 text-[13px] text-[#e4e1e9] focus:outline-none focus:border-[#8e52ff]/50 resize-none font-sans leading-relaxed" id="result-text" readonly></textarea>
+      </div>
+
+      <!-- Footer Buttons -->
+      <div class="flex gap-2">
+        <button class="flex-1 py-2 rounded-xl bg-[#8e52ff] text-white hover:bg-[#a377ff] active:scale-95 transition-all text-[12px] font-semibold flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(142,82,255,0.3)]" id="btn-copy">
+          <span class="material-symbols-outlined text-[16px]">content_copy</span>
+          Скопировать в буфер
+        </button>
+      </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-[#1f1f24] text-[#7bd6d1] text-[10px] px-3 py-1.5 rounded-lg shadow-xl border border-[#7bd6d1]/20 transition-all duration-300 opacity-0 pointer-events-none z-[1000] text-center" id="copy-toast">
+      Скопировано в буфер обмена!
+    </div>
+
+    <script>
+      const btnClose = document.getElementById('btn-close');
+      const btnCopy = document.getElementById('btn-copy');
+      const resultText = document.getElementById('result-text');
+      const toast = document.getElementById('copy-toast');
+
+      // Tauri window
+      let appWindow = null;
+      if (window.__TAURI__) {
+        appWindow = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
+        
+        // Позволяем перетаскивать модалку за заголовок
+        document.querySelector('.drag-region').addEventListener('mousedown', (e) => {
+          if (e.buttons === 1 && !e.target.closest('button')) {
+            appWindow.startDragging();
+          }
+        });
+
+        // Слушаем текст результата
+        window.__TAURI__.event.listen('set-result-text', (event) => {
+          resultText.value = event.payload;
+        });
+      }
+
+      btnClose.addEventListener('click', () => {
+        if (appWindow) {
+          appWindow.hide();
+        } else {
+          window.close();
+        }
+      });
+
+      btnCopy.addEventListener('click', async () => {
+        const text = resultText.value;
+        if (!text) return;
+
+        try {
+          if (window.__TAURI__) {
+            // Копируем через буфер обмена
+            await navigator.clipboard.writeText(text);
+          } else {
+            resultText.select();
+            document.execCommand('copy');
+          }
+          
+          // Показываем Toast
+          toast.classList.remove('opacity-0', 'pointer-events-none');
+          toast.classList.add('opacity-100');
+          setTimeout(() => {
+            toast.classList.remove('opacity-100');
+            toast.classList.add('opacity-0', 'pointer-events-none');
+          }, 2000);
+        } catch (err) {
+          console.error('Ошибка копирования:', err);
+        }
+      });
+    </script>
+  </body>
+</html>

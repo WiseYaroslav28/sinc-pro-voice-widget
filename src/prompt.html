@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html class="dark" lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SINC PRO - Свой промпт</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+  <style>
+    * {
+      outline: none !important;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    html, body {
+      /* Прозрачный html/body для поддержки Tauri transparent window */
+      background: transparent !important;
+      background-color: transparent !important;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100vw;
+      height: 100vh;
+      padding: 8px;
+    }
+    .drag-region {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 48px; /* Не перекрываем кнопку закрытия справа */
+      height: 36px;
+      cursor: move;
+      z-index: 5;
+    }
+    button, textarea {
+      position: relative;
+      z-index: 10;
+    }
+    /* Запрещаем выделение только для не-textarea */
+    body *:not(textarea) {
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    textarea {
+      -webkit-user-select: text !important;
+      user-select: text !important;
+    }
+  </style>
+</head>
+<body class="bg-transparent text-[#e4e1e9] antialiased">
+  <!-- Непрозрачная карточка с сильным blur и тёмным фоном — чётко выделяется на любом фоне -->
+  <div class="w-full h-full flex flex-col relative overflow-hidden"
+       style="background: #1c1b23; border: 1px solid rgba(142, 82, 255, 0.5); border-radius: 16px; box-shadow: 0 0 0 1px rgba(142,82,255,0.15), 0 8px 32px rgba(0,0,0,0.8), 0 0 24px rgba(142,82,255,0.12); padding: 14px;">
+    <!-- Drag handle -->
+    <div class="drag-region" data-tauri-drag-region></div>
+
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-3 z-10">
+      <div class="flex items-center gap-2">
+        <span class="material-symbols-outlined text-[#8e52ff] text-[18px]">auto_awesome</span>
+        <span class="text-xs font-semibold tracking-wider text-[#ccc3d8] uppercase">Свой промпт для ИИ</span>
+      </div>
+      <!-- Close button -->
+      <button class="text-[#ccc3d8] hover:text-[#f05454] transition-colors flex items-center justify-center cursor-pointer bg-transparent border-0 relative z-20" id="btn-close" style="pointer-events: auto;">
+        <span class="material-symbols-outlined text-[18px]">close</span>
+      </button>
+    </div>
+
+    <!-- Content -->
+    <div class="flex-1 flex flex-col gap-3 z-10">
+      <textarea 
+        id="prompt-input" 
+        placeholder="Введите ваши инструкции для обработки аудио (например: 'Выдели ключевые тезисы на русском языке и оформи списком')" 
+        class="flex-1 bg-[#131318] border border-[#4a4455]/30 rounded-xl p-3 text-xs text-[#e4e1e9] focus:border-[#8e52ff]/50 focus:outline-none resize-none -webkit-user-select: text; user-select: text;"
+      ></textarea>
+      
+      <div class="flex justify-end gap-2">
+        <button class="px-4 py-1.5 rounded-full border border-[#4a4455]/40 text-[#ccc3d8] hover:text-white hover:bg-[#1f1f24] transition-all text-xs font-semibold cursor-pointer bg-transparent" id="btn-cancel">
+          Отмена
+        </button>
+        <button class="px-5 py-1.5 rounded-full bg-[#8e52ff] hover:bg-[#a377ff] text-white transition-all text-xs font-semibold shadow-lg shadow-[#8e52ff]/20 cursor-pointer border-0" id="btn-apply">
+          Применить
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let appWindow = null;
+    if (window.__TAURI__) {
+      if (window.__TAURI__.webviewWindow) {
+        appWindow = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
+      } else if (window.__TAURI__.window) {
+        appWindow = window.__TAURI__.window.getCurrentWindow();
+      }
+    }
+
+    const promptInput = document.getElementById('prompt-input');
+    const btnClose = document.getElementById('btn-close');
+    const btnCancel = document.getElementById('btn-cancel');
+    const btnApply = document.getElementById('btn-apply');
+
+    // Получаем текущий промпт при открытии окна
+    if (window.__TAURI__) {
+      window.__TAURI__.event.listen('set-current-prompt', (event) => {
+        promptInput.value = event.payload || '';
+        setTimeout(() => {
+          promptInput.focus();
+        }, 100);
+      });
+    }
+
+    // Закрытие/отмена
+    function closeWindow() {
+      if (appWindow) appWindow.hide();
+    }
+
+    btnClose.addEventListener('click', closeWindow);
+    btnCancel.addEventListener('click', closeWindow);
+
+    // Применить
+    btnApply.addEventListener('click', () => {
+      const text = promptInput.value;
+      if (window.__TAURI__) {
+        window.__TAURI__.event.emit('custom-prompt-saved', text);
+      }
+      closeWindow();
+    });
+
+    // Обработка Enter / Ctrl+Enter для сохранения
+    promptInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        btnApply.click();
+      }
+      if (e.key === 'Escape') {
+        closeWindow();
+      }
+    });
+  </script>
+</body>
+</html>

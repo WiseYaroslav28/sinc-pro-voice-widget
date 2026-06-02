@@ -1,0 +1,16 @@
+{
+  "name": "tauri-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "build:css": "npx @tailwindcss/cli -i ./src/input.css -o ./src/styles.css --minify",
+    "watch:css": "npx @tailwindcss/cli -i ./src/input.css -o ./src/styles.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.0",
+    "@tauri-apps/cli": "^2",
+    "tailwindcss": "^4.3.0"
+  }
+}

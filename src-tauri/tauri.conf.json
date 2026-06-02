@@ -1,0 +1,113 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "tauri-app",
+  "version": "0.1.0",
+  "identifier": "com.sincpro.app",
+  "build": {
+    "frontendDist": "../src"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "SINC PRO",
+        "url": "index.html",
+        "width": 960,
+        "height": 600,
+        "resizable": true,
+        "decorations": false,
+        "transparent": true,
+        "shadow": true
+      },
+      {
+        "label": "capsule",
+        "title": "SINC PRO - Капсула",
+        "url": "capsule.html",
+        "width": 320,
+        "height": 200,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visible": true,
+        "shadow": false
+      },
+      {
+        "label": "widget",
+        "title": "SINC PRO - Виджет",
+        "url": "widget.html",
+        "width": 340,
+        "height": 90,
+        "resizable": true,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visible": false
+      },
+      {
+        "label": "ocr",
+        "title": "SINC PRO - Переводчик",
+        "url": "ocr.html",
+        "fullscreen": true,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visible": false
+      },
+      {
+        "label": "mic",
+        "title": "SINC PRO - Микрофон",
+        "url": "mic.html",
+        "width": 120,
+        "height": 48,
+        "resizable": true,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visible": false
+      },
+      {
+        "label": "result",
+        "title": "SINC PRO - Результат",
+        "url": "result.html",
+        "width": 400,
+        "height": 260,
+        "resizable": true,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visible": false,
+        "shadow": true
+      },
+      {
+        "label": "prompt",
+        "title": "SINC PRO - Свой промпт",
+        "url": "prompt.html",
+        "width": 450,
+        "height": 220,
+        "resizable": true,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visible": false,
+        "shadow": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}
