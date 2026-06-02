@@ -1,19 +1,20 @@
-{
-  "name": "tauri-app",
-  "private": true,
-  "version": "0.1.0",
-  "type": "module",
-  "scripts": {
-    "tauri": "tauri",
-    "build:css": "npx @tailwindcss/cli -i ./src/input.css -o ./src/styles.css --minify",
-    "watch:css": "npx @tailwindcss/cli -i ./src/input.css -o ./src/styles.css --watch",
-    "test": "playwright test"
-  },
-  "devDependencies": {
-    "@playwright/test": "^1.60.0",
-    "@tailwindcss/cli": "^4.3.0",
-    "@tauri-apps/cli": "^2",
-    "serve": "^14.2.6",
-    "tailwindcss": "^4.3.0"
-  }
+﻿{
+    "name":  "tauri-app",
+    "private":  true,
+    "version":  "0.1.0",
+    "type":  "module",
+    "scripts":  {
+                    "tauri":  "tauri",
+                    "build:css":  "npx @tailwindcss/cli -i ./src/input.css -o ./src/styles.css --minify",
+                    "watch:css":  "npx @tailwindcss/cli -i ./src/input.css -o ./src/styles.css --watch",
+                    "test":  "playwright test",
+                    "serve:test":  "npx serve src -p 9999 --no-clipboard"
+                },
+    "devDependencies":  {
+                            "@playwright/test":  "^1.60.0",
+                            "@tailwindcss/cli":  "^4.3.0",
+                            "@tauri-apps/cli":  "^2",
+                            "serve":  "^14.2.6",
+                            "tailwindcss":  "^4.3.0"
+                        }
 }
