@@ -99,38 +99,68 @@
           <section class="tab-content flex flex-col gap-3 h-full" id="tab-home">
 
             <!-- Центральная карточка: Последняя активность -->
-            <div class="bg-[#1f1f24] rounded-xl border border-[#4a4455]/20 flex flex-col overflow-hidden relative group neon-glow transition-shadow duration-300 flex-1 min-h-0" style="min-height: 220px;">
+            <div class="bg-[#1f1f24] rounded-xl border border-[#4a4455]/20 flex flex-col overflow-hidden relative neon-glow transition-shadow duration-300 flex-1 min-h-0" style="min-height: 220px;">
               <!-- Акцентная фиолетовая полоска сверху -->
               <div class="h-0.5 w-full flex-shrink-0" style="background: linear-gradient(to right, #d2bbff, transparent);"></div>
-              <!-- Шапка карточки -->
-              <div class="px-5 py-3 border-b border-[#4a4455]/20 flex justify-between items-center bg-[#2a292f]/30 flex-shrink-0">
-                <div class="flex items-center gap-3">
-                  <div class="bg-[#d2bbff]/10 p-1.5 rounded-lg flex-shrink-0">
-                    <span class="material-symbols-outlined text-[#d2bbff] text-[18px]" style="font-variation-settings: 'FILL' 1;">graphic_eq</span>
+
+              <!-- Шапка карточки: всё управление здесь -->
+              <div class="px-4 py-2.5 border-b border-[#4a4455]/20 flex items-center gap-2 bg-[#2a292f]/30 flex-shrink-0 flex-wrap">
+                <!-- Иконка + заголовок -->
+                <div class="flex items-center gap-2 flex-shrink-0">
+                  <div class="bg-[#d2bbff]/10 p-1 rounded-lg flex-shrink-0">
+                    <span class="material-symbols-outlined text-[#d2bbff] text-[16px]" style="font-variation-settings: 'FILL' 1;">graphic_eq</span>
                   </div>
                   <div>
-                    <h3 class="text-[13px] font-semibold text-[#e4e1e9]">Последняя активность</h3>
-                    <div class="flex items-center gap-2 mt-0.5">
-                      <span class="text-[10px] text-[#d2bbff] bg-[#1f1f24] px-1.5 py-0.5 rounded border border-[#4a4455]/30" id="activity-model">Gemini 2.0 Flash</span>
-                      <span class="text-[10px] text-[#ccc3d8] flex items-center gap-1">
-                        <span class="material-symbols-outlined text-[12px]">schedule</span>
+                    <h3 class="text-[12px] font-semibold text-[#e4e1e9] leading-tight">Последняя активность</h3>
+                    <div class="flex items-center gap-1.5">
+                      <span class="text-[9px] text-[#d2bbff] bg-[#1f1f24] px-1 py-0.5 rounded border border-[#4a4455]/30" id="activity-model">Gemini 2.0 Flash</span>
+                      <span class="text-[9px] text-[#ccc3d8] flex items-center gap-0.5">
+                        <span class="material-symbols-outlined text-[10px]">schedule</span>
                         <span id="activity-time">—</span>
                       </span>
                     </div>
                   </div>
                 </div>
-                <!-- Hover toolbar -->
-                <div class="opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex gap-1">
-                  <button class="p-1.5 rounded-lg text-[#ccc3d8] hover:text-[#d2bbff] hover:bg-[#35343a] transition-colors" title="Копировать">
-                    <span class="material-symbols-outlined text-[16px]">content_copy</span>
-                  </button>
-                  <button class="p-1.5 rounded-lg text-[#ccc3d8] hover:text-[#ffb4ab] hover:bg-[#35343a] transition-colors" title="Удалить">
-                    <span class="material-symbols-outlined text-[16px]">delete</span>
-                  </button>
-                </div>
+
+                <!-- Разделитель -->
+                <div class="flex-1"></div>
+
+                <!-- ComboBox переключения вида -->
+                <select class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#ccc3d8] rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:border-[#d2bbff] max-w-[180px]"
+                        id="dashboard-view-combo"
+                        onchange="onDashboardViewChange()">
+                  <option value="transcript">📝 Транскрипция</option>
+                </select>
+
+                <!-- Кнопка: Озвучить -->
+                <button id="btn-speak-text"
+                        class="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-[#ccc3d8] border border-[#4a4455]/30 bg-[#1b1b20] hover:text-[#d2bbff] hover:border-[#d2bbff]/40 hover:bg-[#2a292f] transition-all flex-shrink-0"
+                        title="Озвучить текст">
+                  <span class="material-symbols-outlined text-[14px]">volume_up</span>
+                  <span class="hidden sm:inline">Озвучить</span>
+                </button>
+
+                <!-- Кнопка: Новый запрос -->
+                <button id="btn-new-request"
+                        onclick="if(window.__TAURI__){window.__TAURI__.core.invoke('show_capsule_window').catch(()=>{})}"
+                        class="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-[#8e52ff] border border-[#8e52ff]/30 bg-[#8e52ff]/5 hover:bg-[#8e52ff]/15 hover:border-[#8e52ff]/60 transition-all flex-shrink-0"
+                        title="Начать новую запись (Ctrl+Win)">
+                  <span class="material-symbols-outlined text-[14px]">add_circle</span>
+                  <span class="hidden sm:inline">Новый запрос</span>
+                </button>
+
+                <!-- Кнопки действий -->
+                <button id="btn-copy-active"
+                        class="p-1.5 rounded-lg text-[#ccc3d8] hover:text-[#d2bbff] hover:bg-[#35343a] transition-colors flex-shrink-0" title="Копировать">
+                  <span class="material-symbols-outlined text-[15px]">content_copy</span>
+                </button>
+                <button id="btn-delete-active"
+                        class="p-1.5 rounded-lg text-[#ccc3d8] hover:text-[#ffb4ab] hover:bg-[#35343a] transition-colors flex-shrink-0" title="Удалить запись">
+                  <span class="material-symbols-outlined text-[15px]">delete</span>
+                </button>
               </div>
 
-              <!-- Текст сводки -->
+              <!-- Текст сводки — занимает всё свободное место -->
               <div class="flex-1 relative overflow-hidden">
                 <div class="p-5 h-full overflow-y-auto">
                   <p class="text-[13px] leading-[1.7] text-[#ccc3d8] whitespace-pre-wrap" id="summary-text">Нет данных. Создайте первую запись через капсулу (Ctrl+Win).</p>
@@ -138,18 +168,11 @@
                 <div class="absolute bottom-0 left-0 w-full h-10 pointer-events-none" style="background: linear-gradient(to top, #1f1f24, transparent);"></div>
               </div>
 
-              <!-- Плеер + стенограмма -->
-              <!-- Плеер + Combo Box переключения вида -->
-              <div class="px-5 py-3 border-t border-[#4a4455]/20 flex justify-between items-center gap-3 flex-shrink-0">
-                <!-- Combo Box: Транскрипция / AI-результаты -->
-                <select class="bg-[#1f1f24] border border-[#4a4455]/30 text-[#ccc3d8] rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:border-[#d2bbff] flex-1 max-w-[200px]"
-                        id="dashboard-view-combo"
-                        onchange="onDashboardViewChange()">
-                  <option value="transcript">📝 Транскрипция</option>
-                </select>
-                <div class="bg-[#2a292f] h-7 rounded-full border border-[#4a4455]/30 flex items-center px-2 gap-2 w-40 shrink-0">
+              <!-- Плеер внизу карточки -->
+              <div class="px-4 py-2 border-t border-[#4a4455]/20 flex items-center gap-2 flex-shrink-0 bg-[#1b1b20]/50">
+                <div class="bg-[#2a292f] h-6 rounded-full border border-[#4a4455]/30 flex items-center px-2 gap-2 flex-1">
                   <button class="text-[#e4e1e9] hover:text-[#d2bbff] transition-colors flex-shrink-0 focus:outline-none" id="player-play" title="Воспроизвести">
-                    <span class="material-symbols-outlined text-[18px]" id="player-play-icon" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+                    <span class="material-symbols-outlined text-[16px]" id="player-play-icon" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
                   </button>
                   <div class="flex-1 h-1 bg-[#35343a] rounded-full overflow-hidden relative cursor-pointer" id="player-scrubber-container">
                     <div class="absolute top-0 left-0 h-full w-0 bg-[#d2bbff] rounded-full" id="player-progress"></div>
@@ -158,79 +181,53 @@
                 </div>
               </div>
 
-              <!-- Транскрипция (раскрывается через combo) — теперь часть основного блока -->
+              <!-- Скрытый spoiler-content -->
               <div class="px-5 pb-4 text-[12px] leading-relaxed text-[#ccc3d8] hidden" id="spoiler-content"></div>
-
             </div>
 
-            <!-- Bento-панель снизу: 3 колонки -->
-            <div class="grid gap-3 flex-shrink-0" style="grid-template-columns: 5fr 4fr 3fr;">
+            <!-- Компактный Bento-бар снизу -->
+            <div class="flex items-center gap-3 bg-[#1b1b20] rounded-xl border border-[#4a4455]/25 px-4 py-2 flex-shrink-0">
 
-              <!-- Быстрые действия -->
-              <div class="bg-[#1b1b20] rounded-xl border border-[#4a4455]/25 p-3 flex flex-col gap-2">
-                <h3 class="text-[10px] text-[#ccc3d8] uppercase tracking-wider font-bold flex items-center gap-1.5">
-                  <span class="material-symbols-outlined text-[14px]">keyboard</span>Быстрые действия
-                </h3>
-                <div class="grid grid-cols-2 gap-2 flex-1">
-                  <div class="bg-[#1f1f24] p-2 rounded-lg border border-[#4a4455]/20 flex flex-col justify-between hover:bg-[#2a292f] transition-colors">
-                    <span class="text-[12px] text-[#e4e1e9]">Диктовка</span>
-                    <div class="flex gap-1 mt-1 flex-wrap">
-                      <kbd class="bg-[#35343a] px-1.5 py-0.5 rounded text-[10px] text-[#ccc3d8] border border-[#4a4455]/30 font-mono">Ctrl</kbd>
-                      <span class="text-[#ccc3d8] text-[10px] self-center">+</span>
-                      <kbd class="bg-[#35343a] px-1.5 py-0.5 rounded text-[10px] text-[#ccc3d8] border border-[#4a4455]/30 font-mono">Win</kbd>
-                    </div>
-                  </div>
-                  <div class="bg-[#1f1f24] p-2 rounded-lg border border-[#4a4455]/20 flex flex-col justify-between hover:bg-[#2a292f] transition-colors">
-                    <span class="text-[12px] text-[#e4e1e9]">Отправить</span>
-                    <div class="flex gap-1 mt-1 flex-wrap">
-                      <kbd class="bg-[#35343a] px-1.5 py-0.5 rounded text-[10px] text-[#ccc3d8] border border-[#4a4455]/30 font-mono">Ctrl</kbd>
-                      <span class="text-[#ccc3d8] text-[10px] self-center">+</span>
-                      <kbd class="bg-[#35343a] px-1.5 py-0.5 rounded text-[10px] text-[#ccc3d8] border border-[#4a4455]/30 font-mono">Alt</kbd>
-                    </div>
-                  </div>
+              <!-- Быстрые действия: иконки с подсказками -->
+              <div class="flex items-center gap-1.5 border-r border-[#4a4455]/25 pr-3">
+                <span class="text-[9px] text-[#ccc3d8]/50 uppercase tracking-wider mr-1">Хоткеи</span>
+                <div class="flex items-center gap-1 bg-[#1f1f24] px-2 py-0.5 rounded-lg border border-[#4a4455]/20" title="Диктовка: Ctrl+Win">
+                  <span class="material-symbols-outlined text-[12px] text-[#ccc3d8]">mic</span>
+                  <span class="text-[9px] text-[#ccc3d8]/70 font-mono">Ctrl+Win</span>
+                </div>
+                <div class="flex items-center gap-1 bg-[#1f1f24] px-2 py-0.5 rounded-lg border border-[#4a4455]/20" title="Отправить: Ctrl+Alt">
+                  <span class="material-symbols-outlined text-[12px] text-[#ccc3d8]">send</span>
+                  <span class="text-[9px] text-[#ccc3d8]/70 font-mono">Ctrl+Alt</span>
                 </div>
               </div>
 
-              <!-- Окна (тумблеры) -->
-              <div class="bg-[#1b1b20] rounded-xl border border-[#4a4455]/25 p-3 flex flex-col gap-2">
-                <h3 class="text-[10px] text-[#ccc3d8] uppercase tracking-wider font-bold flex items-center gap-1.5">
-                  <span class="material-symbols-outlined text-[14px]">tune</span>Окна
-                </h3>
-                <div class="flex flex-col gap-2 flex-1 justify-center">
-                  <label class="flex items-center justify-between cursor-pointer group">
-                    <span class="text-[12px] text-[#ccc3d8] group-hover:text-white transition-colors flex-1 pr-3">Капсула</span>
-                    <label class="switch"><input type="checkbox" id="toggle-capsule" checked><span class="slider"></span></label>
-                  </label>
-                  <label class="flex items-center justify-between cursor-pointer group">
-                    <span class="text-[12px] text-[#ccc3d8] group-hover:text-white transition-colors flex-1 pr-3">Виджет</span>
-                    <label class="switch"><input type="checkbox" id="toggle-widget"><span class="slider"></span></label>
-                  </label>
-                </div>
+              <!-- Окна: тумблеры -->
+              <div class="flex items-center gap-3 border-r border-[#4a4455]/25 pr-3">
+                <span class="text-[9px] text-[#ccc3d8]/50 uppercase tracking-wider">Окна</span>
+                <label class="flex items-center gap-1.5 cursor-pointer group">
+                  <span class="text-[11px] text-[#ccc3d8] group-hover:text-white transition-colors">Капсула</span>
+                  <label class="switch" style="transform: scale(0.75); transform-origin: left center;"><input type="checkbox" id="toggle-capsule" checked><span class="slider"></span></label>
+                </label>
+                <label class="flex items-center gap-1.5 cursor-pointer group">
+                  <span class="text-[11px] text-[#ccc3d8] group-hover:text-white transition-colors">Виджет</span>
+                  <label class="switch" style="transform: scale(0.75); transform-origin: left center;"><input type="checkbox" id="toggle-widget"><span class="slider"></span></label>
+                </label>
               </div>
 
-              <!-- Сервисы -->
-              <div class="bg-[#1b1b20] rounded-xl border border-[#4a4455]/25 p-3 flex flex-col gap-2">
-                <h3 class="text-[10px] text-[#ccc3d8] uppercase tracking-wider font-bold flex items-center gap-1.5">
-                  <span class="material-symbols-outlined text-[14px]">swap_calls</span>Сервисы
-                </h3>
-                <div class="flex flex-col gap-2 flex-1 justify-center">
-                  <div class="flex justify-between items-center bg-[#1f1f24] px-2 py-1.5 rounded-lg border border-[#4a4455]/20">
-                    <span class="text-[11px] text-[#e4e1e9]">Gemini AI</span>
-                    <div class="flex items-center gap-1.5">
-                      <span class="text-[10px] font-semibold" id="api-status-text">—</span>
-                      <span class="w-2 h-2 rounded-full" id="api-status-dot"></span>
-                    </div>
-                  </div>
-                  <div class="flex justify-between items-center bg-[#1f1f24] px-2 py-1.5 rounded-lg border border-[#4a4455]/20">
-                    <span class="text-[11px] text-[#e4e1e9]">Микрофон</span>
-                    <div class="flex items-center gap-1.5">
-                      <span class="text-[10px] text-[#7bd6d1] font-semibold">Готов</span>
-                      <span class="w-2 h-2 rounded-full bg-[#7bd6d1]" style="box-shadow: 0 0 6px rgba(123,214,209,0.6);"></span>
-                    </div>
-                  </div>
+              <!-- Сервисы: статус-индикаторы -->
+              <div class="flex items-center gap-3 flex-1">
+                <span class="text-[9px] text-[#ccc3d8]/50 uppercase tracking-wider">Сервисы</span>
+                <div class="flex items-center gap-1.5">
+                  <span class="text-[11px] text-[#e4e1e9]">Gemini AI</span>
+                  <span class="text-[10px] font-semibold" id="api-status-text">—</span>
+                  <span class="w-1.5 h-1.5 rounded-full" id="api-status-dot"></span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <span class="text-[11px] text-[#e4e1e9]">Микрофон</span>
+                  <span class="text-[10px] text-[#7bd6d1] font-semibold">Готов</span>
+                  <span class="w-1.5 h-1.5 rounded-full bg-[#7bd6d1]" style="box-shadow: 0 0 4px rgba(123,214,209,0.6);"></span>
                 </div>
               </div>
-
             </div>
           </section>
 
