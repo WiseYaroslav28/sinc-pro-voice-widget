@@ -383,8 +383,8 @@
       let currentAudio = null;  // Audio объект для воспроизведения MP3
 
       async function getClipboardText() {
-        if (window.__TAURI__?.clipboardManager) {
-          try { return await window.__TAURI__.clipboardManager.readText(); } catch (_) {}
+        if (window.__TAURI__) {
+          try { return await window.__TAURI__.core.invoke('read_clipboard_text'); } catch (_) {}
         }
         try {
           if (navigator.clipboard?.readText) return await navigator.clipboard.readText();
@@ -434,7 +434,7 @@
             await currentAudio.play();
             return;
           } catch (e) {
-            console.warn('[Widget] Edge TTS failed, fallback to speechSynthesis:', e);
+            console.error('[Widget] Edge TTS failed, fallback to speechSynthesis:', e);
           }
         }
 

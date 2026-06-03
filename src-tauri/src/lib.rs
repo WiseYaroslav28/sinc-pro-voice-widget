@@ -16,6 +16,20 @@ const EDGE_TTS_ENDPOINT: &str =
     "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1\
      ?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4";
 
+fn generate_sec_ms_gec() -> String {
+    use sha2::{Sha256, Digest};
+    let win_epoch = 11644473600u64;
+    let now_sec = chrono::Utc::now().timestamp() as u64;
+    let ticks = now_sec + win_epoch;
+    let rounded_ticks = ticks - (ticks % 300);
+    let str_to_hash = format!("{}{}", rounded_ticks, "6A5AA1D4EAFF4E9FB37E23D68491D6F4");
+    
+    let mut hasher = Sha256::new();
+    hasher.update(str_to_hash.as_bytes());
+    let result = hasher.finalize();
+    format!("{:X}", result)
+}
+
 #[tauri::command]
 async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String, String> {
     // rate: 1.0 = нормально, 1.5 = +50%, 0.5 = -50%
@@ -26,20 +40,35 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
         format!("{}%", rate_pct)
     };
 
+    let gec = generate_sec_ms_gec();
+    let gec_version = "1-130.0.2849.68";
     let conn_id = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
-    let url = format!("{}&ConnectionId={}", EDGE_TTS_ENDPOINT, conn_id);
+    let url = format!(
+        "{}&ConnectionId={}&Sec-MS-GEC={}&Sec-MS-GEC-Version={}",
+        EDGE_TTS_ENDPOINT, conn_id, gec, gec_version
+    );
 
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     let mut request = url.into_client_request()
-        .map_err(|e| format!("Failed to create WebSocket request: {}", e))?;
+        .map_err(|e| {
+            let err_msg = format!("Failed to create WebSocket request: {}", e);
+            println!("SINC PRO TTS ERROR: {}", err_msg);
+            err_msg
+        })?;
     
     let headers = request.headers_mut();
     headers.insert("Origin", "chrome-extension://jdiccldimpdaibmpdkjnbnkciiphafal".parse().unwrap());
-    headers.insert("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0".parse().unwrap());
+    headers.insert("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0".parse().unwrap());
+    headers.insert("Pragma", "no-cache".parse().unwrap());
+    headers.insert("Cache-Control", "no-cache".parse().unwrap());
 
     let (mut ws, _) = connect_async_tls_with_config(request, None, false, None)
         .await
-        .map_err(|e| format!("WebSocket connect failed: {}", e))?;
+        .map_err(|e| {
+            let err_msg = format!("WebSocket connect failed: {}", e);
+            println!("SINC PRO TTS ERROR: {}", err_msg);
+            err_msg
+        })?;
 
     // 1. Отправляем конфигурационное сообщение
     let config_msg = format!(
@@ -49,7 +78,11 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
         ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S.000Z")
     );
     ws.send(Message::Text(config_msg.into())).await
-        .map_err(|e| format!("Send config failed: {}", e))?;
+        .map_err(|e| {
+            let err_msg = format!("Send config failed: {}", e);
+            println!("SINC PRO TTS ERROR: {}", err_msg);
+            err_msg
+        })?;
 
     // 2. SSML синтез
     let request_id = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
@@ -69,7 +102,11 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
         text = ssml_text,
     );
     ws.send(Message::Text(ssml_msg.into())).await
-        .map_err(|e| format!("Send SSML failed: {}", e))?;
+        .map_err(|e| {
+            let err_msg = format!("Send SSML failed: {}", e);
+            println!("SINC PRO TTS ERROR: {}", err_msg);
+            err_msg
+        })?;
 
     // 3. Собираем бинарные чанки MP3
     let mut audio_bytes: Vec<u8> = Vec::new();
@@ -93,7 +130,11 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
                 if t.contains("Path:turn.end") { break; }
             }
             Some(Ok(Message::Close(_))) | None => break,
-            Some(Err(e)) => return Err(format!("WebSocket error: {}", e)),
+            Some(Err(e)) => {
+                let err_msg = format!("WebSocket error: {}", e);
+                println!("SINC PRO TTS ERROR: {}", err_msg);
+                return Err(err_msg);
+            }
             _ => {}
         }
     }
@@ -809,6 +850,83 @@ fn set_clipboard_text(text: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
+fn get_clipboard_text_raw() -> Result<String, String> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn OpenClipboard(hWndNewOwner: isize) -> i32;
+        fn CloseClipboard() -> i32;
+        fn GetClipboardData(uFormat: u32) -> isize;
+        fn IsClipboardFormatAvailable(format: u32) -> i32;
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GlobalLock(hMem: isize) -> *mut u16;
+        fn GlobalUnlock(hMem: isize) -> i32;
+    }
+
+    const CF_UNICODETEXT: u32 = 13;
+
+    unsafe {
+        if OpenClipboard(0) == 0 {
+            return Err("Не удалось открыть буфер обмена".to_string());
+        }
+        if IsClipboardFormatAvailable(CF_UNICODETEXT) == 0 {
+            CloseClipboard();
+            return Ok(String::new());
+        }
+        let h_mem = GetClipboardData(CF_UNICODETEXT);
+        if h_mem == 0 {
+            CloseClipboard();
+            return Err("Не удалось получить данные из буфера обмена".to_string());
+        }
+        let ptr = GlobalLock(h_mem);
+        if ptr.is_null() {
+            CloseClipboard();
+            return Err("Ошибка блокировки памяти буфера".to_string());
+        }
+        
+        let mut len = 0;
+        while *ptr.add(len) != 0 {
+            len += 1;
+        }
+        
+        let slice = std::slice::from_raw_parts(ptr, len);
+        let os_str = OsString::from_wide(slice);
+        GlobalUnlock(h_mem);
+        CloseClipboard();
+        
+        os_str.into_string().map_err(|_| "Не удалось конвертировать текст из буфера обмена в UTF-8".to_string())
+    }
+}
+
+#[tauri::command]
+async fn read_clipboard_text() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        get_clipboard_text_raw()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("Поддерживается только Windows".to_string())
+    }
+}
+
+#[tauri::command]
+async fn write_clipboard_text(text: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        set_clipboard_text(&text)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("Поддерживается только Windows".to_string())
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn is_insertion_possible() -> bool {
     #[link(name = "user32")]
     extern "system" {
@@ -1139,7 +1257,9 @@ pub fn run() {
             hide_widget_window,
             resize_bottom_up_phys,
             get_cursor_monitor,
-            speak_edge_tts
+            speak_edge_tts,
+            read_clipboard_text,
+            write_clipboard_text
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
