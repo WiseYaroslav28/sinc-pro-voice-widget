@@ -39,9 +39,11 @@ fn generate_sec_ms_gec(skew: i64) -> String {
     use sha2::{Sha256, Digest};
     let win_epoch = 11644473600u64;
     let now_sec = (chrono::Utc::now().timestamp() + skew) as u64;
-    let ticks = now_sec + win_epoch;
-    let rounded_ticks = ticks - (ticks % 300);
-    let str_to_hash = format!("{}{}", rounded_ticks, "6A5AA1D4EAFF4E9FB37E23D68491D6F4");
+    let mut ticks = now_sec + win_epoch;
+    ticks -= ticks % 300;
+    ticks *= 10_000_000; // Конвертируем в 100-наносекундные тики
+    
+    let str_to_hash = format!("{}{}", ticks, "6A5AA1D4EAFF4E9FB37E23D68491D6F4");
     
     let mut hasher = Sha256::new();
     hasher.update(str_to_hash.as_bytes());
@@ -83,6 +85,9 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
     headers.insert("Cache-Control", "no-cache".parse().unwrap());
     headers.insert("Sec-MS-GEC", gec.parse().unwrap());
     headers.insert("Sec-MS-GEC-Version", gec_version.parse().unwrap());
+    
+    let muid = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
+    headers.insert("Cookie", format!("muid={};", muid).parse().unwrap());
 
     let (mut ws, _) = connect_async_tls_with_config(request, None, false, None)
         .await
