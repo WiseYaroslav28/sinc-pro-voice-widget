@@ -643,8 +643,8 @@
           if (savedModel && select.querySelector(`option[value="${savedModel}"]`)) {
             select.value = savedModel;
           } else if (select.options.length > 0) {
-            // Автовыбор: предпочитаем gemini-2.0-flash
-            const preferred = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+            // Автовыбор: предпочитаем gemini-3.5-flash
+            const preferred = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-3.1-flash-lite', 'gemini-2.0-flash'];
             for (const p of preferred) {
               if (select.querySelector(`option[value="${p}"]`)) { select.value = p; break; }
             }
