@@ -63,7 +63,7 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
 
     let skew = get_clock_skew().await;
     let gec = generate_sec_ms_gec(skew);
-    let gec_version = "1-130.0.2849.68";
+    let gec_version = "1-143.0.3650.75";
     let conn_id = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
     let url = format!(
         "{}&ConnectionId={}&Sec-MS-GEC={}&Sec-MS-GEC-Version={}",
@@ -79,12 +79,10 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
         })?;
     
     let headers = request.headers_mut();
-    headers.insert("Origin", "chrome-extension://jdiccldimpdaibmpdkjnbnkciiphafal".parse().unwrap());
-    headers.insert("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0".parse().unwrap());
+    headers.insert("Origin", "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold".parse().unwrap());
+    headers.insert("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0".parse().unwrap());
     headers.insert("Pragma", "no-cache".parse().unwrap());
     headers.insert("Cache-Control", "no-cache".parse().unwrap());
-    headers.insert("Sec-MS-GEC", gec.parse().unwrap());
-    headers.insert("Sec-MS-GEC-Version", gec_version.parse().unwrap());
     
     let muid = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
     headers.insert("Cookie", format!("muid={};", muid).parse().unwrap());
