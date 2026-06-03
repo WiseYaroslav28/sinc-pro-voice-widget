@@ -946,12 +946,18 @@ fn resize_bottom_up_phys(
     Err("resize_bottom_up_phys реализован только для Windows".into())
 }
 
+#[link(name = "shcore")]
+extern "system" {
+    fn GetDpiForMonitor(hmonitor: isize, dpi_type: u32, dpi_x: *mut u32, dpi_y: *mut u32) -> i32;
+}
+
 #[derive(Serialize, Clone, Debug)]
 pub struct CursorMonitorInfo {
-    pub work_left:   i32,
-    pub work_top:    i32,
-    pub work_right:  i32,
-    pub work_bottom: i32,
+    pub work_left:    i32,
+    pub work_top:     i32,
+    pub work_right:   i32,
+    pub work_bottom:  i32,
+    pub scale_factor: f64,
 }
 
 #[tauri::command]
@@ -993,11 +999,18 @@ fn get_cursor_monitor() -> Result<CursorMonitorInfo, String> {
             dw_flags:   0,
         };
         GetMonitorInfoW(hmon, &mut mi);
+
+        let mut dpi_x = 0;
+        let mut dpi_y = 0;
+        let _ = GetDpiForMonitor(hmon, 0, &mut dpi_x, &mut dpi_y);
+        let scale_factor = dpi_x as f64 / 96.0;
+
         Ok(CursorMonitorInfo {
-            work_left:   mi.rc_work.left,
-            work_top:    mi.rc_work.top,
-            work_right:  mi.rc_work.right,
-            work_bottom: mi.rc_work.bottom,
+            work_left:    mi.rc_work.left,
+            work_top:     mi.rc_work.top,
+            work_right:   mi.rc_work.right,
+            work_bottom:  mi.rc_work.bottom,
+            scale_factor,
         })
     }
 }

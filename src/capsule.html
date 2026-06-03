@@ -456,6 +456,9 @@
       const stateRecording = document.getElementById('state-recording');
       const statePause = document.getElementById('state-pause');
       const stateCancelConfirm = document.getElementById('state-cancel-confirm');
+      const stateSending = document.getElementById('state-sending');
+      const stateSendSuccess = document.getElementById('state-send-success');
+      const stateSendError = document.getElementById('state-send-error');
       const cancelCountdownText = document.getElementById('cancel-countdown-text');
       const btnKeepRecording = document.getElementById('btn-keep-recording');
       
@@ -513,6 +516,9 @@
       const WIN_HEIGHT_IDLE   = 52;   // только пилюля
       const WIN_HEIGHT_HOVER  = 160;  // пилюля + 3 кнопки (Промпт на 40px от кнопки)
       const WIN_HEIGHT_ACTIVE = 200;  // запись / пауза / отмена
+      const WIN_HEIGHT_SENDING = 120;
+      const WIN_HEIGHT_SUCCESS = 52;
+      const WIN_HEIGHT_ERROR = 200;
       const WIN_HEIGHT = WIN_HEIGHT_ACTIVE; // для инициализации
 
       // Динамическое изменение высоты окна под состояние (DRY: одна функция для обоих режимов)
@@ -521,6 +527,9 @@
 
         const h = state === 'idle' ? WIN_HEIGHT_IDLE
                 : state === 'hover' ? WIN_HEIGHT_HOVER
+                : state === 'sending' ? WIN_HEIGHT_SENDING
+                : state === 'send-success' ? WIN_HEIGHT_SUCCESS
+                : state === 'send-error' ? WIN_HEIGHT_ERROR
                 : WIN_HEIGHT_ACTIVE;
         const w_phys = Math.round(WIN_WIDTH * cachedScaleFactor);
         const h_phys = Math.round(h * cachedScaleFactor);
@@ -531,6 +540,9 @@
           // Магнит ON: якорь = центр низа монитора ГДЕ КУРСОР (через Win32)
           try {
             const mon = await invoke('get_cursor_monitor');
+            if (mon && mon.scale_factor) {
+              cachedScaleFactor = mon.scale_factor;
+            }
             // Координаты mon — физические пиксели первичного монитора (без DPI scale)
             // rc_work уже в физических пикселях (SetWindowPos работает в физических)
             anchorX_phys = mon.work_left + Math.round((mon.work_right  - mon.work_left) / 2);
@@ -566,8 +578,8 @@
         }
 
         // Единая логика позиционирования (DRY): окно растёт вверх от якорной точки
-        const x_phys = Math.max(0, Math.round(anchorX_phys - w_phys / 2));
-        const y_phys = Math.max(0, anchorY_phys - h_phys);
+        const x_phys = Math.round(anchorX_phys - w_phys / 2);
+        const y_phys = anchorY_phys - h_phys;
 
         try {
           await invoke('resize_bottom_up_phys', { width: w_phys, height: h_phys, x: x_phys, y: y_phys });
@@ -802,6 +814,9 @@
         stateRecording.classList.remove('active');
         statePause.classList.remove('active');
         stateCancelConfirm.classList.remove('active');
+        stateSending.classList.remove('active');
+        stateSendSuccess.classList.remove('active');
+        stateSendError.classList.remove('active');
 
         if (state === 'idle') {
           stateIdle.classList.add('active');
@@ -854,10 +869,28 @@
             appWindow.setIgnoreCursorEvents(false).catch(() => {});
           }
           resizeToState('active');
+        } else if (state === 'sending') {
+          stateSending.classList.add('active');
+          if (appWindow && appWindow.setIgnoreCursorEvents) {
+            appWindow.setIgnoreCursorEvents(false).catch(() => {});
+          }
+          resizeToState('sending');
+        } else if (state === 'send-success') {
+          stateSendSuccess.classList.add('active');
+          if (appWindow && appWindow.setIgnoreCursorEvents) {
+            appWindow.setIgnoreCursorEvents(false).catch(() => {});
+          }
+          resizeToState('send-success');
+        } else if (state === 'send-error') {
+          stateSendError.classList.add('active');
+          if (appWindow && appWindow.setIgnoreCursorEvents) {
+            appWindow.setIgnoreCursorEvents(false).catch(() => {});
+          }
+          resizeToState('send-error');
         }
 
         if (invoke) {
-          const isActive = (state === 'recording' || state === 'pause' || state === 'cancel-confirm');
+          const isActive = (state === 'recording' || state === 'pause' || state === 'cancel-confirm' || state === 'sending' || state === 'send-success' || state === 'send-error');
           invoke('set_capsule_active', { active: isActive }).catch(console.error);
         }
       }
@@ -972,7 +1005,7 @@
             hoverPresetsMenu.classList.add('hidden');
             switchState('idle');
           }
-        }, 3000); // 3 секунды
+        }, 250); // 250мс
       });
 
       // ======================================================================
@@ -1149,6 +1182,77 @@
         switchState('idle');
       }
 
+      let lastBytesArray = null;
+
+      async function sendAudioData(bytesArray, durationSecs) {
+        switchState('sending');
+        try {
+          const promptToSend = customPromptText || "";
+          if (invoke) {
+            const entry = await invoke('save_audio', {
+              bytes: bytesArray, durationSecs: durationSecs,
+              preset: currentPreset,
+              customPrompt: promptToSend.trim().length > 0 ? promptToSend : null
+            });
+
+            // Извлекаем текст результата (поддерживаем обе структуры)
+            const firstAi = entry.ai_results && entry.ai_results.length > 0 ? entry.ai_results[0] : null;
+            const resultText = firstAi ? firstAi.text : (entry.raw_transcript || entry.transcript || '');
+            const isError = (entry.preset === 'error') || (firstAi && firstAi.preset === 'error');
+
+            if (isError) {
+              handleSendError(resultText);
+            } else {
+              handleSendSuccess(resultText);
+            }
+          }
+        } catch (err) {
+          console.error(err);
+          const errMsg = typeof err === 'string' ? err : 'Ошибка отправки. Запись сохранена в истории.';
+          handleSendError(errMsg);
+        }
+      }
+
+      function handleSendSuccess(resultText) {
+        switchState('send-success');
+        audioChunks = [];
+        lastBytesArray = null;
+        customPromptText = "";
+        isSending = false;
+
+        setTimeout(async () => {
+          switchState('idle');
+          // Пробуем авто-вставить в предыдущий фокус
+          let pasted = false;
+          try {
+            if (invoke) {
+              await invoke('paste_text', { text: resultText });
+              pasted = true;
+            }
+          } catch (e) {
+            console.warn('Авто-вставка не удалась:', e);
+          }
+
+          if (pasted) {
+            showToast('Готово! Текст вставлен.', false);
+          } else {
+            // Показываем popup для ручного копирования/редактирования
+            showResultPopup(resultText);
+          }
+        }, 1500);
+      }
+
+      function handleSendError(errorMsg) {
+        switchState('send-error');
+        isSending = false;
+
+        const shortText = errorMsg.length > 80 ? errorMsg.substring(0, 80) + '...' : errorMsg;
+        const shortEl = document.getElementById('error-short-text');
+        const tooltipEl = document.getElementById('error-full-tooltip');
+        if (shortEl) shortEl.textContent = shortText;
+        if (tooltipEl) tooltipEl.textContent = errorMsg;
+      }
+
       async function stopAndSendRecording() {
         // Защита от двойного нажатия
         if (isSending) return;
@@ -1167,69 +1271,58 @@
           return;
         }
 
-        // Показываем spinner на кнопке Send
-        const sendIcon = btnSendAi ? btnSendAi.querySelector('.material-symbols-outlined') : null;
-        if (sendIcon) sendIcon.textContent = 'progress_activity';
-        if (sendIcon) sendIcon.classList.add('spinner');
-        if (btnSendAi) btnSendAi.style.pointerEvents = 'none';
-
-        switchState('idle');
-        showToast('Отправляется в Gemini...', false);
-
         if (mediaRecorder && mediaRecorder.state !== 'inactive') {
           mediaRecorder.stop();
           await new Promise(resolve => setTimeout(resolve, 250));
         }
+
         const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
         try {
           const arrayBuffer = await audioBlob.arrayBuffer();
           const uint8Array = new Uint8Array(arrayBuffer);
-          const bytesArray = Array.from(uint8Array);
-          const promptToSend = customPromptText || "";
-          if (invoke) {
-            const entry = await invoke('save_audio', {
-              bytes: bytesArray, durationSecs: recordSeconds,
-              preset: currentPreset,
-              customPrompt: promptToSend.trim().length > 0 ? promptToSend : null
-            });
-
-            // Извлекаем текст результата (поддерживаем обе структуры)
-            const firstAi = entry.ai_results && entry.ai_results.length > 0 ? entry.ai_results[0] : null;
-            const resultText = firstAi ? firstAi.text : (entry.raw_transcript || entry.transcript || '');
-            const isError = (entry.preset === 'error') || (firstAi && firstAi.preset === 'error');
-
-            if (isError) {
-              showToast(`Ошибка: ${resultText.substring(0, 80)}`, true);
-            } else {
-              // Пробуем авто-вставить в предыдущий фокус
-              let pasted = false;
-              try {
-                await invoke('paste_text', { text: resultText });
-                pasted = true;
-              } catch (e) {
-                console.warn('Авто-вставка не удалась:', e);
-              }
-
-              if (pasted) {
-                showToast('Готово! Текст вставлен.', false);
-              } else {
-                // Показываем popup для ручного копирования/редактирования
-                showResultPopup(resultText);
-              }
-            }
-          }
+          lastBytesArray = Array.from(uint8Array);
+          
+          await sendAudioData(lastBytesArray, recordSeconds);
         } catch (err) {
           console.error(err);
-          showToast(typeof err === 'string' ? err : 'Ошибка отправки. Запись сохранена в истории.', true);
-        } finally {
-          audioChunks = [];
-          customPromptText = "";
-          isSending = false;
-          // Восстанавливаем иконку Send
-          if (sendIcon) { sendIcon.textContent = 'send'; sendIcon.classList.remove('spinner'); }
-          if (btnSendAi) btnSendAi.style.pointerEvents = '';
-          syncPresetUI(currentPreset);
+          handleSendError(typeof err === 'string' ? err : 'Не удалось прочитать аудио данные');
         }
+      }
+
+      // Подключение новых кнопок ошибки
+      const btnRetrySend = document.getElementById('btn-retry-send');
+      if (btnRetrySend) {
+        btnRetrySend.addEventListener('click', () => {
+          if (lastBytesArray) {
+            sendAudioData(lastBytesArray, recordSeconds);
+          } else {
+            switchState('idle');
+          }
+        });
+      }
+
+      const btnCancelError = document.getElementById('btn-cancel-error');
+      if (btnCancelError) {
+        btnCancelError.addEventListener('click', () => {
+          audioChunks = [];
+          lastBytesArray = null;
+          customPromptText = "";
+          switchState('idle');
+        });
+      }
+
+      const btnCopyError = document.getElementById('btn-copy-error');
+      if (btnCopyError) {
+        btnCopyError.addEventListener('click', async () => {
+          const tooltipEl = document.getElementById('error-full-tooltip');
+          const errorMsg = tooltipEl ? tooltipEl.textContent : '';
+          try {
+            await navigator.clipboard.writeText(errorMsg);
+            showToast('Текст ошибки скопирован!', false);
+          } catch (e) {
+            showToast('Ошибка копирования', true);
+          }
+        });
       }
 
       // События кнопок
@@ -1280,6 +1373,9 @@
             const currentH = Math.round(
               (currentState === 'idle'  ? WIN_HEIGHT_IDLE  :
                currentState === 'hover' ? WIN_HEIGHT_HOVER :
+               currentState === 'sending' ? WIN_HEIGHT_SENDING :
+               currentState === 'send-success' ? WIN_HEIGHT_SUCCESS :
+               currentState === 'send-error' ? WIN_HEIGHT_ERROR :
                WIN_HEIGHT_ACTIVE) * factor
             );
             const currentW = Math.round(WIN_WIDTH * factor);
