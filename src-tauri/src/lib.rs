@@ -16,10 +16,29 @@ const EDGE_TTS_ENDPOINT: &str =
     "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1\
      ?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4";
 
-fn generate_sec_ms_gec() -> String {
+async fn get_clock_skew() -> i64 {
+    let client = reqwest::Client::new();
+    let url = "https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list?trustedclienttoken=6A5AA1D4EAFF4E9FB37E23D68491D6F4";
+    if let Ok(resp) = client.head(url).send().await {
+        if let Some(date_header) = resp.headers().get("date") {
+            if let Ok(date_str) = date_header.to_str() {
+                if let Ok(server_time) = chrono::DateTime::parse_from_rfc2822(date_str) {
+                    let server_timestamp = server_time.timestamp();
+                    let local_timestamp = chrono::Utc::now().timestamp();
+                    let skew = server_timestamp - local_timestamp;
+                    println!("SINC PRO TTS: Clock skew adjusted by {} seconds", skew);
+                    return skew;
+                }
+            }
+        }
+    }
+    0
+}
+
+fn generate_sec_ms_gec(skew: i64) -> String {
     use sha2::{Sha256, Digest};
     let win_epoch = 11644473600u64;
-    let now_sec = chrono::Utc::now().timestamp() as u64;
+    let now_sec = (chrono::Utc::now().timestamp() + skew) as u64;
     let ticks = now_sec + win_epoch;
     let rounded_ticks = ticks - (ticks % 300);
     let str_to_hash = format!("{}{}", rounded_ticks, "6A5AA1D4EAFF4E9FB37E23D68491D6F4");
@@ -40,7 +59,8 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
         format!("{}%", rate_pct)
     };
 
-    let gec = generate_sec_ms_gec();
+    let skew = get_clock_skew().await;
+    let gec = generate_sec_ms_gec(skew);
     let gec_version = "1-130.0.2849.68";
     let conn_id = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
     let url = format!(
