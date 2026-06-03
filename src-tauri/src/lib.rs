@@ -61,6 +61,8 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
     headers.insert("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0".parse().unwrap());
     headers.insert("Pragma", "no-cache".parse().unwrap());
     headers.insert("Cache-Control", "no-cache".parse().unwrap());
+    headers.insert("Sec-MS-GEC", gec.parse().unwrap());
+    headers.insert("Sec-MS-GEC-Version", gec_version.parse().unwrap());
 
     let (mut ws, _) = connect_async_tls_with_config(request, None, false, None)
         .await
