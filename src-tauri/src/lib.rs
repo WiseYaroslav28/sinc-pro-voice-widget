@@ -4,6 +4,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::Local;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::collections::HashMap;
+use std::time::{Instant, Duration};
 
 // ─── Edge TTS ────────────────────────────────────────────────────────────────
 use tokio_tungstenite::{connect_async_tls_with_config, tungstenite::Message};
@@ -17,7 +19,7 @@ const EDGE_TTS_ENDPOINT: &str =
 #[tauri::command]
 async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String, String> {
     // rate: 1.0 = нормально, 1.5 = +50%, 0.5 = -50%
-    let rate_pct = (((rate - 1.0) * 100.0).round() as i32).clamp(-50, 100);
+    let rate_pct = (((rate - 1.0) * 100.0).round() as i32).clamp(-50, 200);
     let rate_str = if rate_pct >= 0 {
         format!("+{}%", rate_pct)
     } else {
@@ -27,7 +29,15 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
     let conn_id = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
     let url = format!("{}&ConnectionId={}", EDGE_TTS_ENDPOINT, conn_id);
 
-    let (mut ws, _) = connect_async_tls_with_config(&url, None, false, None)
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let mut request = url.into_client_request()
+        .map_err(|e| format!("Failed to create WebSocket request: {}", e))?;
+    
+    let headers = request.headers_mut();
+    headers.insert("Origin", "chrome-extension://jdiccldimpdaibmpdkjnbnkciiphafal".parse().unwrap());
+    headers.insert("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0".parse().unwrap());
+
+    let (mut ws, _) = connect_async_tls_with_config(request, None, false, None)
         .await
         .map_err(|e| format!("WebSocket connect failed: {}", e))?;
 
@@ -96,6 +106,7 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
 }
 
 static APP_HANDLE: Mutex<Option<tauri::AppHandle>> = Mutex::new(None);
+static MODEL_LOCKS: std::sync::LazyLock<Mutex<HashMap<String, Instant>>> = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 static CTRL_PRESSED: AtomicBool = AtomicBool::new(false);
 static WIN_PRESSED: AtomicBool = AtomicBool::new(false);
 static ALT_PRESSED: AtomicBool = AtomicBool::new(false);
@@ -447,6 +458,32 @@ fn get_preset_prompt_and_label(preset: &str) -> (&'static str, &'static str) {
     }
 }
 
+fn parse_retry_delay(body: &str) -> Option<Duration> {
+    let val: serde_json::Value = serde_json::from_str(body).ok()?;
+    let details = val.get("error")?.get("details")?.as_array()?;
+    for detail in details {
+        if let Some(delay_str) = detail.get("retryDelay").and_then(|v| v.as_str()) {
+            if let Some(seconds_str) = delay_str.strip_suffix('s') {
+                if let Ok(seconds) = seconds_str.parse::<f64>() {
+                    return Some(Duration::from_secs_f64(seconds));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn is_stub_transcript(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    lower.contains("предоставьте аудиозапись")
+        || lower.contains("входные данные отсутствуют")
+        || lower.contains("отсутствует аудиозапись")
+        || lower.contains("аудиозапись не предоставлена")
+        || lower.contains("пожалуйста, предоставьте аудио")
+        || lower.contains("не могу распознать аудио")
+        || lower.contains("аудиозапись отсутствует")
+}
+
 #[tauri::command]
 async fn save_audio(
     app_handle: tauri::AppHandle,
@@ -562,9 +599,10 @@ async fn save_audio(
     };
     let fallback_models = vec![
         primary_model.clone(),
+        "gemini-3.5-flash".to_string(),
         "gemini-2.5-flash".to_string(),
+        "gemini-3.1-flash-lite".to_string(),
         "gemini-2.0-flash".to_string(),
-        "gemini-1.5-flash".to_string(),
     ];
     // Убираем дубли, сохраняем порядок
     let mut seen = std::collections::HashSet::new();
@@ -579,6 +617,17 @@ async fn save_audio(
     let mut last_err = String::new();
     let mut gemini_text: Option<String> = None;
     for model in &fallback_models {
+        // Проверяем блокировку модели по времени разблокировки
+        {
+            let locks = MODEL_LOCKS.lock().unwrap();
+            if let Some(unlock_time) = locks.get(model) {
+                if Instant::now() < *unlock_time {
+                    last_err = format!("Модель {} временно заблокирована из-за 429", model);
+                    continue;
+                }
+            }
+        }
+
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
             model, api_key
@@ -587,9 +636,19 @@ async fn save_audio(
             Err(e) => { last_err = format!("Сетевая ошибка ({}): {}", model, e); continue; }
             Ok(res) => {
                 let status = res.status();
-                if status.as_u16() == 429 || status.as_u16() == 503 {
-                    // Лимит исчерпан — пробуем следующую модель
-                    last_err = format!("Лимит исчерпан для {}", model);
+                if status.as_u16() == 429 {
+                    let err_text = res.text().await.unwrap_or_default();
+                    let delay = parse_retry_delay(&err_text).unwrap_or(Duration::from_secs(60));
+                    let unlock_time = Instant::now() + delay;
+                    {
+                        let mut locks = MODEL_LOCKS.lock().unwrap();
+                        locks.insert(model.clone(), unlock_time);
+                    }
+                    last_err = format!("Модель {} заблокирована (429) на {:?}", model, delay);
+                    continue;
+                }
+                if status.as_u16() == 503 {
+                    last_err = format!("Сервис недоступен (503) для {}", model);
                     continue;
                 }
                 if !status.is_success() {
@@ -607,6 +666,17 @@ async fn save_audio(
                             .and_then(|p| p.into_iter().next())
                             .and_then(|p| p.text)
                         {
+                            // Проверяем, не является ли транскрипция заглушкой
+                            let transcript = match serde_json::from_str::<serde_json::Value>(&text) {
+                                Ok(v) => v["transcript"].as_str().unwrap_or("").to_string(),
+                                Err(_) => text.clone(),
+                            };
+
+                            if is_stub_transcript(&transcript) {
+                                last_err = format!("Модель {} вернула заглушку: {}", model, transcript);
+                                continue;
+                            }
+
                             gemini_text = Some(text);
                             break;
                         } else {

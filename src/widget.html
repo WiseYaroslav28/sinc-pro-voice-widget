@@ -442,8 +442,43 @@
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.rate = currentRate;
         const voices = synth.getVoices();
-        const voice = voices.find(v => v.name === currentVoiceName) || voices[0];
-        if (voice) utterance.voice = voice;
+
+        // 1. Попытка найти точное совпадение по имени
+        let voice = voices.find(v => v.name === currentVoiceName);
+
+        // 2. Если не найдено — ищем по словарю fallbackMap
+        if (!voice) {
+          const fallbackMap = {
+            'ru-RU-SvetlanaNeural': ['Microsoft Irina', 'Microsoft Svetlana', 'Google русский'],
+            'ru-RU-DmitryNeural': ['Microsoft Pavel', 'Microsoft Dmitry', 'Google русский'],
+            'en-US-GuyNeural': ['Microsoft David', 'Microsoft Mark', 'Google US English Male'],
+            'en-US-AriaNeural': ['Microsoft Zira', 'Microsoft Aria', 'Google US English'],
+            'en-US-JennyNeural': ['Microsoft Zira', 'Microsoft Jenny', 'Google US English']
+          };
+          const fallbacks = fallbackMap[currentVoiceName] || [];
+          for (const fallbackName of fallbacks) {
+            voice = voices.find(v => v.name.includes(fallbackName));
+            if (voice) break;
+          }
+        }
+
+        // 3. Если все еще не найдено — ищем по префиксу языка (например, 'ru' или 'en')
+        if (!voice && currentLang) {
+          voice = voices.find(v => v.lang.startsWith(currentLang));
+        }
+
+        // 4. Если вообще ничего не найдено, берем дефолтный
+        if (!voice) {
+          voice = voices[0];
+        }
+
+        if (voice) {
+          utterance.voice = voice;
+          utterance.lang = voice.lang || currentLang || 'ru';
+        } else if (currentLang) {
+          utterance.lang = currentLang;
+        }
+
         utterance.onend   = stopPlayback;
         utterance.onerror = () => stopPlayback();
         synth.speak(utterance);
