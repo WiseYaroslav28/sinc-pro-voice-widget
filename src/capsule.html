@@ -988,18 +988,21 @@
           };
 
           mediaRecorder.onstart = () => {
+            playAudioCue('start');
             switchState('recording');
             startTimer();
             startVisualizer(audioStream);
           };
 
           mediaRecorder.onpause = () => {
+            playAudioCue('pause');
             stopTimer();
             stopVisualizer();
             switchState('pause');
           };
 
           mediaRecorder.onresume = () => {
+            playAudioCue('start');
             switchState('recording');
             startTimer();
             startVisualizer(audioStream);
@@ -1038,6 +1041,7 @@
           cancelRecordingProcess(true, false);
           return;
         }
+        playAudioCue('warning');
         preCancelState = currentState;
         
         const cancelTimer = document.getElementById('cancel-timer');
@@ -1049,12 +1053,13 @@
         if (cancelInterval) clearInterval(cancelInterval);
         cancelInterval = setInterval(() => {
           cancelSecondsLeft--;
-          if (cancelSecondsLeft <= 0) {
+          if (cancelSecondsLeft > 0) {
+            playAudioCue('tick');
+            cancelCountdownText.textContent = `Вся надиктованная запись будет сброшена в архив через ${cancelSecondsLeft} сек...`;
+          } else {
             clearInterval(cancelInterval);
             cancelInterval = null;
             cancelRecordingProcess(true, false);
-          } else {
-            cancelCountdownText.textContent = `Вся надиктованная запись будет сброшена в архив через ${cancelSecondsLeft} сек...`;
           }
         }, 1000);
       }
@@ -1069,6 +1074,7 @@
       }
 
       async function cancelRecordingProcess(isUserCancelled = true, hardDelete = false) {
+        if (isUserCancelled) playAudioCue('cancel');
         mode = null; // Предотвращаем срабатывание PTT release
         if (cancelInterval) { clearInterval(cancelInterval); cancelInterval = null; }
         let finalSeconds = recordSeconds;
@@ -1127,6 +1133,7 @@
       }
 
       function handleSendSuccess(resultText) {
+        playAudioCue('success');
         switchState('send-success');
         customPromptText = "";
         isSending = false;
@@ -1154,6 +1161,7 @@
       }
 
       function handleSendError(errorMsg) {
+        playAudioCue('error');
         switchState('send-error');
         isSending = false;
 
@@ -1403,6 +1411,111 @@
       let currentSource = null;
       let dataArray = null;
       let visualizerRafId = null;
+
+      // ==========================================================================
+      // AUDIO CUES (Синтез UI-звуков)
+      // ==========================================================================
+      function playAudioCue(type) {
+        if (!audioCtx) {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
+        
+        const t = audioCtx.currentTime;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        const filter = audioCtx.createBiquadFilter();
+        
+        filter.type = 'lowpass';
+        filter.frequency.value = 600; // Срезаем все звонкие верха для приглушенности
+
+        osc.connect(gain);
+        gain.connect(filter);
+        filter.connect(audioCtx.destination);
+        
+        osc.type = 'sine'; // Мягкая синусоида
+        
+        // Уровень громкости снижен в 3-4 раза (max ~0.15 вместо 0.5)
+        if (type === 'start') {
+          // Эффект "булька" (быстрый подъем частоты из низов)
+          osc.frequency.setValueAtTime(150, t);
+          osc.frequency.exponentialRampToValueAtTime(400, t + 0.08);
+          gain.gain.setValueAtTime(0, t);
+          gain.gain.linearRampToValueAtTime(0.15, t + 0.01);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+          osc.start(t);
+          osc.stop(t + 0.15);
+        } 
+        else if (type === 'pause') {
+          // Короткий глухой "туп"
+          osc.frequency.setValueAtTime(250, t);
+          gain.gain.setValueAtTime(0, t);
+          gain.gain.linearRampToValueAtTime(0.1, t + 0.01);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+          osc.start(t);
+          osc.stop(t + 0.1);
+        }
+        else if (type === 'warning') {
+          // Тревожный двойной глухой пульс (нажатие Escape)
+          osc.frequency.setValueAtTime(200, t);
+          osc.frequency.linearRampToValueAtTime(150, t + 0.2);
+          gain.gain.setValueAtTime(0, t);
+          gain.gain.linearRampToValueAtTime(0.15, t + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.02, t + 0.1);
+          gain.gain.linearRampToValueAtTime(0.15, t + 0.12);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+          osc.start(t);
+          osc.stop(t + 0.3);
+        }
+        else if (type === 'cancel') {
+          // Сброс (спад)
+          osc.frequency.setValueAtTime(300, t);
+          osc.frequency.exponentialRampToValueAtTime(150, t + 0.2);
+          gain.gain.setValueAtTime(0, t);
+          gain.gain.linearRampToValueAtTime(0.15, t + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+          osc.start(t);
+          osc.stop(t + 0.3);
+        }
+        else if (type === 'tick') {
+          // Короткий "тик" часов для таймера
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(800, t);
+          gain.gain.setValueAtTime(0, t);
+          gain.gain.linearRampToValueAtTime(0.05, t + 0.005);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+          osc.start(t);
+          osc.stop(t + 0.05);
+        }
+        else if (type === 'success') {
+          // Приглушенный теплый аккорд
+          osc.frequency.setValueAtTime(329.63, t); // E4
+          osc.frequency.setValueAtTime(415.30, t + 0.08); // G#4
+          osc.frequency.setValueAtTime(493.88, t + 0.16); // B4
+          gain.gain.setValueAtTime(0, t);
+          gain.gain.linearRampToValueAtTime(0.1, t + 0.02);
+          gain.gain.setValueAtTime(0.1, t + 0.16);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+          osc.start(t);
+          osc.stop(t + 0.4);
+        }
+        else if (type === 'error') {
+          osc.type = 'triangle'; // Треугольник (с фильтром дает приятный гул)
+          filter.frequency.value = 300; 
+          osc.frequency.setValueAtTime(150, t);
+          osc.frequency.setValueAtTime(120, t + 0.15);
+          gain.gain.setValueAtTime(0, t);
+          gain.gain.linearRampToValueAtTime(0.1, t + 0.02);
+          gain.gain.setValueAtTime(0.1, t + 0.1);
+          gain.gain.linearRampToValueAtTime(0, t + 0.12);
+          gain.gain.linearRampToValueAtTime(0.1, t + 0.15);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+          osc.start(t);
+          osc.stop(t + 0.3);
+        }
+      }
 
       function drawVisualizer() {
         if (!analyser) return;
