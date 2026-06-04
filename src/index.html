@@ -1,6 +1,6 @@
 <!doctype html>
 <html class="dark" lang="ru">
-  <head>
+  <head><script>window.onerror = function(msg, url, lineNo, columnNo, error) { fetch('http://localhost:1425/log_error', {method:'POST', body: JSON.stringify({msg, lineNo, columnNo, error: error?error.stack:''})}).catch(e=>console.error(e)); return false; }; window.addEventListener('unhandledrejection', function(e) { fetch('http://localhost:1425/log_error', {method:'POST', body: JSON.stringify({msg: e.reason ? e.reason.toString() : 'Promise rejection'})}).catch(err=>console.error(err)); });</script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SINC PRO - Панель управления</title>
@@ -8,6 +8,26 @@
     <link rel="stylesheet" href="styles.css" />
     <!-- Подключаем Google Material Symbols -->
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+    <style>
+      input[type=range].custom-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 14px;
+        height: 14px;
+        background: #8e52ff;
+        border-radius: 50%;
+        border: 2px solid #1b1b20;
+        cursor: pointer;
+      }
+      input[type=range].custom-slider::-moz-range-thumb {
+        width: 14px;
+        height: 14px;
+        background: #8e52ff;
+        border-radius: 50%;
+        border: 2px solid #1b1b20;
+        cursor: pointer;
+      }
+    </style>
   </head>
 
   <body class="bg-[#131318] text-[#e4e1e9] font-sans h-screen overflow-hidden flex selection:bg-[#a377ff]/30 selection:text-white">
@@ -38,6 +58,10 @@
           <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#d2bbff] font-bold border-r-2 border-[#d2bbff] bg-[#1f1f24] opacity-90 transition-all focus:outline-none w-full text-left active" style="background-color: #1f1f24; border: none; border-right: 2px solid #d2bbff; cursor: pointer;" data-tab="tab-home">
             <span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">home</span>
             <span class="text-[12px] sidebar-item-text">Главная</span>
+          </button>
+          <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="background-color: transparent; border: none; cursor: pointer;" data-tab="tab-voice">
+            <span class="material-symbols-outlined text-[20px]">record_voice_over</span>
+            <span class="text-[12px] sidebar-item-text">Озвучка</span>
           </button>
           <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="background-color: transparent; border: none; cursor: pointer;" data-tab="tab-ocr">
             <span class="material-symbols-outlined text-[20px]">screenshot_region</span>
@@ -138,10 +162,31 @@
             </div>
 
 
-            <!-- Центральная карточка: Последняя активность — flex-1 заполняет всё -->
-            <div class="bg-[#1f1f24] rounded-xl border border-[#4a4455]/20 flex flex-col overflow-hidden relative neon-glow transition-shadow duration-300 flex-1 min-h-0">
+            <!-- Контейнер Последней активности -->
+            <div class="bg-[#1f1f24] rounded-xl border border-[#4a4455]/20 flex flex-col relative flex-1 min-h-0">
+              <div class="px-4 py-2.5 border-b border-[#4a4455]/20 flex items-center gap-2 bg-[#2a292f]/30 flex-shrink-0 rounded-t-xl">
+                <div class="bg-[#d2bbff]/10 p-1 rounded-lg flex-shrink-0">
+                  <span class="material-symbols-outlined text-[#d2bbff] text-[16px]" style="font-variation-settings: 'FILL' 1;">bolt</span>
+                </div>
+                <h3 class="text-[12px] font-semibold text-[#e4e1e9] leading-tight">Последняя активность</h3>
+              </div>
+              <div id="home-dynamic-container" class="flex-1 flex flex-col min-h-0 relative bg-transparent"></div>
+            </div>
+          </section>
+
+          <!-- ВКЛАДКА: ОЗВУЧКА -->
+          <section class="tab-content flex flex-col gap-2 flex-1 min-h-0 py-4" id="tab-voice" style="display: none;">
+             <div id="voice-container" class="flex-1 flex flex-col min-h-0 relative">
+                <!-- Контейнер для виджета озвучки. JS переместит его сюда -->
+             </div>
+          </section>
+
+          <!-- ПУЛ ВИДЖЕТОВ (Скрыто) -->
+          <div id="widgets-pool" style="display: none;">
+            <!-- ЖУРНАЛЬНЫЙ ВИДЖЕТ (Последняя активность) -->
+            <div id="widget-journal" class="bg-[#1f1f24] rounded-xl border border-[#4a4455]/20 flex flex-col relative neon-glow transition-shadow duration-300 flex-1 h-full w-full min-h-0">
               <!-- Акцентная фиолетовая полоска сверху -->
-              <div class="h-0.5 w-full flex-shrink-0" style="background: linear-gradient(to right, #d2bbff, transparent);"></div>
+              <div class="h-0.5 w-full flex-shrink-0 rounded-t-xl" style="background: linear-gradient(to right, #d2bbff, transparent);"></div>
 
               <!-- Шапка карточки: всё управление здесь -->
               <div class="px-4 py-2.5 border-b border-[#4a4455]/20 flex items-center gap-2 bg-[#2a292f]/30 flex-shrink-0 flex-wrap">
@@ -154,7 +199,7 @@
                     </button>
                   </div>
                   <div>
-                    <h3 class="text-[12px] font-semibold text-[#e4e1e9] leading-tight">Последняя активность</h3>
+                    <h3 class="text-[12px] font-semibold text-[#e4e1e9] leading-tight" id="widget-journal-title">Запись с микрофона</h3>
                     <div class="flex items-center gap-1.5">
                       <span class="text-[9px] text-[#d2bbff] bg-[#1f1f24] px-1 py-0.5 rounded border border-[#4a4455]/30" id="activity-model">Gemini 2.0 Flash</span>
                       <span class="text-[9px] text-[#ccc3d8] flex items-center gap-0.5">
@@ -175,13 +220,29 @@
                   <option value="transcript">📝 Транскрипция</option>
                 </select>
 
-                <!-- Кнопка: Озвучить -->
-                <button id="btn-speak-text"
-                        class="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-[#ccc3d8] border border-[#4a4455]/30 bg-[#1b1b20] hover:text-[#d2bbff] hover:border-[#d2bbff]/40 hover:bg-[#2a292f] transition-all flex-shrink-0"
-                        title="Озвучить текст">
-                  <span class="material-symbols-outlined text-[14px]">volume_up</span>
-                  <span class="hidden sm:inline">Озвучить</span>
-                </button>
+                <!-- Группа кнопок TTS (Smart Overlay Button) -->
+                <div id="tts-controls-wrapper" class="flex items-center flex-shrink-0 relative h-[30px] w-[30px] group">
+                  
+                  <!-- Невидимый мостик -->
+                  <div id="tts-hover-area" class="absolute left-1/2 -translate-x-1/2 z-10 hidden cursor-default" style="bottom: 30px; width: 40px; height: 20px; background: transparent;"></div>
+
+                  <div id="tts-smart-button" class="relative flex items-center justify-center w-[30px] h-[30px] rounded-lg border border-[#4a4455]/30 bg-[#1b1b20] z-20">
+                    <!-- Главная кнопка (Play) -->
+                    <button id="btn-smart-speak" class="flex items-center justify-center w-full h-full text-[#ccc3d8] hover:bg-[#2a292f] transition-all rounded-lg" title="Озвучить">
+                      <span id="icon-smart-speak" class="material-symbols-outlined text-[15px] transition-colors duration-300">volume_up</span>
+                    </button>
+                  </div>
+
+                  <!-- Всплывающее меню (Stop) -->
+                  <div id="tts-hover-menu" class="absolute left-1/2 -translate-x-1/2 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-100 z-50 hidden" style="bottom: calc(100% + 8px);">
+                    <div class="bg-[#1b1b20] border border-[#4a4455]/50 p-1 rounded-lg shadow-lg flex items-center justify-center">
+                      <button id="btn-smart-stop-menu" class="w-[24px] h-[24px] flex items-center justify-center hover:bg-[#2a292f] rounded" title="Остановить">
+                        <span class="material-symbols-outlined" style="font-size: 16px; color: #ef4444;">close</span>
+                      </button>
+                    </div>
+                  </div>
+                  
+                </div>
 
                 <!-- Кнопка: Новый запрос -->
                 <button id="btn-new-request"
@@ -204,11 +265,11 @@
               </div>
 
               <!-- Текст сводки — занимает всё свободное место -->
-              <div class="flex-1 relative overflow-hidden">
-                <div class="p-5 h-full overflow-y-auto">
-                  <p class="text-[13px] leading-[1.7] text-[#ccc3d8] whitespace-pre-wrap" id="summary-text" style="user-select: text; -webkit-user-select: text;">Нет данных. Создайте первую запись через капсулу (Ctrl+Win).</p>
+              <div class="flex-1 relative overflow-hidden flex flex-col min-h-0">
+                <div class="p-5 overflow-y-auto relative flex-1">
+                  <p class="text-[13px] leading-[1.7] text-[#ccc3d8] whitespace-pre-wrap relative z-10" id="summary-text" style="user-select: text; -webkit-user-select: text;">Нет данных. Создайте первую запись через капсулу (Ctrl+Win).</p>
                 </div>
-                <div class="absolute bottom-0 left-0 w-full h-10 pointer-events-none" style="background: linear-gradient(to top, #1f1f24, transparent);"></div>
+                <div class="absolute bottom-0 left-0 w-full h-10 pointer-events-none z-20" style="background: linear-gradient(to top, #1f1f24, transparent);"></div>
               </div>
 
               <!-- Коллапсируемая панель с плеером (по клику на иконку в шапке) -->
@@ -225,10 +286,101 @@
                   </div>
                 </div>
               </div>
-
+              
               <!-- Скрытый spoiler-content -->
               <div class="px-5 pb-4 text-[12px] leading-relaxed text-[#ccc3d8] hidden" id="spoiler-content"></div>
             </div>
+
+            <!-- ВИДЖЕТ ОЗВУЧКИ -->
+            <div id="widget-voice" class="flex flex-col relative transition-shadow duration-300 flex-1 h-full w-full min-h-0 bg-transparent">
+              <!-- Floating Player Panel (docked to top) -->
+              <div class="absolute top-0 left-0 w-full z-30 p-4 pointer-events-none">
+                  <div class="bg-[#1b1b20]/90 backdrop-blur-md border border-[#4a4455]/40 rounded-2xl flex items-center gap-1 px-2 py-2 shadow-lg mx-auto max-w-max pointer-events-auto" id="slim-row">
+                      
+                      <!-- 🔊 Голос (dropdown) -->
+                      <div class="relative" id="voice-wrapper">
+                        <button class="pill-btn" id="btn-voice" title="Голос озвучки">
+                          <span class="material-symbols-outlined text-[16px] text-[#ccc3d8]/60" style="font-variation-settings:'FILL' 1;">volume_up</span>
+                          <span id="selected-voice-label">Загрузка...</span>
+                          <span class="material-symbols-outlined text-[14px] text-[#4a4455]">expand_more</span>
+                        </button>
+                        <div class="dropdown-menu" id="voice-menu" style="min-width: 200px; max-height: 700px; overflow-y: auto;">
+                          <div class="menu-section-label">Голоса</div>
+                        </div>
+                      </div>
+                      
+                      <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0"></div>
+                      
+                      <!-- ⚡ Скорость (dropdown) -->
+                      <div class="relative" id="speed-wrapper">
+                        <button class="pill-btn" id="btn-speed" title="Скорость воспроизведения">
+                          <span class="material-symbols-outlined text-[14px] text-[#7bd6d1]">bolt</span>
+                          <span id="selected-speed-label">1.0x</span>
+                        </button>
+          <div class="dropdown-menu" id="speed-menu" style="min-width: 100px; left: auto; right: 0;">
+            <div class="menu-section-label">Скорость</div>
+            <div style="display: flex; gap: 0px;">
+              <div style="display: flex; flex-direction: column; padding-right: 25px;">
+                <div class="dropdown-item" data-speed="0.5">0.5x</div>
+                <div class="dropdown-item" data-speed="0.75">0.75x</div>
+                <div class="dropdown-item selected" data-speed="1.0">1.0x</div>
+                <div class="dropdown-item" data-speed="1.25">1.25x</div>
+                <div class="dropdown-item" data-speed="1.5">1.5x</div>
+                <div class="dropdown-item" data-speed="1.75">1.75x</div>
+                <div class="dropdown-item" data-speed="2.0">2.0x</div>
+                <div class="dropdown-item" data-speed="2.25">2.25x</div>
+                <div class="dropdown-item" data-speed="2.5">2.5x</div>
+                <div class="dropdown-item" data-speed="2.75">2.75x</div>
+                <div class="dropdown-item" data-speed="3.0">3.0x</div>
+              </div>
+              <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 20px; position: relative;">
+                <input type="range" id="speed-slider" min="0.5" max="3.0" step="0.05" value="1.0"
+                  style="-webkit-appearance: none; appearance: none; width: 332px; height: 4px; background: #35343a; border-radius: 4px; outline: none; cursor: pointer; position: absolute; transform: rotate(90deg);"
+                  class="custom-slider">
+              </div>
+            </div>
+          </div>
+                      </div>
+                      
+                      <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0"></div>
+                      
+                      <!-- ▶ Play/Pause -->
+                      <button class="flex items-center justify-center w-9 h-9 rounded-full bg-[#8e52ff] text-white hover:bg-[#a377ff] transition-all active:scale-95 shadow-[0_0_12px_rgba(142,82,255,0.4)] flex-shrink-0 cursor-pointer border-0 mx-1"
+                              id="btn-voice-play" title="Озвучить текст">
+                        <span class="material-symbols-outlined text-[20px]" id="voice-play-icon" style="font-variation-settings:'FILL' 1;">play_arrow</span>
+                      </button>
+                      
+                      <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0"></div>
+                      
+                      <!-- 文A — Перевод -->
+                      <button class="icon-btn" id="btn-voice-translate" title="Переводить перед чтением (RU→EN)">
+                        <span class="material-symbols-outlined text-[18px]">translate</span>
+                      </button>
+                      
+                  </div>
+              </div>
+              
+              <!-- Text Content -->
+              <div class="flex-1 overflow-y-auto p-5 pt-20 pb-16 relative flex flex-col">
+                  <div id="voice-contenteditable" 
+                       class="flex-1 text-[#e4e1e9] text-[14px] leading-[1.8] focus:outline-none whitespace-pre-wrap break-words bg-[#141419] border border-[#4a4455]/40 rounded-xl p-5 shadow-inner cursor-text transition-colors hover:border-[#4a4455]/60 focus:border-[#d2bbff]/50" 
+                       contenteditable="true" spellcheck="false" 
+                       data-placeholder="Вставьте текст или используйте Ctrl+Shift / Ctrl+Alt для загрузки..."></div>
+              </div>
+              
+              <!-- Progress bar (Audio) -->
+              <div class="h-10 px-4 border-t border-[#4a4455]/20 flex items-center gap-3 bg-[#1b1b20]/50 flex-shrink-0 absolute bottom-0 left-0 w-full z-20">
+                  <span class="text-[10px] text-[#ccc3d8] font-mono w-7 text-right" id="voice-time-current">0:00</span>
+                  <div class="flex-1 h-1 bg-[#35343a] rounded-full overflow-hidden relative cursor-pointer" id="voice-progress-container">
+                      <div class="absolute top-0 left-0 h-full w-0 bg-[#7bd6d1] rounded-full" id="voice-progress-bar"></div>
+                  </div>
+                  <span class="text-[10px] text-[#ccc3d8] font-mono w-7" id="voice-time-total">0:00</span>
+              </div>
+
+              <!-- Audio Element -->
+              <audio id="voice-audio-element" style="display: none;"></audio>
+            </div>
+          </div>
 
           </section>
 
@@ -251,20 +403,37 @@
 
 
           <!-- ВКЛАДКА 3: ЖУРНАЛ ИИ -->
-          <section class="tab-content flex flex-col gap-3 flex-1 min-h-0 overflow-y-auto py-4" id="tab-history" style="display: none;">
-
-            <!-- Заголовок секции -->
-            <div class="flex items-center justify-between">
-              <h3 class="text-[13px] font-bold text-[#e4e1e9] flex items-center gap-2">
-                <span class="material-symbols-outlined text-[16px] text-[#d2bbff]">psychology</span>
-                Журнал ИИ
-              </h3>
-              <span class="text-[11px] text-[#ccc3d8]" id="history-count">—</span>
+          <section class="tab-content flex flex-col flex-1 min-h-0 relative overflow-hidden" id="tab-history" style="display: none;">
+            
+            <!-- Детальная часть (занимает всё пространство) -->
+            <div class="flex flex-col relative w-full h-full pb-14 pt-4" id="history-detail-container">
+               <!-- Если запись не выбрана -->
+               <div class="absolute inset-4 flex items-center justify-center text-[#ccc3d8] text-[13px] italic bg-[#1f1f24]/50 rounded-xl border border-[#4a4455]/20" id="history-empty-state">
+                 Выберите запись из истории ниже для просмотра
+               </div>
+               <!-- Сюда JS вставляет виджет Журнала ИИ -->
             </div>
-            <!-- Список истории — рендерится JS -->
-            <div class="flex flex-col gap-2" id="history-list">
-              <div class="text-center py-8 text-[#ccc3d8] text-[13px]">Загрузка истории...</div>
+            
+            <!-- Bottom Drawer для списка истории -->
+            <div id="history-drawer" class="absolute bottom-0 left-0 w-full bg-[#1b1b20]/95 backdrop-blur-xl border-t border-[#4a4455]/50 shadow-[0_-10px_40px_rgba(0,0,0,0.6)] flex flex-col transition-transform duration-300 z-50 translate-y-[calc(100%-48px)] h-[80%] rounded-t-2xl">
+              <!-- Header / Drag Handle -->
+              <div id="history-drawer-toggle" class="h-12 flex items-center justify-between px-5 cursor-pointer border-b border-[#4a4455]/20 hover:bg-[#2a292f]/50 transition-colors rounded-t-2xl">
+                <div class="flex items-center gap-2">
+                  <span class="material-symbols-outlined text-[18px] text-[#d2bbff]">history</span>
+                  <span class="text-[13px] font-bold text-[#e4e1e9] tracking-wide">История записей</span>
+                </div>
+                <div class="flex items-center gap-3">
+                  <span class="text-[11px] text-[#ccc3d8] bg-[#2a292f] px-2 py-0.5 rounded-full" id="history-count">0</span>
+                  <span class="material-symbols-outlined text-[20px] text-[#8e52ff] transition-transform duration-300" id="history-drawer-chevron">expand_less</span>
+                </div>
+              </div>
+              
+              <!-- Content List -->
+              <div class="flex flex-col gap-2 overflow-y-auto flex-1 p-4" id="history-list">
+                <div class="text-center py-8 text-[#ccc3d8] text-[13px]">Загрузка истории...</div>
+              </div>
             </div>
+            
           </section>
 
 
@@ -306,6 +475,29 @@
                   <input type="password" id="setting-yandex-api-key" placeholder="Введите ваш API ключ от Yandex (опционально)" class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#d2bbff]" />
                 </div>
                 <div class="flex flex-col gap-2">
+                  <label class="text-[11px] text-[#ccc3d8]">Движок перевода (Ctrl+Alt)</label>
+                  <select class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#d2bbff]" id="setting-translation-engine">
+                    <option value="gemini">Gemini AI (Рекомендуется)</option>
+                    <option value="yandex">Yandex Translate</option>
+                  </select>
+                </div>
+                <div class="flex flex-col gap-2">
+                  <label class="text-[11px] text-[#ccc3d8]">Голос озвучки по умолчанию</label>
+                  <select class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#d2bbff]" id="setting-tts-voice-default">
+                    <option value="ru-RU-SvetlanaNeural">Светлана (RU)</option>
+                    <option value="ru-RU-DmitryNeural">Дмитрий (RU)</option>
+                    <option value="en-US-GuyNeural">Guy (EN)</option>
+                    <option value="en-US-AriaNeural">Aria (EN)</option>
+                    <option value="en-US-JennyNeural">Jenny (EN)</option>
+                    <option value="de-DE-KatjaNeural">Katja (DE)</option>
+                    <option value="fr-FR-DeniseNeural">Denise (FR)</option>
+                    <option value="es-ES-AlvaroNeural">Alvaro (ES)</option>
+                    <option value="zh-CN-XiaoxiaoNeural">Xiaoxiao (CN)</option>
+                  </select>
+                </div>
+              </div>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                <div class="flex flex-col gap-2">
                   <div class="flex items-center justify-between">
                     <label class="text-[11px] text-[#ccc3d8]">Модель ИИ</label>
                     <span class="text-[10px] text-[#ccc3d8] hidden" id="models-loading-badge">
@@ -325,19 +517,23 @@
 
             <!-- Блок 3: Горячие клавиши -->
             <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-5">
-              <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-4">Горячие клавиши (Хоткеи)</h3>
+              <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-4">Горячие клавиши (Глобальные)</h3>
               <div class="flex flex-col gap-3 text-[13px]">
                 <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
-                  <span class="text-[#ccc3d8]">Запуск смарт-микрофона</span>
+                  <span class="text-[#ccc3d8]">Запуск смарт-микрофона (Капсула)</span>
                   <kbd class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] px-2 py-1 rounded font-semibold text-[11px]">Ctrl + Win</kbd>
                 </div>
                 <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
-                  <span class="text-[#ccc3d8]">Быстрый перевод области OCR</span>
-                  <kbd class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] px-2 py-1 rounded font-semibold text-[11px]">Alt + Q</kbd>
+                  <span class="text-[#ccc3d8]">Быстрая отправка на обработку ИИ</span>
+                  <kbd class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] px-2 py-1 rounded font-semibold text-[11px]">Win + Alt</kbd>
+                </div>
+                <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
+                  <span class="text-[#ccc3d8]">Озвучить выделенный фрагмент (TTS)</span>
+                  <kbd class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] px-2 py-1 rounded font-semibold text-[11px]">Ctrl + Shift</kbd>
                 </div>
                 <div class="flex justify-between items-center py-2">
-                  <span class="text-[#ccc3d8]">Озвучить выделенный фрагмент</span>
-                  <kbd class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] px-2 py-1 rounded font-semibold text-[11px]">Ctrl + Shift + S</kbd>
+                  <span class="text-[#ccc3d8]">Перевести и озвучить выделенный фрагмент</span>
+                  <kbd class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] px-2 py-1 rounded font-semibold text-[11px]">Ctrl + Alt</kbd>
                 </div>
               </div>
             </div>
@@ -408,6 +604,25 @@
         const targetTab = document.getElementById(tabId);
         if (targetTab) {
           targetTab.style.display = 'flex';
+        }
+        
+        if (window.updateDashboardWidget) {
+            window.updateDashboardWidget();
+        }
+        
+        // Восстанавливаем реальную "последнюю активность" для главной страницы
+        if (tabId === 'tab-home' && currentHistory && currentHistory.length > 0) {
+            renderActiveCard(currentHistory[0]);
+        }
+        
+        if (tabId === 'tab-history') {
+            if (!expandedHistoryId && currentHistory.length > 0) {
+                // Выбираем самую первую (свежую) запись из истории
+                toggleHistoryCard(currentHistory[0].id);
+            } else if (expandedHistoryId) {
+                // Если запись уже была выбрана, нужно просто заново смонтировать виджет в контейнер
+                toggleHistoryCard(expandedHistoryId);
+            }
         }
       }
 
@@ -818,10 +1033,18 @@
         if (invoke) {
           try {
             currentHistory = await invoke('load_history');
-            renderHistory();
+            
             if (currentHistory.length > 0) {
+              // Автоматически выделяем самую новую запись
+              expandedHistoryId = currentHistory[0].id;
+              renderHistory();
               renderActiveCard(currentHistory[0]);
+              // Если пришла новая запись из капсулы, автоматически переключаем главную на показ журнала
+              if (window.updateDashboardWidget) {
+                window.updateDashboardWidget('journal');
+              }
             } else {
+              renderHistory();
               renderActiveCard(null);
             }
           } catch (err) {
@@ -889,6 +1112,22 @@
       function renderHistory() {
         const historyList = document.getElementById('history-list');
         const historyCount = document.getElementById('history-count');
+        const emptyState = document.getElementById('history-empty-state');
+        
+        // Drawer elements
+        const drawer = document.getElementById('history-drawer');
+        const drawerToggle = document.getElementById('history-drawer-toggle');
+        const drawerChevron = document.getElementById('history-drawer-chevron');
+
+        // Setup Drawer Toggle once
+        if (drawerToggle && !drawerToggle.dataset.hasListener) {
+            drawerToggle.dataset.hasListener = 'true';
+            drawerToggle.addEventListener('click', () => {
+                drawer.classList.toggle('translate-y-[calc(100%-48px)]');
+                drawerChevron.classList.toggle('rotate-180');
+            });
+        }
+
         if (!historyList) return;
 
         if (historyCount) {
@@ -912,78 +1151,31 @@
           const secs = entry.duration_secs % 60;
           const durationStr = mins > 0 ? `${mins}м ${secs}с` : `${secs} сек`;
           
-          const isExpanded = expandedHistoryId === entry.id;
+          const isSelected = expandedHistoryId === entry.id;
           const firstAi = entry.ai_results && entry.ai_results.length > 0 ? entry.ai_results[0] : null;
-          // Обратная совместимость: старые записи используют transcript + preset + preset_label
           const baseText = entry.raw_transcript || entry.transcript || '';
-          const textPreview = (firstAi ? firstAi.text : baseText).substring(0, 120);
+          const textPreview = (firstAi ? firstAi.text : baseText).substring(0, 80) + '...';
           const entryPresetLabel = firstAi ? firstAi.preset_label : (entry.preset_label || (baseText ? 'Запись' : 'Отменено'));
           const entryPreset = firstAi ? firstAi.preset : (entry.preset || (baseText ? 'transcript' : 'cancelled'));
           const isError = entryPreset === 'error';
-
+          const presetColor = getPresetColor(entryPreset);
 
           return `
-            <div class="rounded-xl border transition-all duration-200 overflow-hidden"
-                 style="background: ${isError ? 'rgba(240,84,84,0.05)' : isExpanded ? '#1a1a22' : '#141419'};
-                        border-color: ${isExpanded ? getPresetColor(entryPreset) + '40' : 'rgba(74,68,85,0.25)'};"
-                 id="hcard-${entry.id}">
-              <div class="flex items-start gap-3 p-3 cursor-pointer" onclick="toggleHistoryCard('${entry.id}')">
+            <div class="rounded-xl border transition-all duration-200 overflow-hidden flex items-start gap-3 p-3 cursor-pointer hover:bg-[#1a1a22] flex-shrink-0"
+                 style="background: ${isError ? 'rgba(240,84,84,0.05)' : isSelected ? '#1a1a22' : '#141419'};
+                        border-color: ${isSelected ? presetColor + '80' : 'rgba(74,68,85,0.25)'};"
+                 onclick="toggleHistoryCard('${entry.id}'); if(document.getElementById('history-drawer')){document.getElementById('history-drawer').classList.add('translate-y-[calc(100%-48px)]');document.getElementById('history-drawer-chevron').classList.remove('rotate-180');}">
                 <div class="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center mt-0.5"
-                     style="background: ${getPresetColor(entryPreset)}18;">
-                  <span class="material-symbols-outlined text-[16px]" style="color: ${getPresetColor(entryPreset)}; font-variation-settings: 'FILL' 1;">${getPresetIcon(entryPreset)}</span>
+                     style="background: ${presetColor}18;">
+                  <span class="material-symbols-outlined text-[16px]" style="color: ${presetColor}; font-variation-settings: 'FILL' 1;">${getPresetIcon(entryPreset)}</span>
                 </div>
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-2 mb-0.5">
-                    <span class="text-[12px] font-semibold" style="color: ${getPresetColor(entryPreset)};">${entryPresetLabel}</span>
+                <div class="flex-1 min-w-0 flex flex-col gap-1">
+                  <div class="flex items-center gap-2">
+                    <span class="text-[12px] font-semibold" style="color: ${presetColor};">${entryPresetLabel}</span>
                     <span class="text-[10px] text-[#888]">${entry.timestamp} • ${durationStr}</span>
                   </div>
-                  <p class="text-[12px] text-[#ccc3d8] leading-[1.4] ${isExpanded ? 'hidden' : ''}">${textPreview}</p>
+                  <p class="text-[12px] text-[#ccc3d8] leading-[1.4] whitespace-nowrap overflow-hidden text-ellipsis m-0">${textPreview}</p>
                 </div>
-                <div class="flex items-center gap-1 flex-shrink-0">
-                  <button class="p-1.5 rounded text-[#ccc3d8] hover:text-[#d2bbff] hover:bg-[#2a292f] transition-all"
-                          onclick="event.stopPropagation(); openFolder('${entry.audio_path.replace(/\\/g, '\\\\')}')">
-                    <span class="material-symbols-outlined text-[15px]">folder_open</span>
-                  </button>
-                  <button class="p-1.5 rounded text-[#ccc3d8] hover:text-[#ffb4ab] hover:bg-[#2a292f] transition-all"
-                          onclick="event.stopPropagation(); deleteEntry('${entry.id}')">
-                    <span class="material-symbols-outlined text-[15px]">delete</span>
-                  </button>
-                </div>
-              </div>
-
-              <div class="${isExpanded ? '' : 'hidden'}" id="hcard-body-${entry.id}">
-                <div class="px-3 pb-3">
-                  <select class="bg-[#0e0e13] border border-[#4a4455]/30 text-[#e4e1e9] rounded-lg px-2 py-1 text-[11px] mb-2 w-full focus:outline-none"
-                          id="hcard-view-${entry.id}"
-                          onchange="switchHistoryView('${entry.id}')">
-                    <option value="transcript">📝 Транскрипция</option>
-                    ${(entry.ai_results || []).map((r, i) =>
-                      `<option value="ai_${i}">✨ Результат ${i+1} (${r.preset_label})</option>`
-                    ).join('')}
-                  </select>
-                  <div class="bg-[#0e0e13] rounded-lg p-3 mb-2 text-[13px] leading-[1.7] text-[#ccc3d8] max-h-56 overflow-y-auto"
-                       id="hcard-text-${entry.id}">
-                    ${(firstAi ? firstAi.text : entry.raw_transcript) || '—'}
-                  </div>
-                  <div class="flex items-center gap-2 bg-[#1f1f24] rounded-lg px-3 py-2">
-                    <button class="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all"
-                            onclick="toggleHistoryPlay('${entry.id}', '${entry.audio_path.replace(/\\/g, '\\\\')}')" 
-                            id="hplay-btn-${entry.id}">
-                      <span class="material-symbols-outlined text-[16px]" style="color: ${getPresetColor(entryPreset)};" id="hplay-icon-${entry.id}">${historyPlayingId === entry.id ? 'pause' : 'play_arrow'}</span>
-                    </button>
-                    <div class="flex-1 h-1 bg-[#35343a] rounded-full overflow-hidden" id="hprogress-bar-${entry.id}">
-                      <div class="h-full rounded-full transition-all" style="width: 0%; background: ${getPresetColor(entryPreset)};" id="hprogress-${entry.id}"></div>
-                    </div>
-                    <span class="text-[10px] text-[#888] font-mono w-12 text-right" id="htime-${entry.id}">0:00</span>
-                    <button class="p-1 rounded text-[#ccc3d8] hover:text-[#d2bbff]" onclick="copyHistoryText('${entry.id}')" title="Копировать">
-                      <span class="material-symbols-outlined text-[14px]">content_copy</span>
-                    </button>
-                    <button class="p-1 rounded text-[#ccc3d8] hover:text-[#7bd6d1]" onclick="editHistoryCard('${entry.id}')" title="Редактировать" id="hbtn-edit-${entry.id}">
-                      <span class="material-symbols-outlined text-[14px]">edit</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
             </div>
           `;
         }).join('');
@@ -1078,11 +1270,26 @@
       }
 
       function toggleHistoryCard(id) {
-        expandedHistoryId = (expandedHistoryId === id) ? null : id;
+        expandedHistoryId = id;
         renderHistory();
-        if (expandedHistoryId) {
-            const sel = document.getElementById(`hcard-view-${id}`);
-            if (sel && lastViewMode[id]) sel.value = lastViewMode[id];
+        
+        const entry = currentHistory.find(e => e.id === id);
+        if (!entry) return;
+        
+        // Заполняем данные в widget-journal
+        renderActiveCard(entry);
+        
+        // Монтируем widget-journal в 70% зону, если мы на вкладке Журнал
+        const activeTab = document.querySelector('.sidebar-item.active')?.getAttribute('data-tab');
+        if (activeTab === 'tab-history') {
+            const detailContainer = document.getElementById('history-detail-container');
+            const emptyState = document.getElementById('history-empty-state');
+            const widgetJournal = document.getElementById('widget-journal');
+            
+            if (detailContainer && widgetJournal) {
+                if (emptyState) emptyState.style.display = 'none';
+                detailContainer.appendChild(widgetJournal);
+            }
         }
       }
 
@@ -1152,6 +1359,11 @@
         const summaryText = document.getElementById('summary-text');
         const displayText = getDisplayText(currentActiveEntry, dashboardViewMode);
         if (summaryText) summaryText.innerHTML = (displayText || '—').replace(/\n/g, '<br>');
+        
+        // Синхронизируем смарт-кнопку TTS с новым текстом
+        if (window.ttsEngine && window.ttsEngine.onStateChange) {
+            window.ttsEngine.onStateChange(window.ttsEngine.isPlaying);
+        }
       }
 
       function renderActiveCard(entry) {
@@ -1222,6 +1434,11 @@
         // Скрываем плеер при смене записи
         const playerPanel = document.getElementById('player-panel');
         if (playerPanel) { playerPanel.classList.add('hidden'); playerPanel.classList.remove('flex'); }
+
+        // Синхронизируем смарт-кнопку TTS с новым текстом
+        if (window.ttsEngine && window.ttsEngine.onStateChange) {
+            window.ttsEngine.onStateChange(window.ttsEngine.isPlaying);
+        }
       }
 
       // Тогол плеера — клик на иконку записи
@@ -1236,42 +1453,32 @@
         });
       }
 
-      // Озвучить — отправляем текст в виджет озвучки (с его настройками голоса/скорости)
-      const btnSpeakText = document.getElementById('btn-speak-text');
-      if (btnSpeakText) {
-        btnSpeakText.addEventListener('click', async () => {
+      // Озвучить / Пауза / Продолжить — Умная кнопка
+      const btnSmartSpeak = document.getElementById('btn-smart-speak');
+      if (btnSmartSpeak) {
+        btnSmartSpeak.addEventListener('click', async () => {
+          if (window.ttsEngine && (window.ttsEngine.isPlaying || window.ttsEngine.isPaused)) {
+            // Если уже играет или на паузе — переключаем состояние
+            window.ttsEngine.togglePlay();
+            return;
+          }
+
+          // Если не играет — запускаем новую сессию
           if (!currentActiveEntry) return;
           const text = getDisplayText(currentActiveEntry, dashboardViewMode);
           if (!text) return;
 
-          if (window.__TAURI__) {
-            try {
-              // Пишем текст в буфер обмена и просим виджет воспроизвести
-              await window.__TAURI__.core.invoke('write_clipboard_text', { text });
-              await window.__TAURI__.event.emit('tts-speak-clipboard', {});
-              showToast('Отправлено в виджет озвучки', false);
-            } catch (e) {
-              // Фоллбэк: стандартный синтез (если виджет недоступен)
-              if ('speechSynthesis' in window) {
-                window.speechSynthesis.cancel();
-                const utt = new SpeechSynthesisUtterance(text);
-                utt.lang = 'ru-RU';
-                window.speechSynthesis.speak(utt);
-              }
-              showToast('Озвучивание...', false);
-            }
-          } else {
-            // В браузере (не Tauri) — стандартный синтез
-            if ('speechSynthesis' in window) {
-              window.speechSynthesis.cancel();
-              const utt = new SpeechSynthesisUtterance(text);
-              utt.lang = 'ru-RU';
-              window.speechSynthesis.speak(utt);
-              showToast('Озвучивание...', false);
-            } else {
-              showToast('Синтез речи не поддерживается', true);
-            }
-          }
+          document.dispatchEvent(new CustomEvent('journal-play-text', { detail: { text } }));
+          showToast('Текст отправлен на Озвучку', false);
+        });
+      }
+
+      // Остановить — Кнопка отмены
+      const btnSmartStop = document.getElementById('btn-smart-stop');
+      if (btnSmartStop) {
+        btnSmartStop.addEventListener('click', () => {
+          if (window.ttsEngine) window.ttsEngine.stop();
+          localStorage.removeItem('tts-last-text');
         });
       }
 
@@ -1383,7 +1590,15 @@
       // Тоггл: Капсула
       const toggleCapsule = document.getElementById('toggle-capsule');
       if (toggleCapsule) {
+        const isCapsuleVisible = localStorage.getItem('capsule-visible') !== 'false';
+        toggleCapsule.checked = isCapsuleVisible;
+        if (invoke) {
+          if (isCapsuleVisible) invoke('show_capsule_window').catch(()=>{});
+          else invoke('hide_capsule_window').catch(()=>{});
+        }
+        
         toggleCapsule.addEventListener('change', async () => {
+          localStorage.setItem('capsule-visible', toggleCapsule.checked);
           if (!invoke) return;
           try {
             if (toggleCapsule.checked) {
@@ -1400,7 +1615,15 @@
       // Тоггл: Виджет
       const toggleWidget = document.getElementById('toggle-widget');
       if (toggleWidget) {
+        const isWidgetVisible = localStorage.getItem('widget-visible') === 'true';
+        toggleWidget.checked = isWidgetVisible;
+        if (invoke) {
+          if (isWidgetVisible) invoke('show_widget_window').catch(()=>{});
+          else invoke('hide_widget_window').catch(()=>{});
+        }
+        
         toggleWidget.addEventListener('change', async () => {
+          localStorage.setItem('widget-visible', toggleWidget.checked);
           if (!invoke) return;
           try {
             if (toggleWidget.checked) {
@@ -1629,6 +1852,8 @@
         });
       }
     </script>
+    <script src="voice-core.js"></script>
+    <script src="tts.js"></script>
 
     <!-- Toast Notification -->
     <div class="fixed bottom-6 right-6 bg-[#1f1f24] text-white text-[13px] px-4 py-2.5 rounded-xl shadow-2xl border border-[#8e52ff]/30 transition-all duration-300 opacity-0 pointer-events-none z-[100] flex items-center gap-2" id="dashboard-toast">
