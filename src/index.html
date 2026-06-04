@@ -302,6 +302,10 @@
                   <input type="password" id="setting-api-key" placeholder="Введите ваш API ключ от Google AI Studio" class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#d2bbff]" />
                 </div>
                 <div class="flex flex-col gap-2">
+                  <label class="text-[11px] text-[#ccc3d8]">Ключ API Yandex Translate (Резервный переводчик)</label>
+                  <input type="password" id="setting-yandex-api-key" placeholder="Введите ваш API ключ от Yandex (опционально)" class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#d2bbff]" />
+                </div>
+                <div class="flex flex-col gap-2">
                   <div class="flex items-center justify-between">
                     <label class="text-[11px] text-[#ccc3d8]">Модель ИИ</label>
                     <span class="text-[10px] text-[#ccc3d8] hidden" id="models-loading-badge">
@@ -535,6 +539,7 @@
             document.getElementById('setting-ui-lang').value = config.ui_lang || 'ru';
             document.getElementById('setting-dictation-lang').value = config.dictation_lang || 'auto';
             document.getElementById('setting-api-key').value = config.api_key || '';
+            document.getElementById('setting-yandex-api-key').value = config.yandex_api_key || '';
             // Сначала грузим модели, потом восстанавливаем выбор
             await fetchAndPopulateModels(config.api_key, config.ai_model);
             updateApiStatus(config.api_key);
@@ -555,6 +560,7 @@
             ui_lang: document.getElementById('setting-ui-lang').value,
             dictation_lang: document.getElementById('setting-dictation-lang').value,
             api_key: document.getElementById('setting-api-key').value,
+            yandex_api_key: document.getElementById('setting-yandex-api-key').value,
             ai_model: document.getElementById('setting-ai-model').value
           };
           try {
@@ -714,6 +720,9 @@
         await fetchAndPopulateModels(key, currentModel);
         saveConfig();
       }, 1200));
+      document.getElementById('setting-yandex-api-key').addEventListener('input', debounce(() => {
+        saveConfig();
+      }, 1000));
       document.getElementById('setting-ai-model').addEventListener('change', () => {
         updateModelInfo(document.getElementById('setting-ai-model').value);
         saveConfig();

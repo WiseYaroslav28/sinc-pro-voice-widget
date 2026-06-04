@@ -20,6 +20,8 @@
         background-color: transparent !important;
         margin: 0;
         padding: 0;
+        width: 100vw;
+        height: 100vh;
         overflow: hidden;
       }
 
@@ -57,19 +59,9 @@
         background: linear-gradient(#45a29e, #8e52ff);
         border-radius: 9999px;
         width: 3px;
-        animation: 1s infinite alternate pulse-waveform;
+        height: 4px;
+        transition: height 0.05s ease-out;
       }
-      @keyframes pulse-waveform {
-        0% { height: 4px; }
-        100% { height: 16px; }
-      }
-      .waveform-bar:nth-child(1) { animation-delay: 0.1s; }
-      .waveform-bar:nth-child(2) { animation-delay: 0.3s; }
-      .waveform-bar:nth-child(3) { animation-delay: 0.5s; }
-      .waveform-bar:nth-child(4) { animation-delay: 0.2s; }
-      .waveform-bar:nth-child(5) { animation-delay: 0.6s; }
-      .waveform-bar:nth-child(6) { animation-delay: 0.4s; }
-      .waveform-bar:nth-child(7) { animation-delay: 0.1s; }
 
       /* Стиль для парящих веерных кнопок пресетов */
       .preset-btn {
@@ -197,25 +189,23 @@
   </head>
 
   <body class="bg-transparent text-[#e4e1e9] antialiased">
-    <div class="relative flex flex-col items-center justify-end p-2 w-full h-full" id="capsule-container">
+    <div class="relative flex flex-col items-center justify-end px-2 pb-2 pt-1 w-full h-full" id="capsule-container">
       
       <!-- СОСТОЯНИЕ 1: Покой (Idle - Тонкая полоска) -->
       <div class="capsule-state active" id="state-idle">
-        <div class="w-16 h-1.5 bg-[#ccc3d8]/40 rounded-full cursor-pointer transition-all duration-300 hover:bg-[#8e52ff]/80 hover:w-20 gpu-layer" style="filter: drop-shadow(0 4px 10px rgba(0,0,0,0.45));"></div>
+        <div class="w-16 h-1.5 bg-[#ccc3d8]/40 rounded-full cursor-pointer transition-all duration-300 hover:bg-[#8e52ff]/80 hover:w-20 gpu-layer" style="filter: drop-shadow(0 4px 10px rgba(0,0,0,0.45)); border: 1px solid rgba(0,0,0,0.5);"></div>
       </div>
 
 
       <!-- СОСТОЯНИЕ 2: Наведение (Hover - Левитирующие кнопки) -->
       <div class="capsule-state" id="state-hover">
-        <div class="flex gap-3 items-center justify-center relative w-full">
+        <div class="flex gap-3 items-center justify-center relative z-10 mx-auto px-4" style="padding-top: 8px; padding-bottom: 20px; margin-bottom: -12px; background-color: rgba(0,0,0,0.01); pointer-events: auto; width: max-content;">
           <!-- Кнопка записи -->
           <div class="relative group flex flex-col items-center">
             <button class="w-10 h-10 rounded-full bg-[#1b1b25] border border-[#35343a] flex items-center justify-center text-[#e4e1e9] hover:text-[#8e52ff] hover:border-[#8e52ff] transition-all shadow-lg active:scale-90 gpu-layer" id="btn-start-rec" style="background-color: #1b1b25; border: 1px solid #35343a;">
               <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">mic</span>
             </button>
-            <div class="absolute top-full mt-1 bg-[#35343a] text-[#e4e1e9] text-[9px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap border border-[#4a4455]/50 z-[100]">
-              Запись
-            </div>
+            <div class="absolute -bottom-2 w-1 h-1 rounded-full bg-[#8e52ff] opacity-0 group-hover:opacity-100 transition-opacity" style="box-shadow: 0 0 5px #8e52ff;"></div>
           </div>
 
           <!-- Кнопка ИИ-пресетов -->
@@ -223,105 +213,65 @@
             <button class="w-10 h-10 rounded-full bg-[#1b1b25] border border-[#35343a] flex items-center justify-center text-[#e4e1e9] hover:text-[#45a29e] hover:border-[#45a29e] transition-all shadow-lg active:scale-90 gpu-layer" id="btn-hover-presets" style="background-color: #1b1b25; border: 1px solid #35343a;">
               <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">auto_awesome</span>
             </button>
-            <div class="absolute top-full mt-1 bg-[#35343a] text-[#e4e1e9] text-[9px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap border border-[#4a4455]/50 z-[100]">
-              Пресеты
-            </div>
+            <div class="absolute -bottom-2 w-1 h-1 rounded-full bg-[#45a29e] opacity-0 group-hover:opacity-100 transition-opacity" style="box-shadow: 0 0 5px #45a29e;"></div>
             
             <!-- Веер пресетов — заполняется через JS из массива PRESETS -->
-            <div class="absolute bottom-full mb-2 w-0 h-0 flex justify-center items-center hidden" id="hover-presets-menu"></div>
+            <div class="absolute bottom-full mb-2 w-0 h-0 flex justify-center items-center opacity-0 pointer-events-none transition-all duration-300" id="hover-presets-menu"></div>
           </div>
 
           <!-- Кнопка Журнала -->
           <div class="relative group flex flex-col items-center">
-            <button class="w-10 h-10 rounded-full bg-[#1b1b25] border border-[#35343a] flex items-center justify-center text-[#e4e1e9] hover:text-white hover:border-white transition-all shadow-lg active:scale-90 gpu-layer" id="btn-open-journal" style="background-color: #1b1b25; border: 1px solid #35343a;">
+            <button class="w-10 h-10 rounded-full bg-[#1b1b25] border border-[#35343a] flex items-center justify-center text-[#e4e1e9] hover:text-[#3b82f6] hover:border-[#3b82f6] transition-all shadow-lg active:scale-90 gpu-layer group" id="btn-open-journal" style="background-color: #1b1b25; border: 1px solid #35343a;">
               <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">history</span>
             </button>
-            <div class="absolute top-full mt-1 bg-[#35343a] text-[#e4e1e9] text-[9px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap border border-[#4a4455]/50 z-[100]">
-              Журнал
-            </div>
+            <div class="absolute -bottom-2 w-1 h-1 rounded-full bg-[#3b82f6] opacity-0 group-hover:opacity-100 transition-opacity" style="box-shadow: 0 0 5px #3b82f6;"></div>
           </div>
         </div>
       </div>
 
-      <!-- СОСТОЯНИЕ 3: Запись (Active Recording) -->
-      <div class="capsule-state" id="state-recording">
-        <div class="flex flex-col items-center gap-1 w-full">
-          <!-- Парящие пресеты и волшебная палочка во время записи (по ховеру) -->
-          <div class="relative flex justify-center items-center h-11 w-full mb-0.5 opacity-0 pointer-events-none transition-all duration-300" id="recording-magic-area">
-            <button class="w-8 h-8 rounded-full bg-[#1b1b25] border border-[#35343a] flex items-center justify-center text-[#e4e1e9] hover:text-[#45a29e] hover:border-[#45a29e] transition-all shadow-lg active:scale-90 gpu-layer" id="btn-recording-presets" style="background-color: #1b1b25;">
+      <!-- СОСТОЯНИЕ 3: Активная Капсула (Запись/Пауза) -->
+      <div class="capsule-state" id="state-active">
+        
+        <div class="flex flex-col items-center gap-1 w-full z-10">
+          <!-- Парящие пресеты и волшебная палочка во время паузы/наведения -->
+          <div class="relative flex justify-center items-center h-11 w-full mb-0.5 opacity-0 pointer-events-none transition-all duration-300" id="active-magic-area">
+            <button class="w-8 h-8 rounded-full bg-[#1b1b25]/90 border border-[#35343a] flex items-center justify-center text-[#e4e1e9] hover:text-[#45a29e] hover:border-[#45a29e] transition-all shadow-lg active:scale-90 gpu-layer" id="btn-active-presets" style="background-color: #1b1b25;">
               <span class="material-symbols-outlined text-[15px]">auto_awesome</span>
             </button>
-            
-            <!-- Веер пресетов — заполняется через JS из массива PRESETS -->
-            <div class="absolute bottom-full mb-1 w-0 h-0 flex justify-center items-center hidden" id="recording-presets-fan"></div>
-          </div>
-
-          <!-- Пилюля записи -->
-          <div class="bg-[#1b1b25] border border-[#35343a] rounded-full h-10 flex items-center px-3 shadow-[0_8px_24px_rgba(0,0,0,0.6)] gap-2.5 cursor-pointer hover:border-[#8e52ff]/50 transition-all w-[240px] justify-between mx-auto gpu-layer" id="recording-pill">
-            <!-- Left: Mic + Dot -->
-            <div class="flex items-center gap-1.5 border-r border-[#4a4455]/40 pr-2">
-              <span class="material-symbols-outlined text-[#f05454] text-[16px]" style="font-variation-settings: 'FILL' 1;">mic</span>
-              <div class="w-1.5 h-1.5 rounded-full bg-[#f05454] pulse-dot"></div>
-            </div>
-            <!-- Center: Waveform -->
-            <div class="flex items-center gap-[2.5px] h-4 w-20 justify-center" id="recording-waveform">
-              <div class="waveform-bar"></div>
-              <div class="waveform-bar"></div>
-              <div class="waveform-bar"></div>
-              <div class="waveform-bar"></div>
-              <div class="waveform-bar"></div>
-              <div class="waveform-bar"></div>
-              <div class="waveform-bar"></div>
-            </div>
-            <!-- Right: Timer -->
-            <div class="border-l border-[#4a4455]/40 pl-2 font-mono text-[11px] text-[#45a29e] tracking-wider" id="rec-timer">
-              00:00
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- СОСТОЯНИЕ 4: Пауза (Pause/Latch & Send) -->
-      <div class="capsule-state" id="state-pause">
-        <div class="flex flex-col items-center gap-1 w-full">
-          <!-- Парящие пресеты и волшебная палочка во время паузы (по ховеру) -->
-          <div class="relative flex justify-center items-center h-11 w-full mb-0.5 opacity-0 pointer-events-none transition-all duration-300" id="pause-magic-area">
-            <button class="w-8 h-8 rounded-full bg-[#1b1b25]/90 border border-[#35343a] flex items-center justify-center text-[#e4e1e9] hover:text-[#45a29e] hover:border-[#45a29e] transition-all shadow-lg active:scale-90 gpu-layer" id="btn-pause-presets" style="background-color: #1b1b25;">
-              <span class="material-symbols-outlined text-[15px]">auto_awesome</span>
-            </button>
-            
-            <!-- Веер пресетов — заполняется через JS из массива PRESETS -->
-            <div class="absolute bottom-full mb-1 w-0 h-0 flex justify-center items-center hidden" id="pause-presets-fan"></div>
+            <div class="absolute bottom-full mb-1 w-0 h-0 flex justify-center items-center opacity-0 pointer-events-none transition-all duration-300" id="active-presets-fan"></div>
           </div>
           
-          <!-- Пилюля паузы — занимает всю ширину контейнера -->
-          <div class="bg-[#1b1b25] border border-[#35343a] rounded-full h-10 flex items-center px-3 shadow-[0_8px_24px_rgba(0,0,0,0.6)] gap-2 cursor-pointer hover:border-[#ffc107]/50 transition-all w-full justify-between gpu-layer" id="pause-pill">
-            <!-- Left: Pause Icon + Yellow Dot -->
+          <!-- Единая пилюля -->
+          <div class="bg-[#1b1b25] border border-[#35343a] rounded-full h-10 flex items-center px-4 shadow-[0_8px_24px_rgba(0,0,0,0.6)] gap-3 cursor-pointer transition-all w-fit mx-auto justify-between gpu-layer hover:border-[#8e52ff]/50" id="active-pill">
+            
+            <!-- Left: Icon + Dot -->
             <div class="flex items-center gap-1.5 border-r border-[#4a4455]/40 pr-2">
-              <span class="material-symbols-outlined text-[#ffc107] text-[16px]" style="font-variation-settings: 'FILL' 1;">pause</span>
-              <div class="w-1.5 h-1.5 rounded-full bg-[#ffc107]"></div>
+              <span class="material-symbols-outlined text-[#f05454] text-[16px] transition-colors" id="active-icon" style="font-variation-settings: 'FILL' 1;">mic</span>
+              <div class="w-1.5 h-1.5 rounded-full bg-[#f05454] pulse-dot transition-colors" id="active-dot"></div>
             </div>
-            <!-- Center: Waveform (Paused/Static) -->
-            <div class="flex items-center gap-[2.5px] h-4 w-16 justify-center">
-              <div class="waveform-bar" style="animation: none; height: 4px;"></div>
-              <div class="waveform-bar" style="animation: none; height: 4px;"></div>
-              <div class="waveform-bar" style="animation: none; height: 4px;"></div>
-              <div class="waveform-bar" style="animation: none; height: 4px;"></div>
-              <div class="waveform-bar" style="animation: none; height: 4px;"></div>
-              <div class="waveform-bar" style="animation: none; height: 4px;"></div>
-              <div class="waveform-bar" style="animation: none; height: 4px;"></div>
+            
+            <!-- Center: Waveform -->
+            <div class="flex items-center gap-[1.5px] h-4 justify-center" id="recording-waveform">
+              <div class="waveform-bar" style="animation: none !important;"></div>
+              <div class="waveform-bar" style="animation: none !important;"></div>
+              <div class="waveform-bar" style="animation: none !important;"></div>
+              <div class="waveform-bar" style="animation: none !important;"></div>
+              <div class="waveform-bar" style="animation: none !important;"></div>
+              <div class="waveform-bar" style="animation: none !important;"></div>
+              <div class="waveform-bar" style="animation: none !important;"></div>
             </div>
-            <!-- Right: Control Buttons + Stopped Timer -->
+            
+            <!-- Right: Control Buttons + Timer -->
             <div class="flex items-center gap-1.5 border-l border-[#4a4455]/40 pl-2">
-              <button class="text-[#ccc3d8] hover:text-[#8e52ff] bg-transparent border-0 flex items-center justify-center active:scale-90 cursor-pointer p-0 gpu-layer" id="btn-send-ai" title="Отправить в Gemini 🚀">
-                <span class="material-symbols-outlined text-[15px]" style="font-variation-settings: 'FILL' 1;">send</span>
-              </button>
-              <button class="text-[#ccc3d8] hover:text-[#f05454] bg-transparent border-0 flex items-center justify-center active:scale-90 cursor-pointer p-0 gpu-layer" id="btn-cancel-rec" title="Отменить запись">
-                <span class="material-symbols-outlined text-[16px]">close</span>
-              </button>
-              <div class="font-mono text-[11px] text-[#ffc107] tracking-wider" id="pause-timer">
+              <div class="font-mono text-[11px] text-[#45a29e] tracking-wider pr-1 transition-colors" id="active-timer">
                 00:00
               </div>
+              <button class="text-[#ccc3d8] hover:text-[#8e52ff] bg-transparent border-0 flex items-center justify-center active:scale-90 cursor-pointer p-0 gpu-layer" id="btn-active-send" title="Отправить в Gemini 🚀">
+                <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+              </button>
+              <button class="text-[#f05454] hover:text-[#ff7676] bg-transparent border-0 flex items-center justify-center active:scale-90 cursor-pointer p-0 gpu-layer ml-3 opacity-60 hover:opacity-100 transition-opacity" id="btn-active-cancel" title="Отменить запись">
+                <span class="material-symbols-outlined" style="font-size: 10px;">close</span>
+              </button>
             </div>
           </div>
         </div>
@@ -453,31 +403,30 @@
       const container = document.getElementById('capsule-container');
       const stateIdle = document.getElementById('state-idle');
       const stateHover = document.getElementById('state-hover');
-      const stateRecording = document.getElementById('state-recording');
-      const statePause = document.getElementById('state-pause');
+      const stateActive = document.getElementById('state-active');
       const stateCancelConfirm = document.getElementById('state-cancel-confirm');
       const stateSending = document.getElementById('state-sending');
       const stateSendSuccess = document.getElementById('state-send-success');
       const stateSendError = document.getElementById('state-send-error');
       const cancelCountdownText = document.getElementById('cancel-countdown-text');
       const btnKeepRecording = document.getElementById('btn-keep-recording');
+      const cancelPill = document.getElementById('cancel-pill');
       
       const btnStartRec = document.getElementById('btn-start-rec');
       const btnHoverPresets = document.getElementById('btn-hover-presets');
       const hoverPresetsMenu = document.getElementById('hover-presets-menu');
       const btnOpenJournal = document.getElementById('btn-open-journal');
-      const btnSendAi = document.getElementById('btn-send-ai');
-      const btnCancelRec = document.getElementById('btn-cancel-rec');
-      const recTimer = document.getElementById('rec-timer');
-      const recordingPill = document.getElementById('recording-pill');
-      const pausePill = document.getElementById('pause-pill');
+      
+      const btnActiveSend = document.getElementById('btn-active-send');
+      const btnActiveCancel = document.getElementById('btn-active-cancel');
+      const activeTimer = document.getElementById('active-timer');
+      const activePill = document.getElementById('active-pill');
+      const activeIcon = document.getElementById('active-icon');
+      const activeDot = document.getElementById('active-dot');
 
-      const btnRecordingPresets = document.getElementById('btn-recording-presets');
-      const recordingPresetsFan = document.getElementById('recording-presets-fan');
-      const recordingMagicArea = document.getElementById('recording-magic-area');
-      const btnPausePresets = document.getElementById('btn-pause-presets');
-      const pausePresetsFan = document.getElementById('pause-presets-fan');
-      const pauseMagicArea = document.getElementById('pause-magic-area');
+      const btnActivePresets = document.getElementById('btn-active-presets');
+      const activePresetsFan = document.getElementById('active-presets-fan');
+      const activeMagicArea = document.getElementById('active-magic-area');
 
       // Кросс-версионное получение текущего окна Tauri 2.0
       let appWindow = null;
@@ -511,30 +460,17 @@
       const magnetSaved = localStorage.getItem('capsuleMagnet');
       let isMagnetEnabled = magnetSaved === null ? true : magnetSaved === 'true';
 
-      // Размеры окна по состоянию (логические пиксели)
-      const WIN_WIDTH      = 320;
-      const WIN_HEIGHT_IDLE   = 52;   // только пилюля
-      const WIN_HEIGHT_HOVER  = 160;  // пилюля + 3 кнопки (Промпт на 40px от кнопки)
-      const WIN_HEIGHT_ACTIVE = 200;  // запись / пауза / отмена
-      const WIN_HEIGHT_SENDING = 120;
-      const WIN_HEIGHT_SUCCESS = 52;
-      const WIN_HEIGHT_ERROR = 200;
-      const WIN_HEIGHT = WIN_HEIGHT_ACTIVE; // для инициализации
+      // ======================================================================
+      // ОБЩАЯ ЛОГИКА ПОЗИЦИОНИРОВАНИЯ (Окно зафиксировано 340x260)
+      // ======================================================================
 
-      // Динамическое изменение высоты окна под состояние (DRY: одна функция для обоих режимов)
       async function resizeToState(state) {
         if (!invoke) return;
 
-        const h = state === 'idle' ? WIN_HEIGHT_IDLE
-                : state === 'hover' ? WIN_HEIGHT_HOVER
-                : state === 'sending' ? WIN_HEIGHT_SENDING
-                : state === 'send-success' ? WIN_HEIGHT_SUCCESS
-                : state === 'send-error' ? WIN_HEIGHT_ERROR
-                : WIN_HEIGHT_ACTIVE;
-        const w_phys = Math.round(WIN_WIDTH * cachedScaleFactor);
-        const h_phys = Math.round(h * cachedScaleFactor);
+        const w_phys = Math.round(340 * cachedScaleFactor);
+        const h_phys = Math.round(260 * cachedScaleFactor);
 
-        let anchorX_phys, anchorY_phys;  // центр X и нижний Y — единственное что меняется
+        let anchorX_phys, anchorY_phys;
 
         if (isMagnetEnabled) {
           // Магнит ON: якорь = центр низа монитора ГДЕ КУРСОР (через Win32)
@@ -543,19 +479,15 @@
             if (mon && mon.scale_factor) {
               cachedScaleFactor = mon.scale_factor;
             }
-            // Координаты mon — физические пиксели первичного монитора (без DPI scale)
-            // rc_work уже в физических пикселях (SetWindowPos работает в физических)
             anchorX_phys = mon.work_left + Math.round((mon.work_right  - mon.work_left) / 2);
             anchorY_phys = mon.work_bottom - Math.round(6);  // 6px над taskbar
           } catch (e) {
-            // Fallback: текущий экран по screen.availWidth
             anchorX_phys = Math.round(screen.availWidth  * cachedScaleFactor / 2);
             anchorY_phys = Math.round(screen.availHeight * cachedScaleFactor) - 6;
           }
         } else {
           // Магнит OFF: якорь = нижний центр текущей позиции окна
           if (!lastBottomCenterX_phys || !lastBottomY_phys) {
-            // Первый запуск: читаем реальную позицию окна
             if (appWindow) {
               try {
                 const size = await appWindow.innerSize();
@@ -564,20 +496,11 @@
                 lastBottomY_phys       = pos.y + size.height;
               } catch (_) { return; }
             } else { return; }
-          } else if (currentState === 'idle' && appWindow) {
-            // Обновляем якорь из текущей позиции (вдруг перетащили в idle)
-            try {
-              const size = await appWindow.innerSize();
-              const pos  = await appWindow.outerPosition();
-              lastBottomCenterX_phys = pos.x + size.width / 2;
-              lastBottomY_phys       = pos.y + size.height;
-            } catch (_) {}
           }
           anchorX_phys = lastBottomCenterX_phys;
           anchorY_phys = lastBottomY_phys;
         }
 
-        // Единая логика позиционирования (DRY): окно растёт вверх от якорной точки
         const x_phys = Math.round(anchorX_phys - w_phys / 2);
         const y_phys = anchorY_phys - h_phys;
 
@@ -623,7 +546,23 @@
       function renderPresetFan(containerId, attrName) {
         const el = document.getElementById(containerId);
         if (!el) return;
-        el.innerHTML = PRESETS.map(p =>
+        
+        // Динамический расчет ширины и высоты синего прямоугольника под пресеты
+        let minLeft = 0, maxRight = 0, maxTop = 0;
+        PRESETS.forEach(p => {
+          if (p.pos.left < minLeft) minLeft = p.pos.left;
+          if (p.pos.left > maxRight) maxRight = p.pos.left;
+          if (p.pos.bottom > maxTop) maxTop = p.pos.bottom;
+        });
+        
+        const blockWidth = (maxRight - minLeft) + 80; 
+        const blockHeight = maxTop + 35;
+        const centerX = (minLeft + maxRight) / 2;
+        
+        // Мост (подложка) для удержания ховера (динамический прямоугольник, невидимый)
+        const hoverBridge = `<div class="absolute z-[-1]" style="bottom: -10px; left: calc(50% + ${centerX}px); transform: translateX(-50%); width: ${blockWidth}px; height: ${blockHeight}px; background-color: rgba(0,0,0,0.01); border-radius: 12px;"></div>`;
+        
+        el.innerHTML = hoverBridge + PRESETS.map(p =>
           `<button class="preset-btn"
                    style="bottom:${p.pos.bottom}px; left:${p.pos.left}px; transform:translate(-50%,50%);"
                    ${attrName}="${p.id}">${p.label}</button>`
@@ -649,19 +588,15 @@
         });
       }
 
-      // Рендерим все три меню из одного источника
+      // Рендерим все меню из одного источника
       renderPresetFan('hover-presets-menu',    'data-preset');
-      renderPresetFan('recording-presets-fan', 'data-rec-preset');
-      renderPresetFan('pause-presets-fan',     'data-pause-preset');
+      renderPresetFan('active-presets-fan',    'data-active-preset');
 
       // Привязываем события
       bindPresetFan('hover-presets-menu', 'data-preset', () => {
-        // Просто скрываем меню — запись НЕ запускаем.
-        // Пресет уже сохранён внутри bindPresetFan до вызова этого колбэка.
-        hoverPresetsMenu.classList.add('hidden');
+        // Оставляем меню открытым. Оно само закроется, когда мышь покинет область.
       });
-      bindPresetFan('recording-presets-fan', 'data-rec-preset', null);
-      bindPresetFan('pause-presets-fan',     'data-pause-preset', null);
+      bindPresetFan('active-presets-fan', 'data-active-preset', null);
 
 
       async function openCustomPromptWindow() {
@@ -693,10 +628,9 @@
       }
 
       function syncPresetUI(preset) {
-        document.querySelectorAll('[data-preset], [data-rec-preset], [data-pause-preset]').forEach(el => {
+        document.querySelectorAll('[data-preset], [data-active-preset]').forEach(el => {
           if (el.getAttribute('data-preset') === preset || 
-              el.getAttribute('data-rec-preset') === preset || 
-              el.getAttribute('data-pause-preset') === preset) {
+              el.getAttribute('data-active-preset') === preset) {
             el.classList.add('active');
           } else {
             el.classList.remove('active');
@@ -716,35 +650,31 @@
       if (hoverPresetsContainer) {
         hoverPresetsContainer.addEventListener('mouseenter', () => {
           if (hoverPresetsTimer) { clearTimeout(hoverPresetsTimer); hoverPresetsTimer = null; }
-          hoverPresetsMenu.classList.remove('hidden');
+          hoverPresetsMenu.classList.remove('opacity-0', 'pointer-events-none'); hoverPresetsMenu.classList.add('opacity-100', 'pointer-events-auto');
         });
         hoverPresetsContainer.addEventListener('mouseleave', () => {
           if (hoverPresetsTimer) clearTimeout(hoverPresetsTimer);
-          hoverPresetsTimer = setTimeout(() => { hoverPresetsMenu.classList.add('hidden'); }, 400);
+          hoverPresetsTimer = setTimeout(() => { hoverPresetsMenu.classList.remove('opacity-100', 'pointer-events-auto'); hoverPresetsMenu.classList.add('opacity-0', 'pointer-events-none'); }, 400);
         });
       }
 
-      let recordingPresetsTimer = null;
-      if (recordingMagicArea) {
-        recordingMagicArea.addEventListener('mouseenter', () => {
-          if (recordingPresetsTimer) { clearTimeout(recordingPresetsTimer); recordingPresetsTimer = null; }
-          recordingPresetsFan.classList.remove('hidden');
+      let activePresetsTimer = null;
+      if (activeMagicArea) {
+        activeMagicArea.addEventListener('mouseenter', () => {
+          if (activePresetsTimer) { clearTimeout(activePresetsTimer); activePresetsTimer = null; }
+          activePresetsFan.classList.remove('opacity-0', 'pointer-events-none'); activePresetsFan.classList.add('opacity-100', 'pointer-events-auto');
+          updateClickRegion(currentState === 'recording' ? 'recording-fan' : 'pause-fan');
         });
-        recordingMagicArea.addEventListener('mouseleave', () => {
-          if (recordingPresetsTimer) clearTimeout(recordingPresetsTimer);
-          recordingPresetsTimer = setTimeout(() => { recordingPresetsFan.classList.add('hidden'); }, 400);
-        });
-      }
-
-      let pausePresetsTimer = null;
-      if (pauseMagicArea) {
-        pauseMagicArea.addEventListener('mouseenter', () => {
-          if (pausePresetsTimer) { clearTimeout(pausePresetsTimer); pausePresetsTimer = null; }
-          pausePresetsFan.classList.remove('hidden');
-        });
-        pauseMagicArea.addEventListener('mouseleave', () => {
-          if (pausePresetsTimer) clearTimeout(pausePresetsTimer);
-          pausePresetsTimer = setTimeout(() => { pausePresetsFan.classList.add('hidden'); }, 400);
+        activeMagicArea.addEventListener('mouseleave', () => {
+          if (activePresetsTimer) clearTimeout(activePresetsTimer);
+          activePresetsTimer = setTimeout(() => { 
+            activePresetsFan.classList.remove('opacity-100', 'pointer-events-auto'); activePresetsFan.classList.add('opacity-0', 'pointer-events-none'); 
+            if (currentState === 'recording') {
+              updateClickRegion(isMouseOver ? 'recording-hover' : 'recording-idle');
+            } else if (currentState === 'pause') {
+              updateClickRegion(isMouseOver ? 'pause-hover' : 'pause-idle');
+            }
+          }, 400);
         });
       }
 
@@ -767,23 +697,14 @@
               const availY = monitor.availablePosition.y;
               cachedScaleFactor = monitor.scaleFactor;
               
-              const width_phys = Math.round(WIN_WIDTH * cachedScaleFactor);
-              const height_phys = Math.round(WIN_HEIGHT * cachedScaleFactor);
               const margin_phys = Math.round(12 * cachedScaleFactor);
               
               lastBottomCenterX_phys = availX + availWidth / 2;
               lastBottomY_phys = availY + availHeight - margin_phys;
 
-              const x_phys = Math.round(lastBottomCenterX_phys - width_phys / 2);
-              const y_phys = Math.round(lastBottomY_phys - height_phys);
+              console.log(`[Capsule] Инициализация: scale=${cachedScaleFactor}`);
 
-              console.log(`[Capsule] Инициализация: ${WIN_WIDTH}×${WIN_HEIGHT}, scale=${cachedScaleFactor}`);
-
-              if (invoke) {
-                await invoke('resize_bottom_up_phys', { 
-                  width: width_phys, height: height_phys, x: x_phys, y: y_phys 
-                });
-              }
+              await resizeToState(currentState);
               return;
             }
           } catch (e) {
@@ -793,10 +714,11 @@
         }
 
         try {
-          const size = await appWindow.innerSize();
+          const size = await appWindow.outerSize();
           const pos = await appWindow.outerPosition();
           lastBottomCenterX_phys = pos.x + size.width / 2;
           lastBottomY_phys = pos.y + size.height;
+          await resizeToState(currentState);
         } catch (e) {
           console.error('[Capsule] Фоллбэк не удался:', e);
         }
@@ -806,13 +728,15 @@
       // ПЕРЕКЛЮЧЕНИЕ СОСТОЯНИЙ — только CSS-классы, НОЛЬ ресайзов
       // ======================================================================
 
-      function switchState(state) {
+      async function switchState(state) {
         currentState = state;
+
+        // Физически меняем позицию окна (размер теперь фиксирован)
+        await resizeToState(state);
 
         stateIdle.classList.remove('active');
         stateHover.classList.remove('active');
-        stateRecording.classList.remove('active');
-        statePause.classList.remove('active');
+        stateActive.classList.remove('active');
         stateCancelConfirm.classList.remove('active');
         stateSending.classList.remove('active');
         stateSendSuccess.classList.remove('active');
@@ -820,74 +744,56 @@
 
         if (state === 'idle') {
           stateIdle.classList.add('active');
-          if (appWindow && appWindow.setIgnoreCursorEvents) {
-            appWindow.setIgnoreCursorEvents(true).catch(() => {});
-          }
-          resizeToState('idle');
         } else if (state === 'hover') {
           stateHover.classList.add('active');
-          if (appWindow && appWindow.setIgnoreCursorEvents) {
-            appWindow.setIgnoreCursorEvents(false).catch(() => {});
+        } else if (state === 'recording' || state === 'pause') {
+          stateActive.classList.add('active');
+          
+          if (state === 'recording') {
+            activePill.classList.remove('hover:border-[#ffc107]/50');
+            activePill.classList.add('hover:border-[#8e52ff]/50');
+            activeIcon.textContent = 'mic';
+            activeIcon.style.color = '#f05454';
+            activeDot.style.backgroundColor = '#f05454';
+            activeDot.classList.add('pulse-dot');
+            activeTimer.style.color = '#45a29e';
+          } else {
+            activePill.classList.remove('hover:border-[#8e52ff]/50');
+            activePill.classList.add('hover:border-[#ffc107]/50');
+            activeIcon.textContent = 'pause';
+            activeIcon.style.color = '#ffc107';
+            activeDot.style.backgroundColor = '#ffc107';
+            activeDot.classList.remove('pulse-dot');
+            activeTimer.style.color = '#ffc107';
+            syncPresetUI(currentPreset);
           }
-          resizeToState('hover');
-        } else if (state === 'recording') {
-          stateRecording.classList.add('active');
-          if (appWindow && appWindow.setIgnoreCursorEvents) {
-            appWindow.setIgnoreCursorEvents(false).catch(() => {});
-          }
-          resizeToState('active');
-          if (recordingMagicArea) {
+
+          if (activeMagicArea) {
             if (isMouseOver) {
-              recordingMagicArea.classList.remove('opacity-0', 'pointer-events-none');
-              recordingMagicArea.classList.add('opacity-100', 'pointer-events-auto');
+              activeMagicArea.classList.remove('opacity-0', 'pointer-events-none');
+              activeMagicArea.classList.add('opacity-100', 'pointer-events-auto');
             } else {
-              recordingMagicArea.classList.remove('opacity-100', 'pointer-events-auto');
-              recordingMagicArea.classList.add('opacity-0', 'pointer-events-none');
+              activeMagicArea.classList.remove('opacity-100', 'pointer-events-auto');
+              activeMagicArea.classList.add('opacity-0', 'pointer-events-none');
             }
           }
-          if (recordingPresetsFan) recordingPresetsFan.classList.add('hidden');
-        } else if (state === 'pause') {
-          statePause.classList.add('active');
-          if (appWindow && appWindow.setIgnoreCursorEvents) {
-            appWindow.setIgnoreCursorEvents(false).catch(() => {});
+          if (activePresetsFan) {
+            activePresetsFan.classList.remove('opacity-100', 'pointer-events-auto'); 
+            activePresetsFan.classList.add('opacity-0', 'pointer-events-none');
           }
-          resizeToState('active');
-          if (pauseMagicArea) {
-            if (isMouseOver) {
-              pauseMagicArea.classList.remove('opacity-0', 'pointer-events-none');
-              pauseMagicArea.classList.add('opacity-100', 'pointer-events-auto');
-            } else {
-              pauseMagicArea.classList.remove('opacity-100', 'pointer-events-auto');
-              pauseMagicArea.classList.add('opacity-0', 'pointer-events-none');
-            }
-          }
-          if (pausePresetsFan) pausePresetsFan.classList.add('hidden');
-          syncPresetUI(currentPreset);
         } else if (state === 'cancel-confirm') {
           stateCancelConfirm.classList.add('active');
-          if (appWindow && appWindow.setIgnoreCursorEvents) {
-            appWindow.setIgnoreCursorEvents(false).catch(() => {});
-          }
-          resizeToState('active');
         } else if (state === 'sending') {
           stateSending.classList.add('active');
-          if (appWindow && appWindow.setIgnoreCursorEvents) {
-            appWindow.setIgnoreCursorEvents(false).catch(() => {});
-          }
-          resizeToState('sending');
         } else if (state === 'send-success') {
           stateSendSuccess.classList.add('active');
-          if (appWindow && appWindow.setIgnoreCursorEvents) {
-            appWindow.setIgnoreCursorEvents(false).catch(() => {});
-          }
-          resizeToState('send-success');
         } else if (state === 'send-error') {
           stateSendError.classList.add('active');
-          if (appWindow && appWindow.setIgnoreCursorEvents) {
-            appWindow.setIgnoreCursorEvents(false).catch(() => {});
-          }
-          resizeToState('send-error');
         }
+        
+        // Обновляем физический регион окна для кликов (прозрачность на уровне ОС)
+        await updateClickRegion(state);
+
 
         if (invoke) {
           const isActive = (state === 'recording' || state === 'pause' || state === 'cancel-confirm' || state === 'sending' || state === 'send-success' || state === 'send-error');
@@ -895,26 +801,6 @@
         }
       }
 
-      // ======================================================================
-      // PROXIMITY DETECTION — отслеживаем близость курсора к пилюле в idle
-      // ======================================================================
-      const PROXIMITY_PX = 3; // минимальная зона вокруг пилюли (пикселей)
-
-      document.addEventListener('mousemove', (e) => {
-        if (currentState !== 'idle' || !appWindow || !appWindow.setIgnoreCursorEvents) return;
-        const pillEl = stateIdle;
-        if (!pillEl) return;
-        const rect = pillEl.getBoundingClientRect();
-        const near = e.clientX >= rect.left - PROXIMITY_PX
-                  && e.clientX <= rect.right + PROXIMITY_PX
-                  && e.clientY >= rect.top - PROXIMITY_PX
-                  && e.clientY <= rect.bottom + PROXIMITY_PX;
-        if (near) {
-          appWindow.setIgnoreCursorEvents(false).catch(() => {});
-        } else {
-          appWindow.setIgnoreCursorEvents(true).catch(() => {});
-        }
-      });
 
       // ======================================================================
       // RESULT POPUP
@@ -958,6 +844,45 @@
       }
 
 
+      // ======================================================================
+      // ОБРЕЗКА ОКНА ЧЕРЕЗ WIN32 REGION (Идеальный прозрачный хитбокс)
+      // ======================================================================
+      async function updateClickRegion(state) {
+        if (!invoke || !appWindow) return;
+        try {
+          const WIN_WIDTH = 340;
+          const WIN_HEIGHT = 260;
+          let w = 320, h = 200; // default for active states
+
+          if (state === 'idle') {
+            w = 88; h = 24;
+          } else if (state === 'hover') {
+            w = 200; h = 180;
+          } else if (state === 'sending') {
+            w = 280; h = 120;
+          } else if (state === 'send-success') {
+            w = 220; h = 52;
+          } else if (state === 'send-error') {
+            w = 280; h = 200;
+          } else if (state === 'recording-idle' || state === 'pause-idle' || state === 'recording' || state === 'pause') {
+            w = 240; h = 48;
+          } else if (state === 'recording-hover' || state === 'pause-hover') {
+            w = 240; h = 94;
+          } else if (state === 'recording-fan' || state === 'pause-fan') {
+            w = 320; h = 200;
+          }
+          
+          // Вычисляем координаты региона (центр снизу)
+          const x = (WIN_WIDTH - w) / 2;
+          const y = WIN_HEIGHT - h;
+
+          await invoke('set_click_region', {
+            rects: [{ x, y, width: w, height: h }],
+            scaleFactor: cachedScaleFactor
+          });
+        } catch(e) { console.error('Region err:', e); }
+      }
+
       let collapseTimer = null;
 
       container.addEventListener('mouseenter', () => {
@@ -966,15 +891,13 @@
 
         if (currentState === 'idle') {
           switchState('hover');
-        } else if (currentState === 'recording') {
-          if (recordingMagicArea) {
-            recordingMagicArea.classList.remove('opacity-0', 'pointer-events-none');
-            recordingMagicArea.classList.add('opacity-100', 'pointer-events-auto');
+        } else if (currentState === 'recording' || currentState === 'pause') {
+          if (activeMagicArea) {
+            activeMagicArea.classList.remove('opacity-0', 'pointer-events-none');
+            activeMagicArea.classList.add('opacity-100', 'pointer-events-auto');
           }
-        } else if (currentState === 'pause') {
-          if (pauseMagicArea) {
-            pauseMagicArea.classList.remove('opacity-0', 'pointer-events-none');
-            pauseMagicArea.classList.add('opacity-100', 'pointer-events-auto');
+          if (activePresetsFan && activePresetsFan.classList.contains('opacity-0')) {
+            updateClickRegion(currentState === 'recording' ? 'recording-hover' : 'pause-hover');
           }
         }
       });
@@ -982,30 +905,19 @@
       container.addEventListener('mouseleave', () => {
         isMouseOver = false;
         
-        if (currentState === 'recording' || currentState === 'pause' || currentState === 'cancel-confirm') {
-          if (currentState === 'recording') {
-            if (recordingPresetsFan) recordingPresetsFan.classList.add('hidden');
-            if (recordingMagicArea) {
-              recordingMagicArea.classList.remove('opacity-100', 'pointer-events-auto');
-              recordingMagicArea.classList.add('opacity-0', 'pointer-events-none');
-            }
-          } else if (currentState === 'pause') {
-            if (pausePresetsFan) pausePresetsFan.classList.add('hidden');
-            if (pauseMagicArea) {
-              pauseMagicArea.classList.remove('opacity-100', 'pointer-events-auto');
-              pauseMagicArea.classList.add('opacity-0', 'pointer-events-none');
-            }
-          }
-          return;
-        }
-        
         if (collapseTimer) clearTimeout(collapseTimer);
         collapseTimer = setTimeout(() => {
-          if (!isMouseOver && currentState === 'hover') {
-            hoverPresetsMenu.classList.add('hidden');
-            switchState('idle');
+          if (!isMouseOver) {
+            if (currentState === 'recording' || currentState === 'pause') {
+              if (activePresetsFan) { activePresetsFan.classList.remove('opacity-100', 'pointer-events-auto'); activePresetsFan.classList.add('opacity-0', 'pointer-events-none'); }
+              if (activeMagicArea) { activeMagicArea.classList.remove('opacity-100', 'pointer-events-auto'); activeMagicArea.classList.add('opacity-0', 'pointer-events-none'); }
+              updateClickRegion(currentState === 'recording' ? 'recording-idle' : 'pause-idle');
+            } else if (currentState === 'hover') {
+              if (hoverPresetsMenu) { hoverPresetsMenu.classList.remove('opacity-100', 'pointer-events-auto'); hoverPresetsMenu.classList.add('opacity-0', 'pointer-events-none'); }
+              switchState('idle');
+            }
           }
-        }, 250); // 250мс
+        }, 500); // 500ms delay for hiding UI or switching to idle
       });
 
       // ======================================================================
@@ -1046,10 +958,11 @@
       // ==========================================================================
 
       async function startRecordingProcess() {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') return;
         try {
-          audioChunks = [];
+          if (invoke) await invoke('start_recording_session');
           recordSeconds = 0;
-          recTimer.textContent = '00:00';
+          activeTimer.textContent = '00:00';
 
           audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
           
@@ -1058,37 +971,43 @@
             mimeType = 'audio/webm;codecs=opus';
           }
 
-          mediaRecorder = new MediaRecorder(audioStream, { mimeType });
+          mediaRecorder = new MediaRecorder(audioStream, { 
+            mimeType, 
+            audioBitsPerSecond: 16000 
+          });
           
-          mediaRecorder.ondataavailable = (event) => {
+          mediaRecorder.ondataavailable = async (event) => {
             if (event.data && event.data.size > 0) {
-              audioChunks.push(event.data);
+              const arrayBuffer = await event.data.arrayBuffer();
+              const uint8Array = new Uint8Array(arrayBuffer);
+              const bytesArray = Array.from(uint8Array);
+              if (invoke) {
+                await invoke('append_audio_chunk', { bytes: bytesArray });
+              }
             }
           };
 
           mediaRecorder.onstart = () => {
             switchState('recording');
             startTimer();
+            startVisualizer(audioStream);
           };
 
           mediaRecorder.onpause = () => {
             stopTimer();
-            document.getElementById('pause-timer').textContent = recTimer.textContent;
-            if (isCancelPending) {
-              // Отмена записи: не переключаться в pause, сбросить флаг
-              isCancelPending = false;
-              return;
-            }
+            stopVisualizer();
             switchState('pause');
           };
 
           mediaRecorder.onresume = () => {
             switchState('recording');
             startTimer();
+            startVisualizer(audioStream);
           };
 
           mediaRecorder.onstop = () => {
             stopTimer();
+            stopVisualizer();
             if (audioStream) {
               audioStream.getTracks().forEach(track => track.stop());
             }
@@ -1115,15 +1034,15 @@
       }
 
       function startCancelCountdown() {
-        if (currentState !== 'recording' && currentState !== 'pause') return;
-        preCancelState = currentState;
-        if (currentState === 'recording') {
-          // Устанавливаем флаг ДО паузы — onpause сбросит его после срабатывания
-          isCancelPending = true;
-          pauseRecordingProcess();
+        if (recordSeconds < 1) {
+          cancelRecordingProcess(true, false);
+          return;
         }
-        // Если уже были на паузе — не нужно паузировать ещё раз, просто переключаемся
-        document.getElementById('cancel-timer').textContent = recTimer.textContent;
+        preCancelState = currentState;
+        
+        const cancelTimer = document.getElementById('cancel-timer');
+        if (cancelTimer) cancelTimer.textContent = activeTimer.textContent;
+        
         switchState('cancel-confirm');
         cancelSecondsLeft = 5;
         cancelCountdownText.textContent = `Вся надиктованная запись будет сброшена в архив через ${cancelSecondsLeft} сек...`;
@@ -1133,7 +1052,7 @@
           if (cancelSecondsLeft <= 0) {
             clearInterval(cancelInterval);
             cancelInterval = null;
-            cancelRecordingProcess(true);
+            cancelRecordingProcess(true, false);
           } else {
             cancelCountdownText.textContent = `Вся надиктованная запись будет сброшена в архив через ${cancelSecondsLeft} сек...`;
           }
@@ -1143,13 +1062,14 @@
       function stopCancelCountdownAndRestore() {
         if (cancelInterval) { clearInterval(cancelInterval); cancelInterval = null; }
         if (preCancelState === 'recording') {
-          resumeRecordingProcess();
+          switchState('recording');
         } else {
           switchState('pause');
         }
       }
 
-      async function cancelRecordingProcess(isUserCancelled = true) {
+      async function cancelRecordingProcess(isUserCancelled = true, hardDelete = false) {
+        mode = null; // Предотвращаем срабатывание PTT release
         if (cancelInterval) { clearInterval(cancelInterval); cancelInterval = null; }
         let finalSeconds = recordSeconds;
         stopTimer();
@@ -1157,40 +1077,33 @@
           mediaRecorder.stop();
           await new Promise(resolve => setTimeout(resolve, 200));
         }
-        if (isUserCancelled && audioChunks.length > 0) {
-          const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-          // Не сохраняем пустые записи (< 8КБ = тишина или очень короткая запись)
-          if (audioBlob.size < 8000) {
+        if (isUserCancelled) {
+          if (finalSeconds < 1) {
             showToast('Запись пустая — не сохранено', false);
           } else {
             try {
-              const arrayBuffer = await audioBlob.arrayBuffer();
-              const uint8Array = new Uint8Array(arrayBuffer);
-              const bytesArray = Array.from(uint8Array);
               if (invoke) {
                 await invoke('save_audio', {
-                  bytes: bytesArray, durationSecs: finalSeconds,
-                  preset: 'cancelled', customPrompt: null, isCancelled: true
+                  durationSecs: finalSeconds,
+                  preset: 'cancelled', customPrompt: null, isCancelled: true, hardDelete: hardDelete
                 });
               }
+              showToast(hardDelete ? 'Запись уничтожена' : 'Запись отменена (в архиве)', false);
             } catch (e) {
               console.error('Ошибка сохранения отменённого аудио:', e);
             }
           }
         }
-        audioChunks = [];
         switchState('idle');
       }
 
-      let lastBytesArray = null;
-
-      async function sendAudioData(bytesArray, durationSecs) {
+      async function sendAudioData(durationSecs) {
         switchState('sending');
         try {
           const promptToSend = customPromptText || "";
           if (invoke) {
             const entry = await invoke('save_audio', {
-              bytes: bytesArray, durationSecs: durationSecs,
+              durationSecs: durationSecs,
               preset: currentPreset,
               customPrompt: promptToSend.trim().length > 0 ? promptToSend : null
             });
@@ -1215,8 +1128,6 @@
 
       function handleSendSuccess(resultText) {
         switchState('send-success');
-        audioChunks = [];
-        lastBytesArray = null;
         customPromptText = "";
         isSending = false;
 
@@ -1257,32 +1168,24 @@
         // Защита от двойного нажатия
         if (isSending) return;
         if (cancelInterval) { clearInterval(cancelInterval); cancelInterval = null; }
-        if (audioChunks.length === 0) { switchState('idle'); return; }
 
         isSending = true;
 
-        // Проверка: не отправляем пустые записи
-        const testBlob = new Blob(audioChunks, { type: 'audio/webm' });
-        if (testBlob.size < 8000) {
+        if (recordSeconds < 1) {
           isSending = false;
-          showToast('Запись пустая — ничего не записано', true);
-          audioChunks = [];
+          showToast('Запись слишком короткая', true);
           switchState('idle');
           return;
         }
 
         if (mediaRecorder && mediaRecorder.state !== 'inactive') {
           mediaRecorder.stop();
-          await new Promise(resolve => setTimeout(resolve, 250));
+          // Дополнительное время, чтобы последний ondataavailable успел отработать
+          await new Promise(resolve => setTimeout(resolve, 300));
         }
 
-        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
         try {
-          const arrayBuffer = await audioBlob.arrayBuffer();
-          const uint8Array = new Uint8Array(arrayBuffer);
-          lastBytesArray = Array.from(uint8Array);
-          
-          await sendAudioData(lastBytesArray, recordSeconds);
+          await sendAudioData(recordSeconds);
         } catch (err) {
           console.error(err);
           handleSendError(typeof err === 'string' ? err : 'Не удалось прочитать аудио данные');
@@ -1293,19 +1196,13 @@
       const btnRetrySend = document.getElementById('btn-retry-send');
       if (btnRetrySend) {
         btnRetrySend.addEventListener('click', () => {
-          if (lastBytesArray) {
-            sendAudioData(lastBytesArray, recordSeconds);
-          } else {
-            switchState('idle');
-          }
+          sendAudioData(recordSeconds);
         });
       }
 
       const btnCancelError = document.getElementById('btn-cancel-error');
       if (btnCancelError) {
         btnCancelError.addEventListener('click', () => {
-          audioChunks = [];
-          lastBytesArray = null;
           customPromptText = "";
           switchState('idle');
         });
@@ -1327,16 +1224,19 @@
 
       // События кнопок
       btnStartRec.addEventListener('click', () => { mode = 'latch'; startRecordingProcess(); });
-      recordingPill.addEventListener('click', () => { pauseRecordingProcess(); });
-      if (pausePill) {
-        pausePill.addEventListener('click', (e) => {
-          if (e.target.closest('#btn-send-ai') || e.target.closest('#btn-cancel-rec')) return;
-          resumeRecordingProcess();
+      
+      if (activePill) {
+        activePill.addEventListener('click', (e) => {
+          if (e.target.closest('#btn-active-send') || e.target.closest('#btn-active-cancel')) return;
+          if (currentState === 'recording') pauseRecordingProcess();
+          else resumeRecordingProcess();
         });
       }
-      btnCancelRec.addEventListener('click', () => { startCancelCountdown(); });
+      btnActiveCancel.addEventListener('click', () => { cancelRecordingProcess(true, true); });
+      btnActiveSend.addEventListener('click', () => { stopAndSendRecording(); });
+      
       btnKeepRecording.addEventListener('click', () => { stopCancelCountdownAndRestore(); });
-      btnSendAi.addEventListener('click', () => { stopAndSendRecording(); });
+      cancelPill.addEventListener('click', () => { cancelRecordingProcess(true, true); });
 
       function startTimer() {
         if (recordingInterval) clearInterval(recordingInterval);
@@ -1344,7 +1244,9 @@
           recordSeconds++;
           const mins = Math.floor(recordSeconds / 60).toString().padStart(2, '0');
           const secs = (recordSeconds % 60).toString().padStart(2, '0');
-          recTimer.textContent = `${mins}:${secs}`;
+          if (activeTimer) activeTimer.textContent = `${mins}:${secs}`;
+          const cancelTimer = document.getElementById('cancel-timer');
+          if (cancelTimer) cancelTimer.textContent = `${mins}:${secs}`;
         }, 1000);
       }
 
@@ -1365,22 +1267,14 @@
 
         // Обновляем якорь ТОЛЬКО при ручном перетаскивании
         if (appWindow) {
-        appWindow.onMoved((event) => {
+        appWindow.onMoved(async (event) => {
             if (!maybeDragging) return;
             const { x, y } = event.payload;
-            const factor = cachedScaleFactor;
-            // Используем ТЕКУЩУЮ высоту окна (не WIN_HEIGHT!) чтобы не было дрейфа якоря
-            const currentH = Math.round(
-              (currentState === 'idle'  ? WIN_HEIGHT_IDLE  :
-               currentState === 'hover' ? WIN_HEIGHT_HOVER :
-               currentState === 'sending' ? WIN_HEIGHT_SENDING :
-               currentState === 'send-success' ? WIN_HEIGHT_SUCCESS :
-               currentState === 'send-error' ? WIN_HEIGHT_ERROR :
-               WIN_HEIGHT_ACTIVE) * factor
-            );
-            const currentW = Math.round(WIN_WIDTH * factor);
-            lastBottomCenterX_phys = x + currentW / 2;
-            lastBottomY_phys       = y + currentH;
+            try {
+              const size = await appWindow.outerSize();
+              lastBottomCenterX_phys = x + size.width / 2;
+              lastBottomY_phys       = y + size.height;
+            } catch (_) {}
           });
         }
 
@@ -1421,6 +1315,7 @@
 
         // Хоткеи
         window.__TAURI__.event.listen('global-shortcut-pressed', () => {
+          if (isHeld) return; // Защита от спама автоповтора ОС
           isHeld = true;
           const now = Date.now();
           if (currentState === 'cancel-confirm') { stopCancelCountdownAndRestore(); isHeld = false; return; }
@@ -1479,13 +1374,13 @@
           currentPreset = 'custom';
           syncPresetUI(currentPreset);
           if (currentState === 'hover' || currentState === 'idle') {
-            if (hoverPresetsMenu) hoverPresetsMenu.classList.add('hidden');
+            if (hoverPresetsMenu) hoverPresetsMenu.classList.remove('opacity-100', 'pointer-events-auto'); hoverPresetsMenu.classList.add('opacity-0', 'pointer-events-none');
             mode = 'latch';
             startRecordingProcess();
           } else if (currentState === 'recording') {
-            if (recordingPresetsFan) recordingPresetsFan.classList.add('hidden');
+            if (recordingPresetsFan) recordingPresetsFan.classList.remove('opacity-100', 'pointer-events-auto'); recordingPresetsFan.classList.add('opacity-0', 'pointer-events-none');
           } else if (currentState === 'pause') {
-            if (pausePresetsFan) pausePresetsFan.classList.add('hidden');
+            if (pausePresetsFan) pausePresetsFan.classList.remove('opacity-100', 'pointer-events-auto'); pausePresetsFan.classList.add('opacity-0', 'pointer-events-none');
           }
         });
 
@@ -1495,6 +1390,78 @@
           localStorage.setItem('capsuleMagnet', isMagnetEnabled);
         });
       }
+
+      // Инициализация при старте
+      setTimeout(() => {
+        switchState('idle');
+      }, 100);
+      // ==========================================================================
+      // ВИЗУАЛИЗАТОР ГОЛОСА (Web Audio API)
+      // ==========================================================================
+      let audioCtx = null;
+      let analyser = null;
+      let currentSource = null;
+      let dataArray = null;
+      let visualizerRafId = null;
+
+      function drawVisualizer() {
+        if (!analyser) return;
+        analyser.getByteFrequencyData(dataArray);
+        
+        const bars = document.querySelectorAll('#recording-waveform .waveform-bar');
+        if (bars.length === 0) return;
+
+        // Берем 7 частотных диапазонов для 7 полосочек (пропускаем самый бас и ультразвук)
+        const indices = [1, 3, 5, 8, 11, 15, 20];
+        
+        for (let i = 0; i < bars.length; i++) {
+          const value = dataArray[indices[i]] || 0; // От 0 до 255
+          
+          let h = 4; // высота тишины
+          if (value > 15) {
+            // Высокая чувствительность для голоса
+            h = 4 + ((value - 15) / 240) * 12;
+          }
+          bars[i].style.height = `${Math.max(4, Math.min(16, h))}px`;
+        }
+      }
+
+      function startVisualizer(stream) {
+        if (!audioCtx) {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
+        if (!analyser) {
+          analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 64; // Дает 32 полосы частот
+          analyser.minDecibels = -90;
+          analyser.maxDecibels = -10;
+          analyser.smoothingTimeConstant = 0.85;
+          dataArray = new Uint8Array(analyser.frequencyBinCount);
+        }
+        
+        if (currentSource) {
+          currentSource.disconnect();
+        }
+        currentSource = audioCtx.createMediaStreamSource(stream);
+        currentSource.connect(analyser);
+        
+        if (visualizerRafId) clearInterval(visualizerRafId);
+        visualizerRafId = setInterval(drawVisualizer, 33); // ~30fps
+      }
+
+      function stopVisualizer() {
+        if (visualizerRafId) {
+          clearInterval(visualizerRafId);
+          visualizerRafId = null;
+        }
+        // Сброс всех полос в прямую линию (тишина)
+        const bars = document.querySelectorAll('.waveform-bar');
+        bars.forEach(b => b.style.height = '4px');
+      }
+
     </script>
   </body>
 </html>

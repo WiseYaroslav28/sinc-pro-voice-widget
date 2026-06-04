@@ -1,15 +1,15 @@
-use tauri::{Emitter, Manager};
-use serde::{Serialize, Deserialize};
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Local;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use std::collections::HashMap;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
+use tauri::{Emitter, Manager};
 
 // ─── Edge TTS ────────────────────────────────────────────────────────────────
-use tokio_tungstenite::{connect_async_tls_with_config, tungstenite::Message};
 use futures_util::{SinkExt, StreamExt};
+use tokio_tungstenite::{connect_async_tls_with_config, tungstenite::Message};
 use uuid::Uuid;
 
 const EDGE_TTS_ENDPOINT: &str =
@@ -36,15 +36,15 @@ async fn get_clock_skew() -> i64 {
 }
 
 fn generate_sec_ms_gec(skew: i64) -> String {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let win_epoch = 11644473600u64;
     let now_sec = (chrono::Utc::now().timestamp() + skew) as u64;
     let mut ticks = now_sec + win_epoch;
     ticks -= ticks % 300;
     ticks *= 10_000_000; // Конвертируем в 100-наносекундные тики
-    
+
     let str_to_hash = format!("{}{}", ticks, "6A5AA1D4EAFF4E9FB37E23D68491D6F4");
-    
+
     let mut hasher = Sha256::new();
     hasher.update(str_to_hash.as_bytes());
     let result = hasher.finalize();
@@ -71,19 +71,23 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
     );
 
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-    let mut request = url.into_client_request()
-        .map_err(|e| {
-            let err_msg = format!("Failed to create WebSocket request: {}", e);
-            println!("SINC PRO TTS ERROR: {}", err_msg);
-            err_msg
-        })?;
-    
+    let mut request = url.into_client_request().map_err(|e| {
+        let err_msg = format!("Failed to create WebSocket request: {}", e);
+        println!("SINC PRO TTS ERROR: {}", err_msg);
+        err_msg
+    })?;
+
     let headers = request.headers_mut();
-    headers.insert("Origin", "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold".parse().unwrap());
+    headers.insert(
+        "Origin",
+        "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold"
+            .parse()
+            .unwrap(),
+    );
     headers.insert("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0".parse().unwrap());
     headers.insert("Pragma", "no-cache".parse().unwrap());
     headers.insert("Cache-Control", "no-cache".parse().unwrap());
-    
+
     let muid = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
     headers.insert("Cookie", format!("muid={};", muid).parse().unwrap());
 
@@ -102,7 +106,8 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
          \"wordBoundaryEnabled\":false}},\"outputFormat\":\"audio-24khz-48kbitrate-mono-mp3\"}}}}}}}}",
         ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S.000Z")
     );
-    ws.send(Message::Text(config_msg.into())).await
+    ws.send(Message::Text(config_msg.into()))
+        .await
         .map_err(|e| {
             let err_msg = format!("Send config failed: {}", e);
             println!("SINC PRO TTS ERROR: {}", err_msg);
@@ -120,18 +125,17 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
          X-Timestamp:{ts}\r\nPath:ssml\r\n\r\n\
          <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>\
          <voice name='{voice}'><prosody rate='{rate}'>{text}</prosody></voice></speak>",
-        req  = request_id,
-        ts   = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S.000Z"),
+        req = request_id,
+        ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S.000Z"),
         voice = voice,
         rate = rate_str,
         text = ssml_text,
     );
-    ws.send(Message::Text(ssml_msg.into())).await
-        .map_err(|e| {
-            let err_msg = format!("Send SSML failed: {}", e);
-            println!("SINC PRO TTS ERROR: {}", err_msg);
-            err_msg
-        })?;
+    ws.send(Message::Text(ssml_msg.into())).await.map_err(|e| {
+        let err_msg = format!("Send SSML failed: {}", e);
+        println!("SINC PRO TTS ERROR: {}", err_msg);
+        err_msg
+    })?;
 
     // 3. Собираем бинарные чанки MP3
     let mut audio_bytes: Vec<u8> = Vec::new();
@@ -141,9 +145,7 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
         match ws.next().await {
             Some(Ok(Message::Binary(data))) => {
                 // Формат: заголовок + разделитель + аудио-данные
-                if let Some(pos) = data.windows(separator.len())
-                    .position(|w| w == separator)
-                {
+                if let Some(pos) = data.windows(separator.len()).position(|w| w == separator) {
                     let audio_start = pos + separator.len();
                     if audio_start < data.len() {
                         audio_bytes.extend_from_slice(&data[audio_start..]);
@@ -152,7 +154,9 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
             }
             Some(Ok(Message::Text(t))) => {
                 // turn.end = синтез завершён
-                if t.contains("Path:turn.end") { break; }
+                if t.contains("Path:turn.end") {
+                    break;
+                }
             }
             Some(Ok(Message::Close(_))) | None => break,
             Some(Err(e)) => {
@@ -172,7 +176,8 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
 }
 
 static APP_HANDLE: Mutex<Option<tauri::AppHandle>> = Mutex::new(None);
-static MODEL_LOCKS: std::sync::LazyLock<Mutex<HashMap<String, Instant>>> = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+static MODEL_LOCKS: std::sync::LazyLock<Mutex<HashMap<String, Instant>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 static CTRL_PRESSED: AtomicBool = AtomicBool::new(false);
 static WIN_PRESSED: AtomicBool = AtomicBool::new(false);
 static ALT_PRESSED: AtomicBool = AtomicBool::new(false);
@@ -238,7 +243,11 @@ extern "system" {
     fn GetModuleHandleW(lpModuleName: *const u16) -> isize;
 }
 
-unsafe extern "system" fn low_level_keyboard_proc(code: i32, w_param: usize, l_param: isize) -> isize {
+unsafe extern "system" fn low_level_keyboard_proc(
+    code: i32,
+    w_param: usize,
+    l_param: isize,
+) -> isize {
     if code >= 0 {
         let info = *(l_param as *const KBDLLHOOKSTRUCT);
         let vk = info.vkCode;
@@ -349,13 +358,21 @@ pub struct AppConfig {
     pub dictation_lang: String,
     #[serde(default)]
     pub api_key: String,
+    #[serde(default)]
+    pub yandex_api_key: String,
     #[serde(default = "default_ai_model")]
     pub ai_model: String,
 }
 
-fn default_ui_lang() -> String { "ru".to_string() }
-fn default_dictation_lang() -> String { "auto".to_string() }
-fn default_ai_model() -> String { "gemini-2.0-flash".to_string() }
+fn default_ui_lang() -> String {
+    "ru".to_string()
+}
+fn default_dictation_lang() -> String {
+    "auto".to_string()
+}
+fn default_ai_model() -> String {
+    "gemini-2.0-flash".to_string()
+}
 
 // Один AI-результат (может быть несколько на одну запись)
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -409,13 +426,17 @@ struct GeminiPart {
 }
 
 fn load_config_internal(app_handle: &tauri::AppHandle) -> Result<AppConfig, String> {
-    let config_dir = app_handle.path().app_config_dir().map_err(|e| e.to_string())?;
+    let config_dir = app_handle
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?;
     let config_path = config_dir.join("config.json");
     if !config_path.exists() {
         return Ok(AppConfig {
             ui_lang: "ru".to_string(),
             dictation_lang: "auto".to_string(),
             api_key: "".to_string(),
+            yandex_api_key: "".to_string(),
             ai_model: "gemini-2.0-flash".to_string(),
         });
     }
@@ -431,7 +452,10 @@ async fn load_config(app_handle: tauri::AppHandle) -> Result<AppConfig, String> 
 
 #[tauri::command]
 async fn save_config(app_handle: tauri::AppHandle, config: AppConfig) -> Result<(), String> {
-    let config_dir = app_handle.path().app_config_dir().map_err(|e| e.to_string())?;
+    let config_dir = app_handle
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&config_dir).map_err(|e| e.to_string())?;
     let config_path = config_dir.join("config.json");
     let json_str = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
@@ -440,7 +464,10 @@ async fn save_config(app_handle: tauri::AppHandle, config: AppConfig) -> Result<
 }
 
 fn load_history_internal(app_handle: &tauri::AppHandle) -> Result<Vec<HistoryEntry>, String> {
-    let config_dir = app_handle.path().app_config_dir().map_err(|e| e.to_string())?;
+    let config_dir = app_handle
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?;
     let history_path = config_dir.join("history.json");
     if !history_path.exists() {
         return Ok(Vec::new());
@@ -450,8 +477,14 @@ fn load_history_internal(app_handle: &tauri::AppHandle) -> Result<Vec<HistoryEnt
     Ok(history)
 }
 
-fn save_history_internal(app_handle: &tauri::AppHandle, history: &Vec<HistoryEntry>) -> Result<(), String> {
-    let config_dir = app_handle.path().app_config_dir().map_err(|e| e.to_string())?;
+fn save_history_internal(
+    app_handle: &tauri::AppHandle,
+    history: &Vec<HistoryEntry>,
+) -> Result<(), String> {
+    let config_dir = app_handle
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&config_dir).map_err(|e| e.to_string())?;
     let history_path = config_dir.join("history.json");
     let json_str = serde_json::to_string_pretty(history).map_err(|e| e.to_string())?;
@@ -459,7 +492,10 @@ fn save_history_internal(app_handle: &tauri::AppHandle, history: &Vec<HistoryEnt
     Ok(())
 }
 
-fn save_to_history_internal(app_handle: &tauri::AppHandle, entry: HistoryEntry) -> Result<(), String> {
+fn save_to_history_internal(
+    app_handle: &tauri::AppHandle,
+    entry: HistoryEntry,
+) -> Result<(), String> {
     let mut history = load_history_internal(app_handle)?;
     history.insert(0, entry);
     if history.len() > 50 {
@@ -474,7 +510,10 @@ async fn load_history(app_handle: tauri::AppHandle) -> Result<Vec<HistoryEntry>,
 }
 
 #[tauri::command]
-async fn delete_history_entry(app_handle: tauri::AppHandle, id: String) -> Result<Vec<HistoryEntry>, String> {
+async fn delete_history_entry(
+    app_handle: tauri::AppHandle,
+    id: String,
+) -> Result<Vec<HistoryEntry>, String> {
     let mut history = load_history_internal(&app_handle)?;
     if let Some(entry) = history.iter().find(|e| e.id == id) {
         let path = std::path::Path::new(&entry.audio_path);
@@ -550,16 +589,83 @@ fn is_stub_transcript(text: &str) -> bool {
         || lower.contains("аудиозапись отсутствует")
 }
 
+static RECORDING_FILE: std::sync::LazyLock<Mutex<Option<String>>> =
+    std::sync::LazyLock::new(|| Mutex::new(None));
+
+#[tauri::command]
+fn start_recording_session(app_handle: tauri::AppHandle) -> Result<(), String> {
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let temp_dir = app_data_dir.join("temp");
+    std::fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
+    let temp_file = temp_dir.join("current_recording.webm");
+
+    if temp_file.exists() {
+        let _ = std::fs::remove_file(&temp_file);
+    }
+
+    *RECORDING_FILE.lock().unwrap() = Some(temp_file.to_string_lossy().to_string());
+    Ok(())
+}
+
+#[tauri::command]
+fn append_audio_chunk(bytes: Vec<u8>) -> Result<(), String> {
+    let lock = RECORDING_FILE.lock().unwrap();
+    if let Some(path) = lock.as_ref() {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|e| e.to_string())?;
+        file.write_all(&bytes).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn save_audio(
     app_handle: tauri::AppHandle,
-    bytes: Vec<u8>,
     duration_secs: u32,
     preset: String,
     custom_prompt: Option<String>,
     is_cancelled: Option<bool>,
+    hard_delete: Option<bool>,
 ) -> Result<HistoryEntry, String> {
-    let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    let temp_file_path = {
+        let mut lock = RECORDING_FILE.lock().unwrap();
+        lock.clone()
+    };
+
+    if hard_delete.unwrap_or(false) {
+        if let Some(path) = temp_file_path {
+            let _ = std::fs::remove_file(&path);
+        }
+        return Ok(HistoryEntry {
+            id: String::new(),
+            timestamp: String::new(),
+            duration_secs: 0,
+            raw_transcript: String::new(),
+            transcript: String::new(),
+            preset: "hard_delete".to_string(),
+            preset_label: String::new(),
+            ai_results: vec![],
+            audio_path: String::new(),
+        });
+    }
+
+    let bytes = if let Some(path) = temp_file_path {
+        std::fs::read(&path).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
     let records_dir = app_data_dir.join("records");
     std::fs::create_dir_all(&records_dir).map_err(|e| e.to_string())?;
 
@@ -620,7 +726,11 @@ async fn save_audio(
     let (user_preset_prompt, preset_label_str) = if let Some(ref cp) = custom_prompt {
         if !cp.trim().is_empty() {
             // Берём первые 60 символов промпта как заголовок
-            let short = if cp.len() > 60 { format!("{}...", &cp[..60]) } else { cp.clone() };
+            let short = if cp.len() > 60 {
+                format!("{}...", &cp[..60])
+            } else {
+                cp.clone()
+            };
             (cp.clone(), format!("Свой: {}", short))
         } else {
             let (p, l) = get_preset_prompt_and_label(&preset);
@@ -672,7 +782,8 @@ async fn save_audio(
     ];
     // Убираем дубли, сохраняем порядок
     let mut seen = std::collections::HashSet::new();
-    let fallback_models: Vec<String> = fallback_models.into_iter()
+    let fallback_models: Vec<String> = fallback_models
+        .into_iter()
         .filter(|m| seen.insert(m.clone()))
         .collect();
 
@@ -699,7 +810,10 @@ async fn save_audio(
             model, api_key
         );
         match client.post(&url).json(&request_payload).send().await {
-            Err(e) => { last_err = format!("Сетевая ошибка ({}): {}", model, e); continue; }
+            Err(e) => {
+                last_err = format!("Сетевая ошибка ({}): {}", model, e);
+                continue;
+            }
             Ok(res) => {
                 let status = res.status();
                 if status.as_u16() == 429 {
@@ -723,9 +837,13 @@ async fn save_audio(
                     continue;
                 }
                 match res.json::<GeminiResponse>().await {
-                    Err(e) => { last_err = format!("Парсинг ответа ({}): {}", model, e); continue; }
+                    Err(e) => {
+                        last_err = format!("Парсинг ответа ({}): {}", model, e);
+                        continue;
+                    }
                     Ok(gr) => {
-                        if let Some(text) = gr.candidates
+                        if let Some(text) = gr
+                            .candidates
                             .and_then(|c| c.into_iter().next())
                             .and_then(|c| c.content)
                             .and_then(|c| c.parts)
@@ -733,13 +851,15 @@ async fn save_audio(
                             .and_then(|p| p.text)
                         {
                             // Проверяем, не является ли транскрипция заглушкой
-                            let transcript = match serde_json::from_str::<serde_json::Value>(&text) {
+                            let transcript = match serde_json::from_str::<serde_json::Value>(&text)
+                            {
                                 Ok(v) => v["transcript"].as_str().unwrap_or("").to_string(),
                                 Err(_) => text.clone(),
                             };
 
                             if is_stub_transcript(&transcript) {
-                                last_err = format!("Модель {} вернула заглушку: {}", model, transcript);
+                                last_err =
+                                    format!("Модель {} вернула заглушку: {}", model, transcript);
                                 continue;
                             }
 
@@ -756,13 +876,11 @@ async fn save_audio(
 
     // Парсим JSON-ответ от Gemini
     let (raw_transcript, ai_result_text, is_error) = match gemini_text {
-        None => {
-            (
-                format!("[Ошибка: все модели недоступны. {}]", last_err),
-                String::new(),
-                true,
-            )
-        }
+        None => (
+            format!("[Ошибка: все модели недоступны. {}]", last_err),
+            String::new(),
+            true,
+        ),
         Some(raw_json) => {
             // Пытаемся распарсить JSON
             match serde_json::from_str::<serde_json::Value>(&raw_json) {
@@ -779,7 +897,11 @@ async fn save_audio(
         }
     };
 
-    let preset_key = if custom_prompt.as_deref().map(|s| !s.is_empty()).unwrap_or(false) {
+    let preset_key = if custom_prompt
+        .as_deref()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
+    {
         "custom".to_string()
     } else {
         preset.clone()
@@ -816,7 +938,6 @@ async fn save_audio(
         audio_path: file_path.to_string_lossy().to_string(),
     };
 
-
     save_to_history_internal(&app_handle, entry.clone())?;
     let _ = app_handle.emit("history-updated", entry.clone());
 
@@ -845,7 +966,10 @@ fn set_clipboard_text(text: &str) -> Result<(), String> {
     const CF_UNICODETEXT: u32 = 13;
     const GMEM_MOVEABLE: u32 = 2;
 
-    let wide: Vec<u16> = OsStr::new(text).encode_wide().chain(std::iter::once(0)).collect();
+    let wide: Vec<u16> = OsStr::new(text)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
     let size = wide.len() * 2;
 
     unsafe {
@@ -912,18 +1036,20 @@ fn get_clipboard_text_raw() -> Result<String, String> {
             CloseClipboard();
             return Err("Ошибка блокировки памяти буфера".to_string());
         }
-        
+
         let mut len = 0;
         while *ptr.add(len) != 0 {
             len += 1;
         }
-        
+
         let slice = std::slice::from_raw_parts(ptr, len);
         let os_str = OsString::from_wide(slice);
         GlobalUnlock(h_mem);
         CloseClipboard();
-        
-        os_str.into_string().map_err(|_| "Не удалось конвертировать текст из буфера обмена в UTF-8".to_string())
+
+        os_str
+            .into_string()
+            .map_err(|_| "Не удалось конвертировать текст из буфера обмена в UTF-8".to_string())
     }
 }
 
@@ -951,6 +1077,94 @@ async fn write_clipboard_text(text: String) -> Result<(), String> {
     }
 }
 
+#[derive(serde::Serialize)]
+pub struct CursorPos {
+    pub x: i32,
+    pub y: i32,
+}
+
+#[tauri::command]
+async fn get_cursor_pos() -> Result<CursorPos, String> {
+    #[cfg(target_os = "windows")]
+    {
+        #[repr(C)]
+        struct POINT {
+            x: i32,
+            y: i32,
+        }
+        #[link(name = "user32")]
+        extern "system" {
+            fn GetCursorPos(lpPoint: *mut POINT) -> i32;
+        }
+        let mut pt = POINT { x: 0, y: 0 };
+        unsafe {
+            GetCursorPos(&mut pt);
+        }
+        Ok(CursorPos { x: pt.x, y: pt.y })
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(CursorPos { x: 0, y: 0 })
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct RegionRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+#[tauri::command]
+async fn set_click_region(
+    window: tauri::Window,
+    rects: Vec<RegionRect>,
+    scale_factor: f64,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use tauri::Manager;
+        use winapi::shared::windef::HWND;
+        use winapi::um::wingdi::{CombineRgn, CreateRectRgn, RGN_OR};
+        use winapi::um::winuser::SetWindowRgn;
+
+        let tauri_hwnd = window.hwnd().map_err(|e| e.to_string())?;
+        let hwnd = unsafe { std::mem::transmute::<_, HWND>(tauri_hwnd) };
+
+        if rects.is_empty() {
+            unsafe {
+                SetWindowRgn(hwnd, std::ptr::null_mut(), 1);
+            }
+            return Ok(());
+        }
+
+        unsafe {
+            let r0 = &rects[0];
+            let mut final_rgn = CreateRectRgn(
+                (r0.x * scale_factor).round() as i32,
+                (r0.y * scale_factor).round() as i32,
+                ((r0.x + r0.width) * scale_factor).round() as i32,
+                ((r0.y + r0.height) * scale_factor).round() as i32,
+            );
+
+            for r in rects.iter().skip(1) {
+                let temp_rgn = CreateRectRgn(
+                    (r.x * scale_factor).round() as i32,
+                    (r.y * scale_factor).round() as i32,
+                    ((r.x + r.width) * scale_factor).round() as i32,
+                    ((r.y + r.height) * scale_factor).round() as i32,
+                );
+                CombineRgn(final_rgn, final_rgn, temp_rgn, RGN_OR);
+                winapi::um::wingdi::DeleteObject(temp_rgn as *mut _);
+            }
+
+            SetWindowRgn(hwnd, final_rgn, 1);
+        }
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "windows")]
 fn is_insertion_possible() -> bool {
     #[link(name = "user32")]
@@ -970,7 +1184,10 @@ fn is_insertion_possible() -> bool {
         let class_str = String::from_utf16_lossy(&class_name[..len as usize]);
         let class_lower = class_str.to_lowercase();
         // Классы окон рабочего стола и панели задач
-        if class_lower.contains("progman") || class_lower.contains("workerw") || class_lower.contains("shell_traywnd") {
+        if class_lower.contains("progman")
+            || class_lower.contains("workerw")
+            || class_lower.contains("shell_traywnd")
+        {
             return false;
         }
     }
@@ -1018,8 +1235,8 @@ fn simulate_ctrl_v() {
                     dwFlags: 0,
                     time: 0,
                     dwExtraInfo: 0,
-                }
-            }
+                },
+            },
         };
         let v_down = INPUT {
             type_: INPUT_KEYBOARD,
@@ -1030,8 +1247,8 @@ fn simulate_ctrl_v() {
                     dwFlags: 0,
                     time: 0,
                     dwExtraInfo: 0,
-                }
-            }
+                },
+            },
         };
         let v_up = INPUT {
             type_: INPUT_KEYBOARD,
@@ -1042,8 +1259,8 @@ fn simulate_ctrl_v() {
                     dwFlags: KEYEVENTF_KEYUP,
                     time: 0,
                     dwExtraInfo: 0,
-                }
-            }
+                },
+            },
         };
         let ctrl_up = INPUT {
             type_: INPUT_KEYBOARD,
@@ -1054,8 +1271,8 @@ fn simulate_ctrl_v() {
                     dwFlags: KEYEVENTF_KEYUP,
                     time: 0,
                     dwExtraInfo: 0,
-                }
-            }
+                },
+            },
         };
 
         let inputs = [ctrl_down, v_down, v_up, ctrl_up];
@@ -1127,6 +1344,7 @@ fn resize_bottom_up_phys(
 
     const SWP_NOZORDER: u32 = 0x0004;
     const SWP_NOACTIVATE: u32 = 0x0010;
+    const SWP_NOCOPYBITS: u32 = 0x0100;
     const SWP_NOOWNERZORDER: u32 = 0x0200;
 
     unsafe {
@@ -1137,7 +1355,7 @@ fn resize_bottom_up_phys(
             y,
             width,
             height,
-            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOCOPYBITS,
         );
         if res == 0 {
             return Err("Ошибка при вызове SetWindowPos".into());
@@ -1166,10 +1384,10 @@ extern "system" {
 
 #[derive(Serialize, Clone, Debug)]
 pub struct CursorMonitorInfo {
-    pub work_left:    i32,
-    pub work_top:     i32,
-    pub work_right:   i32,
-    pub work_bottom:  i32,
+    pub work_left: i32,
+    pub work_top: i32,
+    pub work_right: i32,
+    pub work_bottom: i32,
     pub scale_factor: f64,
 }
 
@@ -1178,18 +1396,35 @@ pub struct CursorMonitorInfo {
 fn get_cursor_monitor() -> Result<CursorMonitorInfo, String> {
     #[repr(C)]
     #[derive(Default)]
-    struct POINTL { x: i32, y: i32 }
+    struct POINTL {
+        x: i32,
+        y: i32,
+    }
 
     #[repr(C)]
-    struct RECT { left: i32, top: i32, right: i32, bottom: i32 }
-    impl Default for RECT { fn default() -> Self { RECT { left:0, top:0, right:0, bottom:0 } } }
+    struct RECT {
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+    }
+    impl Default for RECT {
+        fn default() -> Self {
+            RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            }
+        }
+    }
 
     #[repr(C)]
     struct MONITORINFO {
-        cb_size:    u32,
+        cb_size: u32,
         rc_monitor: RECT,
-        rc_work:    RECT,
-        dw_flags:   u32,
+        rc_work: RECT,
+        dw_flags: u32,
     }
 
     #[link(name = "user32")]
@@ -1206,10 +1441,10 @@ fn get_cursor_monitor() -> Result<CursorMonitorInfo, String> {
         GetCursorPos(&mut pt);
         let hmon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
         let mut mi = MONITORINFO {
-            cb_size:    std::mem::size_of::<MONITORINFO>() as u32,
+            cb_size: std::mem::size_of::<MONITORINFO>() as u32,
             rc_monitor: RECT::default(),
-            rc_work:    RECT::default(),
-            dw_flags:   0,
+            rc_work: RECT::default(),
+            dw_flags: 0,
         };
         GetMonitorInfoW(hmon, &mut mi);
 
@@ -1219,10 +1454,10 @@ fn get_cursor_monitor() -> Result<CursorMonitorInfo, String> {
         let scale_factor = dpi_x as f64 / 96.0;
 
         Ok(CursorMonitorInfo {
-            work_left:    mi.rc_work.left,
-            work_top:     mi.rc_work.top,
-            work_right:   mi.rc_work.right,
-            work_bottom:  mi.rc_work.bottom,
+            work_left: mi.rc_work.left,
+            work_top: mi.rc_work.top,
+            work_right: mi.rc_work.right,
+            work_bottom: mi.rc_work.bottom,
             scale_factor,
         })
     }
@@ -1237,6 +1472,7 @@ fn get_cursor_monitor() -> Result<CursorMonitorInfo, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {}))
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             // Сохраняем handle для отправки событий
@@ -1273,6 +1509,8 @@ pub fn run() {
             load_history,
             delete_history_entry,
             open_audio_folder,
+            start_recording_session,
+            append_audio_chunk,
             save_audio,
             paste_text,
             set_capsule_active,
@@ -1284,7 +1522,9 @@ pub fn run() {
             get_cursor_monitor,
             speak_edge_tts,
             read_clipboard_text,
-            write_clipboard_text
+            write_clipboard_text,
+            get_cursor_pos,
+            set_click_region
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
