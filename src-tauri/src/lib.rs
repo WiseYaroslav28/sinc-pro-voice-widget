@@ -341,6 +341,7 @@ async fn hide_capsule_window(app_handle: tauri::AppHandle) -> Result<(), String>
 async fn show_widget_window(app_handle: tauri::AppHandle) -> Result<(), String> {
     if let Some(w) = app_handle.get_webview_window("widget") {
         w.show().map_err(|e| e.to_string())?;
+        let _ = w.emit("widget-shown", ());
     }
     Ok(())
 }

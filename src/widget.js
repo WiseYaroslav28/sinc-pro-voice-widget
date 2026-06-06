@@ -9,6 +9,8 @@ document.addEventListener('DOMContentLoaded', () => {
     window.renderTtsWidget(root, false);
   }
 
+  // Декорации отключены в tauri.conf.json статически для стабильности DWM
+
   const btnExpand = document.getElementById('tts-btn-expand');
   const expandedRow = document.getElementById('expanded-row');
   const expandIcon = document.getElementById('tts-expand-icon');
@@ -25,13 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const WIN_HEIGHT_COLLAPSED = 64;
   const WIN_HEIGHT_EXPANDED = 380;
 
-  function updateWindowHeight(expanded) {
-    if (!window.__TAURI__) return;
-    const appWindow = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
-    const LogicalSize = window.__TAURI__.dpi.LogicalSize;
-    const height = expanded ? WIN_HEIGHT_EXPANDED : WIN_HEIGHT_COLLAPSED;
-    appWindow.setSize(new LogicalSize(WIN_WIDTH, height)).catch(console.error);
-  }
+
 
   // ======================================================================
   // ОБРЕЗКА ОКНА ЧЕРЕЗ WIN32 REGION (Идеальный прозрачный хитбокс)
@@ -76,7 +72,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // При старте — свернутый режим
-  updateWindowHeight(false);
   updateClickRegion('collapsed');
 
   if (btnExpand && expandedRow) {
@@ -88,14 +83,12 @@ document.addEventListener('DOMContentLoaded', () => {
         expandedRow.classList.add('flex');
         expandIcon.textContent = 'close_fullscreen';
         isMenuOpen = true;
-        updateWindowHeight(true);
         updateClickRegion('expanded');
       } else {
         expandedRow.classList.remove('flex');
         expandedRow.classList.add('hidden');
         expandIcon.textContent = 'open_in_full';
         isMenuOpen = false;
-        updateWindowHeight(false);
         updateClickRegion('collapsed');
       }
     });
@@ -103,7 +96,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   root.addEventListener('tts-menu-toggled', (e) => {
     isMenuOpen = e.detail.expanded;
-    updateWindowHeight(isMenuOpen);
     updateClickRegion(isMenuOpen ? 'dropdown' : 'collapsed');
   });
 
@@ -111,6 +103,14 @@ document.addEventListener('DOMContentLoaded', () => {
   if (window.__TAURI__) {
     const { invoke } = window.__TAURI__.core;
     const { listen, emit } = window.__TAURI__.event;
+
+    // При показе окна принудительно переприменяем регион кликов после завершения анимаций DWM
+    listen('widget-shown', () => {
+      setTimeout(() => {
+        const isRowVisible = expandedRow && !expandedRow.classList.contains('hidden');
+        updateClickRegion(isRowVisible ? 'expanded' : 'collapsed');
+      }, 100);
+    });
 
     // Слушаем клики из UI компонента
     root.addEventListener('tts-widget-event', async (e) => {
@@ -140,9 +140,11 @@ document.addEventListener('DOMContentLoaded', () => {
       if (event.payload) {
         const p = event.payload;
         if (p.action === 'play') {
-          root.updateState({ isPlaying: true });
-        } else if (p.action === 'pause' || p.action === 'stop') {
-          root.updateState({ isPlaying: false });
+          root.updateState({ isPlaying: true, isPaused: false });
+        } else if (p.action === 'pause') {
+          root.updateState({ isPlaying: false, isPaused: true });
+        } else if (p.action === 'stop') {
+          root.updateState({ isPlaying: false, isPaused: false });
         } else if (p.action === 'settings' || p.action === 'setting') {
           root.updateState(p.settings || p);
         }

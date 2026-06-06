@@ -191,17 +191,20 @@ class VoiceCore {
         }
     }
 
-    async play() {
+    async play(shouldBroadcast = true) {
         console.log('[VoiceCore] play() called, sentences=' + this.sentences.length);
         if (this.sentences.length === 0) {
-            this.stop(); 
-            this.broadcastState('stop');
+            this.stop(shouldBroadcast); 
             return;
         }
         
         this.isPlaying = true;
         this.isPaused = false;
         this.notifyState();
+        
+        if (shouldBroadcast) {
+            this.broadcastState('play');
+        }
 
         const hasSrc = this.audioElement.hasAttribute('src');
         const ended = this.audioElement.ended;
@@ -223,14 +226,17 @@ class VoiceCore {
         }
     }
 
-    pause() {
+    pause(shouldBroadcast = true) {
         this.isPlaying = false;
         this.isPaused = true;
         this.audioElement.pause();
         this.notifyState();
+        if (shouldBroadcast) {
+            this.broadcastState('pause');
+        }
     }
 
-    stop() {
+    stop(shouldBroadcast = true) {
         this.isPlaying = false;
         this.isPaused = false;
         this.audioElement.pause();
@@ -239,6 +245,9 @@ class VoiceCore {
         this.notifyState();
         if (this.onProgress) this.onProgress(0, 0);
         if (this.onSentenceActive) this.onSentenceActive(-1);
+        if (shouldBroadcast) {
+            this.broadcastState('stop');
+        }
     }
 
     async playCurrentSentence() {
@@ -299,11 +308,11 @@ class VoiceCore {
             if (event.payload) {
                 const p = event.payload;
                 if (p.action === 'play') {
-                    if (!this.isPlaying) this.play();
+                    if (!this.isPlaying) this.play(false);
                 } else if (p.action === 'pause') {
-                    if (this.isPlaying) this.pause();
+                    if (this.isPlaying) this.pause(false);
                 } else if (p.action === 'stop') {
-                    this.stop();
+                    this.stop(false);
                 } else if (p.action === 'load') {
                     if (this.currentText !== this.cleanText(p.text)) {
                         this.loadText(p.text);

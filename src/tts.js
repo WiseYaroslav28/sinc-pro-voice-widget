@@ -36,14 +36,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         engine.broadcastState('load', { text: contentEditable.innerText });
                     }
                     engine.play();
-                    engine.broadcastState('play');
                 }
             } else if (action === 'pause') {
                 engine.pause();
-                engine.broadcastState('pause');
             } else if (action === 'stop') {
                 engine.stop();
-                engine.broadcastState('stop');
             } else if (action === 'setting') {
                 if (payload.speed !== undefined) {
                     engine.settings.speed = payload.speed;
@@ -72,13 +69,12 @@ document.addEventListener('DOMContentLoaded', () => {
     contentEditable.addEventListener('input', () => {
         // Сброс при изменении текста
         engine.stop();
-        engine.broadcastState('stop');
     });
 
     // Обратные вызовы от движка для обновления UI
     engine.onStateChange = (isPlaying, isPaused) => {
         if (root && root.updateState) {
-            root.updateState({ isPlaying });
+            root.updateState({ isPlaying, isPaused });
         }
         
         if (contentEditable && engine.sentences.length > 0) {

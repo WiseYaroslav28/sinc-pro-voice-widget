@@ -26,10 +26,34 @@ window.renderTtsWidget = function(container, isMain = false) {
         overflow: hidden;
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
       }
-      #tts-play-stop-wrapper:hover .stop-btn-container {
+      #tts-play-stop-wrapper.can-stop:hover .stop-btn-container {
         width: 28px;
         opacity: 1;
-        margin-right: 4px;
+        margin-left: 4px;
+      }
+      #tts-widget-stop:hover {
+        background: #3a3545 !important;
+        border-color: #ff5c5c !important;
+        color: #ff5c5c !important;
+        box-shadow: 0 0 10px rgba(255, 92, 92, 0.6) !important;
+        text-shadow: 0 0 6px rgba(255, 92, 92, 0.8);
+      }
+      .play-pulse { animation: play-pulse-glow 1.5s infinite; }
+      @keyframes play-pulse-glow {
+        0%, 100% { box-shadow: 0 0 8px rgba(142,82,255,0.5); transform: scale(1); }
+        50%       { box-shadow: 0 0 20px rgba(142,82,255,0.8); transform: scale(1.06); }
+      }
+      .pause-pulse { animation: pause-pulse-glow 1.5s infinite; }
+      @keyframes pause-pulse-glow {
+        0%, 100% { box-shadow: 0 0 8px rgba(255,209,102,0.6); transform: scale(1); }
+        50%       { box-shadow: 0 0 20px rgba(255,209,102,0.9); transform: scale(1.06); }
+      }
+      #tts-widget-pause-badge.badge-pulse {
+        animation: badge-glow 1.2s infinite;
+      }
+      @keyframes badge-glow {
+        0%, 100% { transform: scale(1); box-shadow: 0 0 6px rgba(255,209,102,0.8); }
+        50%       { transform: scale(1.15); box-shadow: 0 0 12px rgba(255,209,102,1); }
       }
     </style>
     <div class="flex items-center px-2 py-2 gap-1 h-[52px]" data-tauri-drag-region>
@@ -42,13 +66,13 @@ window.renderTtsWidget = function(container, isMain = false) {
       `}
 
       <!-- 🔊 Голос -->
-      <div class="relative flex-1 min-w-[80px]" id="tts-voice-wrapper">
+      <div class="relative w-[115px] flex-shrink-0" id="tts-voice-wrapper">
         <button class="bg-transparent text-[#e4e1e9] border-none flex items-center justify-center gap-1.5 px-3 py-1 rounded-full text-[11px] cursor-pointer transition-all hover:bg-[#3a3545] w-full" id="tts-btn-voice" title="Выбор голоса">
           <span class="material-symbols-outlined text-[14px] text-[#ccc3d8]/60" style="font-variation-settings:'FILL' 1;">volume_up</span>
           <span id="tts-selected-voice-label" class="flex-1 text-left truncate">Загрузка...</span>
           <span class="material-symbols-outlined text-[14px] text-[#4a4455]">expand_more</span>
         </button>
-        <div class="absolute top-[calc(100%+8px)] left-0 right-0 bg-[#1f1f24] border border-[#8e52ff]/30 rounded-[10px] p-1.5 hidden flex-col gap-[2px] shadow-[0_8px_24px_rgba(0,0,0,0.6)] max-h-[280px] overflow-y-auto z-50 min-w-full" id="tts-voice-menu">
+        <div class="absolute top-[calc(100%+8px)] left-0 bg-[#1f1f24] border border-[#8e52ff]/30 rounded-[10px] p-1.5 hidden flex-col gap-[2px] shadow-[0_8px_24px_rgba(0,0,0,0.6)] max-h-[280px] overflow-y-auto z-50 min-w-[130px]" id="tts-voice-menu">
           <div class="text-[9px] uppercase tracking-widest text-[#8e52ff] px-2 mb-1 opacity-70">Голоса</div>
           <!-- Заполняется динамически -->
         </div>
@@ -57,7 +81,7 @@ window.renderTtsWidget = function(container, isMain = false) {
       <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
 
       <!-- ⚡ Скорость -->
-      <div class="relative" id="tts-speed-wrapper">
+      <div class="relative flex-shrink-0" id="tts-speed-wrapper">
         <button class="bg-transparent text-[#e4e1e9] border-none flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] cursor-pointer transition-all hover:bg-[#3a3545]" id="tts-btn-speed" title="Скорость воспроизведения">
           <span class="material-symbols-outlined text-[14px] text-[#45a29e]">bolt</span>
           <span id="tts-selected-speed-label">1.0x</span>
@@ -79,20 +103,37 @@ window.renderTtsWidget = function(container, isMain = false) {
 
       <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
 
-      <!-- ▶ Play/Pause + Hover Stop (слева) -->
-      <div class="flex items-center" id="tts-play-stop-wrapper">
+      <!-- ▶ Play/Pause + Hover Stop (справа) -->
+      <div class="flex items-center flex-shrink-0" id="tts-play-stop-wrapper">
+        <div class="relative w-9 h-9 flex-shrink-0" id="tts-widget-play-container">
+          <button class="flex items-center justify-center w-9 h-9 rounded-full bg-[#8e52ff] text-white hover:bg-[#a377ff] transition-all active:scale-95 shadow-[0_0_12px_rgba(142,82,255,0.4)] flex-shrink-0 cursor-pointer border-0 outline-none"
+                  id="tts-widget-play" title="Озвучить / Пауза">
+            <span class="material-symbols-outlined text-[20px]" id="tts-widget-play-icon" style="font-variation-settings:'FILL' 1;">play_arrow</span>
+          </button>
+          
+          <!-- Маленький желтый индикатор паузы -->
+          <div class="absolute bg-[#ffd166] rounded-full border border-[#1b1b20] flex items-center justify-center shadow-[0_0_6px_rgba(255,209,102,0.8)] hidden pointer-events-none" 
+               id="tts-widget-pause-badge" 
+               title="На паузе"
+               style="width: 22px; height: 22px; bottom: -2px; right: -2px; z-index: 60;">
+             <div class="flex gap-[3px] items-center justify-center">
+               <div style="width: 2.5px; height: 10px; background-color: #1b1b20; border-radius: 1px;"></div>
+               <div style="width: 2.5px; height: 10px; background-color: #1b1b20; border-radius: 1px;"></div>
+             </div>
+          </div>
+        </div>
+
         <div class="stop-btn-container flex items-center justify-center">
           <button class="flex items-center justify-center w-7 h-7 bg-[#2a292f] text-[#ccc3d8] rounded-md shadow-lg border border-[#4a4455]/30 hover:bg-[#3a3545] hover:border-[#ff5c5c]/50 hover:text-[#ff5c5c] cursor-pointer transition-all z-50 p-0 outline-none" id="tts-widget-stop" title="Остановить (сброс в начало)">
             <span class="material-symbols-outlined text-[16px]">stop</span>
           </button>
         </div>
-        
-        <button class="flex items-center justify-center w-9 h-9 rounded-full bg-[#8e52ff] text-white hover:bg-[#a377ff] transition-all active:scale-95 shadow-[0_0_12px_rgba(142,82,255,0.4)] flex-shrink-0 cursor-pointer border-0 outline-none"
-                id="tts-widget-play" title="Озвучить / Пауза">
-          <span class="material-symbols-outlined text-[20px]" id="tts-widget-play-icon" style="font-variation-settings:'FILL' 1;">play_arrow</span>
-        </button>
       </div>
 
+      <!-- Пространство перетаскивания и разделения -->
+      <div class="flex-1" data-tauri-drag-region></div>
+
+      <!-- Divider перед Translate -->
       <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
 
       <!-- 文A Перевод -->
@@ -149,6 +190,7 @@ function initTtsWidgetLogic(container, isMain) {
   let currentVoice = savedSettings.voice || PREFERRED_VOICES[0].edgeId;
   let currentSpeed = savedSettings.speed || 1.0;
   let isPlaying = false;
+  let isPaused = false;
 
   // Render Voices
   voiceMenu.innerHTML += PREFERRED_VOICES.map(v => 
@@ -285,13 +327,42 @@ function initTtsWidgetLogic(container, isMain) {
   container.updateState = function(state) {
     if (state.isPlaying !== undefined) {
       isPlaying = state.isPlaying;
+      if (isPlaying) isPaused = false;
       playIcon.textContent = isPlaying ? 'pause' : 'play_arrow';
-      if (isPlaying) {
-        btnPlay.classList.add('play-pulse');
-        btnPlay.title = 'Пауза';
+    }
+    if (state.isPaused !== undefined) {
+      isPaused = state.isPaused;
+    }
+
+    // Управляем пульсацией кнопки Play
+    btnPlay.classList.remove('play-pulse', 'pause-pulse');
+    if (isPlaying) {
+      btnPlay.classList.add('play-pulse');
+      btnPlay.title = 'Пауза';
+    } else if (isPaused) {
+      btnPlay.classList.add('pause-pulse');
+      btnPlay.title = 'Продолжить';
+    } else {
+      btnPlay.title = 'Озвучить';
+    }
+
+    const wrapper = container.querySelector('#tts-play-stop-wrapper');
+    if (wrapper) {
+      if (isPlaying || isPaused) {
+        wrapper.classList.add('can-stop');
       } else {
-        btnPlay.classList.remove('play-pulse');
-        btnPlay.title = 'Озвучить';
+        wrapper.classList.remove('can-stop');
+      }
+    }
+
+    const badge = container.querySelector('#tts-widget-pause-badge');
+    if (badge) {
+      if (isPaused) {
+        badge.classList.remove('hidden');
+        badge.classList.add('badge-pulse');
+      } else {
+        badge.classList.add('hidden');
+        badge.classList.remove('badge-pulse');
       }
     }
     if (state.speed !== undefined) {
