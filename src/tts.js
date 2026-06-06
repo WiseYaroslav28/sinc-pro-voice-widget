@@ -101,22 +101,21 @@ document.addEventListener('DOMContentLoaded', () => {
         if (contentEditable) {
             const text = contentEditable.innerText.trim();
             if (text && text !== DEFAULT_PLACEHOLDER) {
-                if (isPlaying || isPaused) {
-                    if (engine.sentences.length > 0) {
-                        const wordsCount = engine.sentences.join(" ").split(/\s+/).length;
-                        if (statsLabel) statsLabel.textContent = `${engine.sentences.length} предложений, ~${wordsCount} слов`;
-                        
-                        contentEditable.innerHTML = engine.sentences.map((s, i) => {
-                            const isActive = (i === engine.currentSentenceIndex && isPlaying);
-                            return `<span class="transition-colors ${isActive ? 'bg-[#7bd6d1]/20 text-[#7bd6d1] font-semibold' : ''}" id="sentence-${i}">${s}</span>`;
-                        }).join(' ');
-                    }
-                } else {
-                    // Если остановлено (не играет и не на паузе), очищаем теги span
-                    // но делаем это только если они там реально присутствуют, чтобы не ломать каретку при обычном вводе.
+                // Если пользователь редактирует текст (фокус на поле), очищаем span-теги для нормального ввода
+                if (document.activeElement === contentEditable) {
                     if (contentEditable.querySelector('span')) {
                         contentEditable.innerHTML = contentEditable.innerText;
                     }
+                } else if (engine.sentences.length > 0) {
+                    // Во всех остальных случаях (фокуса нет), если есть предложения, рисуем их со span
+                    const wordsCount = engine.sentences.join(" ").split(/\s+/).length;
+                    if (statsLabel) statsLabel.textContent = `${engine.sentences.length} предложений, ~${wordsCount} слов`;
+                    
+                    contentEditable.innerHTML = engine.sentences.map((s, i) => {
+                        // Подсвечиваем выбранное предложение ВСЕГДА (играет ли, на паузе или просто выбрано на шкале)
+                        const isActive = (i === engine.currentSentenceIndex);
+                        return `<span class="transition-colors ${isActive ? 'bg-[#7bd6d1]/20 text-[#7bd6d1] font-semibold' : ''}" id="sentence-${i}">${s}</span>`;
+                    }).join(' ');
                 }
             } else {
                 if (statsLabel) statsLabel.textContent = `0 предложений`;
