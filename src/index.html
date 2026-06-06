@@ -15,6 +15,42 @@
         100% { box-shadow: 0 0 0 0 rgba(142,82,255,0); }
       }
       .play-pulse { animation: play-pulse-anim 2s infinite; }
+
+      /* Стили для свернутого сайдбара */
+      .sidebar.collapsed {
+        padding-left: 0.5rem !important;
+        padding-right: 0.5rem !important;
+      }
+      .sidebar.collapsed .sidebar-header {
+        justify-content: center !important;
+      }
+      .sidebar.collapsed .logo-area {
+        display: none !important;
+      }
+      .sidebar.collapsed #sidebar-toggle {
+        margin: 0 auto !important;
+      }
+      .sidebar.collapsed .btn-new-rec {
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+        justify-content: center !important;
+        width: 40px !important;
+        height: 40px !important;
+        border-radius: 50% !important;
+        margin: 0 auto 1.5rem auto !important;
+      }
+      .sidebar.collapsed .sidebar-item {
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+        justify-content: center !important;
+        border-right: none !important;
+      }
+      .sidebar.collapsed .sidebar-item.active {
+        background-color: rgba(163, 119, 255, 0.1) !important;
+        color: #d2bbff !important;
+        border-radius: 8px !important;
+        box-shadow: inset 0 0 0 1px rgba(163, 119, 255, 0.25) !important;
+      }
     </style>
   </head>
 
@@ -401,7 +437,7 @@
               <div class="flex items-center gap-1.5 cursor-help" id="status-container-api" title="Интеграция ИИ: Подключение...">
                 <span class="material-symbols-outlined text-[14px] text-[#ccc3d8]">smart_toy</span>
                 <span class="w-2 h-2 rounded-full" id="api-status-dot"></span>
-                <span class="hidden" id="api-status-text"></span>
+                <span id="api-status-text" style="display: none !important;"></span>
               </div>
               <!-- Статус Микрофона -->
               <div class="flex items-center gap-1.5 cursor-help" id="status-container-mic" title="Микрофон: Готов к записи">
@@ -489,7 +525,7 @@
         const isCollapsed = sidebar.classList.contains('collapsed');
         sidebar.classList.toggle('collapsed');
         sidebar.classList.toggle('w-[200px]');
-        sidebar.classList.toggle('w-[56px]');
+        sidebar.classList.toggle('w-[64px]');
         
         const itemsText = document.querySelectorAll('.sidebar-item-text');
         const logo = document.querySelector('.sidebar-logo');
