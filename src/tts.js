@@ -13,6 +13,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const engine = new window.VoiceCore();
     window.ttsEngine = engine;
 
+    let isTextChanged = false; // Флаг ручного изменения текста пользователем
+
     const contentEditable = document.getElementById('voice-contenteditable');
     const progressContainer = document.getElementById('voice-progress-container');
     const timeCurrent = document.getElementById('voice-time-current');
@@ -35,9 +37,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (textToPlay === DEFAULT_PLACEHOLDER) {
                         return;
                     }
-                    if (engine.currentText !== engine.cleanText(textToPlay)) {
+                    if (isTextChanged || !engine.currentText) {
                         engine.loadText(textToPlay);
                         engine.broadcastState('load', { text: textToPlay });
+                        isTextChanged = false;
                     }
                     engine.play();
                 }
@@ -59,6 +62,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     // Если сменили голос — загружаем текст заново, чтобы перекачать кэш
                     if (contentEditable.innerText.trim()) {
                         engine.loadText(contentEditable.innerText);
+                        isTextChanged = false;
                         if (engine.isPlaying) engine.play();
                     }
                 }
@@ -74,10 +78,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     contentEditable.addEventListener('input', () => {
         // Сброс при изменении текста
+        isTextChanged = true;
         engine.stop();
     });
 
     contentEditable.addEventListener('focus', () => {
+        isTextChanged = true;
         if (contentEditable.innerText.trim() === DEFAULT_PLACEHOLDER) {
             contentEditable.innerText = '';
         }
@@ -189,6 +195,7 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log('[TTS] handleNewText: received text, length=' + text.length);
         if (window.switchTab) window.switchTab('tab-tts');
         
+        isTextChanged = false;
         // По просьбе пользователя всегда стираем старый текст и начинаем заново
         if (contentEditable) contentEditable.innerText = text;
         engine.loadText(text);
