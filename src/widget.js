@@ -27,7 +27,17 @@ document.addEventListener('DOMContentLoaded', () => {
   const WIN_HEIGHT_COLLAPSED = 64;
   const WIN_HEIGHT_EXPANDED = 380;
 
+  let isRowExpanded = false;
+  let isDropdownOpen = false;
 
+  function updateWindowHeight() {
+    if (!window.__TAURI__) return;
+    const appWindow = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
+    const LogicalSize = window.__TAURI__.dpi.LogicalSize;
+    const shouldExpand = isRowExpanded || isDropdownOpen;
+    const height = shouldExpand ? WIN_HEIGHT_EXPANDED : WIN_HEIGHT_COLLAPSED;
+    appWindow.setSize(new LogicalSize(WIN_WIDTH, height)).catch(console.error);
+  }
 
   // ======================================================================
   // ОБРЕЗКА ОКНА ЧЕРЕЗ WIN32 REGION (Идеальный прозрачный хитбокс)
@@ -72,6 +82,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // При старте — свернутый режим
+  updateWindowHeight();
   updateClickRegion('collapsed');
 
   if (btnExpand && expandedRow) {
@@ -82,21 +93,24 @@ document.addEventListener('DOMContentLoaded', () => {
         expandedRow.classList.remove('hidden');
         expandedRow.classList.add('flex');
         expandIcon.textContent = 'close_fullscreen';
-        isMenuOpen = true;
+        isRowExpanded = true;
+        updateWindowHeight();
         updateClickRegion('expanded');
       } else {
         expandedRow.classList.remove('flex');
         expandedRow.classList.add('hidden');
         expandIcon.textContent = 'open_in_full';
-        isMenuOpen = false;
+        isRowExpanded = false;
+        updateWindowHeight();
         updateClickRegion('collapsed');
       }
     });
   }
 
   root.addEventListener('tts-menu-toggled', (e) => {
-    isMenuOpen = e.detail.expanded;
-    updateClickRegion(isMenuOpen ? 'dropdown' : 'collapsed');
+    isDropdownOpen = e.detail.expanded;
+    updateWindowHeight();
+    updateClickRegion(isDropdownOpen ? 'dropdown' : (isRowExpanded ? 'expanded' : 'collapsed'));
   });
 
   // Взаимодействие с Tauri (Отправка и прием)

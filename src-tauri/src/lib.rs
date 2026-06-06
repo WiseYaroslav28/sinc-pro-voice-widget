@@ -79,6 +79,9 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
     headers.insert("Accept-Language", "en-US,en;q=0.9".parse().unwrap());
     headers.insert("Pragma", "no-cache".parse().unwrap());
     headers.insert("Cache-Control", "no-cache".parse().unwrap());
+
+    let muid = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
+    headers.insert("Cookie", format!("muid={};", muid).parse().unwrap());
     
     let (mut ws, _) = tokio_tungstenite::connect_async_tls_with_config(request, None, false, None)
         .await

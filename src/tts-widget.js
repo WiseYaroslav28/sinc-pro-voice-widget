@@ -81,13 +81,14 @@ window.renderTtsWidget = function(container, isMain = false) {
         50%       { transform: scale(1.15); box-shadow: 0 0 12px rgba(255,209,102,1); }
       }
     </style>
-    <div class="flex items-center py-2 gap-1 h-[52px]" style="${isMain ? 'padding-left: 20px; padding-right: 20px;' : 'padding-left: 8px; padding-right: 8px;'}" data-tauri-drag-region>
+    <div class="flex items-center py-2 gap-1 h-[52px]" style="${isMain ? 'padding-left: 20px; padding-right: 20px;' : 'padding-left: 14px; padding-right: 14px;'}" data-tauri-drag-region>
       
       <!-- Drag Handle -->
       ${isMain ? '' : `
-      <div class="flex flex-col items-center justify-center w-3 h-full cursor-move opacity-30 hover:opacity-100 pl-1" title="Перетащить виджет" data-tauri-drag-region>
-        <span class="material-symbols-outlined text-[14px]" style="pointer-events: none;">drag_indicator</span>
+      <div class="flex items-center justify-center w-7 h-7 cursor-move opacity-30 hover:opacity-100 text-[#ccc3d8]" title="Перетащить виджет" data-tauri-drag-region>
+        <span class="material-symbols-outlined text-[18px]" style="pointer-events: none;">drag_indicator</span>
       </div>
+      <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
       `}
 
       <!-- 🔊 Голос -->
@@ -151,7 +152,7 @@ window.renderTtsWidget = function(container, isMain = false) {
       <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
 
       <!-- 文A Перевод -->
-      <button class="bg-transparent text-[#ccc3d8] border-none flex items-center justify-center w-7 h-7 rounded-md cursor-pointer transition-all hover:bg-[#3a3545] hover:text-[#7bd6d1] outline-none mx-3" id="tts-btn-translate" title="Переводить перед чтением">
+      <button class="bg-transparent text-[#ccc3d8] border-none flex items-center justify-center w-7 h-7 rounded-md cursor-pointer transition-all hover:bg-[#3a3545] hover:text-[#7bd6d1] outline-none ${isMain ? 'mx-3' : 'mx-1'}" id="tts-btn-translate" title="Переводить перед чтением">
         <span class="material-symbols-outlined text-[18px]">translate</span>
       </button>
 
