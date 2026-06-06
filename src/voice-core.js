@@ -181,7 +181,11 @@ class VoiceCore {
         for (let s of rawSentences) {
             s = s.replace(/<DOT>/g, ".");
             s = s.replace(/<ELLIPSIS>/g, "...");
-            if (s.trim().length > 0) sentences.push(s.trim());
+            const trimmed = s.trim();
+            // Предложение должно содержать хотя бы одну букву или цифру для озвучки
+            if (trimmed.length > 0 && /[\p{L}\p{N}]/u.test(trimmed)) {
+                sentences.push(trimmed);
+            }
         }
         return sentences;
     }
@@ -260,29 +264,29 @@ class VoiceCore {
 
                     // 2. Рассчитываем динамическую адаптивную задержку для защиты от DDoS/блокировок
                     const distance = i - this.currentSentenceIndex;
-                    let delay = 250; // Базовый интервал между запросами
+                    let delay = 800; // Безопасный базовый интервал между запросами
 
-                    // Партии по 3 предложения: добавляем дополнительную задержку
-                    if (i > 0 && i % 3 === 0) {
-                        delay += 800;
+                    // Партии по 2 предложения: добавляем дополнительную задержку 1200мс
+                    if (i > 0 && i % 2 === 0) {
+                        delay += 1200;
                     }
 
                     if (!this.isPlaying || this.isPaused) {
                         // Если плеер стоит на паузе / не играет, а очередь ушла вперед
                         if (distance >= 5) {
-                            delay = 4000;
+                            delay = 5000;
                         } else if (distance >= 3) {
-                            delay = 2000;
+                            delay = 3000;
                         }
                     } else {
                         // Если проигрывание активно
                         if (distance >= 5) {
-                            delay = 2500;
+                            delay = 3500;
                         } else if (distance >= 3) {
-                            delay = 1000;
+                            delay = 2000;
                         } else {
                             // Озвучка догоняет загрузку
-                            delay = 150;
+                            delay = 600;
                         }
                     }
 
@@ -293,16 +297,16 @@ class VoiceCore {
                         
                         // Позволяет прервать или сократить задержку, если плеер сняли с паузы или он догнал
                         const currentDistance = i - this.currentSentenceIndex;
-                        let currentDelay = 250;
-                        if (i > 0 && i % 3 === 0) currentDelay += 800;
+                        let currentDelay = 800;
+                        if (i > 0 && i % 2 === 0) currentDelay += 1200;
 
                         if (!this.isPlaying || this.isPaused) {
-                            if (currentDistance >= 5) currentDelay = 4000;
-                            else if (currentDistance >= 3) currentDelay = 2000;
+                            if (currentDistance >= 5) currentDelay = 5000;
+                            else if (currentDistance >= 3) currentDelay = 3000;
                         } else {
-                            if (currentDistance >= 5) currentDelay = 2500;
-                            else if (currentDistance >= 3) currentDelay = 1000;
-                            else currentDelay = 150;
+                            if (currentDistance >= 5) currentDelay = 3500;
+                            else if (currentDistance >= 3) currentDelay = 2000;
+                            else currentDelay = 600;
                         }
 
                         if (Date.now() - startWait >= currentDelay) {

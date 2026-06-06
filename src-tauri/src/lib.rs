@@ -16,7 +16,21 @@ use uuid::Uuid;
 const EDGE_TTS_ENDPOINT: &str =
     "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4";
 
+static LAST_SKEW_UPDATE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+static CACHED_SKEW: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
 async fn get_clock_skew() -> i64 {
+    let now = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => d.as_secs() as i64,
+        Err(_) => 0,
+    };
+    let last_update = LAST_SKEW_UPDATE.load(Ordering::Relaxed);
+    
+    // Если прошло меньше 10 минут (600 секунд) с последнего обновления, возвращаем кэшированное значение
+    if last_update != 0 && (now - last_update) < 600 {
+        return CACHED_SKEW.load(Ordering::Relaxed);
+    }
+
     let client = reqwest::Client::new();
     let url = "https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list?trustedclienttoken=6A5AA1D4EAFF4E9FB37E23D68491D6F4";
     if let Ok(resp) = client.head(url).send().await {
@@ -26,13 +40,18 @@ async fn get_clock_skew() -> i64 {
                     let server_timestamp = server_time.timestamp();
                     let local_timestamp = chrono::Utc::now().timestamp();
                     let skew = server_timestamp - local_timestamp;
-                    println!("SINC PRO TTS: Clock skew adjusted by {} seconds", skew);
+                    println!("SINC PRO TTS: Clock skew adjusted by {} seconds (network update)", skew);
+                    
+                    CACHED_SKEW.store(skew, Ordering::Relaxed);
+                    LAST_SKEW_UPDATE.store(now, Ordering::Relaxed);
                     return skew;
                 }
             }
         }
     }
-    0
+    
+    // Если сетевой запрос провалился, возвращаем старое кэшированное значение
+    CACHED_SKEW.load(Ordering::Relaxed)
 }
 
 fn generate_sec_ms_gec(skew: i64) -> String {
@@ -50,8 +69,28 @@ fn generate_sec_ms_gec(skew: i64) -> String {
     format!("{:X}", result)
 }
 
+fn log_tts_error(text: &str, err: &str) {
+    use std::io::Write;
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("c:\\Antigravity projects\\voice-server\\tts_errors.log")
+    {
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        let _ = writeln!(file, "[{}] TEXT: \"{}\" | ERROR: {}", timestamp, text, err);
+    }
+}
+
 #[tauri::command]
 async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String, String> {
+    let res = speak_edge_tts_internal(text.clone(), voice, rate).await;
+    if let Err(ref e) = res {
+        log_tts_error(&text, e);
+    }
+    res
+}
+
+async fn speak_edge_tts_internal(text: String, voice: String, rate: f32) -> Result<String, String> {
     let rate_pct = (((rate - 1.0) * 100.0).round() as i32).clamp(-50, 100);
     let rate_str = if rate_pct >= 0 {
         format!("+{}%", rate_pct)
