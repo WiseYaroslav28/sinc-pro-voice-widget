@@ -37,7 +37,7 @@
         "label": "widget",
         "title": "SINC PRO - Виджет",
         "url": "widget.html",
-        "width": 520,
+        "width": 560,
         "height": 380,
         "resizable": false,
         "decorations": false,

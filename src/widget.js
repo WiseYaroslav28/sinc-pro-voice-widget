@@ -23,8 +23,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // Виджет-контейнер: w-[500px], панель h-[52px]
   // ======================================================================
 
-  const WIN_WIDTH = 520;
-  const WIN_HEIGHT_COLLAPSED = 64;
+  const WIN_WIDTH = 560;
+  const WIN_HEIGHT_COLLAPSED = 88; // 52px панель + 16px padding-top + 20px тень снизу
   const WIN_HEIGHT_EXPANDED = 380;
 
   let isRowExpanded = false;
@@ -52,23 +52,20 @@ document.addEventListener('DOMContentLoaded', () => {
       let w, h, x, y;
 
       if (state === 'collapsed') {
-        // Только верхняя панель с кнопками (500×52 + немного отступа под тень)
-        w = 504;
-        h = 56;
+        w = 516; // Виджет 500px + по 8px под тени слева/справа
+        h = 76;  // Панель 52px + 16px padding-top + 8px тень снизу
         x = (WIN_WIDTH - w) / 2;
-        y = 0;
+        y = 8;   // Начинаем с 8px (из 16px padding-top)
       } else if (state === 'expanded') {
-        // Панель + дропдауны голосов/скорости + нижний ряд
-        w = 504;
-        h = WIN_HEIGHT_EXPANDED;
+        w = 516;
+        h = WIN_HEIGHT_EXPANDED - 8;
         x = (WIN_WIDTH - w) / 2;
-        y = 0;
+        y = 8;
       } else if (state === 'dropdown') {
-        // При открытых дропдаунах — полная высота
-        w = 504;
-        h = WIN_HEIGHT_EXPANDED;
+        w = 516;
+        h = WIN_HEIGHT_EXPANDED - 8;
         x = (WIN_WIDTH - w) / 2;
-        y = 0;
+        y = 8;
       }
 
       const scaleFactor = window.devicePixelRatio || 1;
@@ -95,14 +92,14 @@ document.addEventListener('DOMContentLoaded', () => {
         expandIcon.textContent = 'close_fullscreen';
         isRowExpanded = true;
         updateWindowHeight();
-        updateClickRegion('expanded');
+        updateClickRegion(isDropdownOpen ? 'dropdown' : 'expanded');
       } else {
         expandedRow.classList.remove('flex');
         expandedRow.classList.add('hidden');
         expandIcon.textContent = 'open_in_full';
         isRowExpanded = false;
         updateWindowHeight();
-        updateClickRegion('collapsed');
+        updateClickRegion(isDropdownOpen ? 'dropdown' : 'collapsed');
       }
     });
   }
