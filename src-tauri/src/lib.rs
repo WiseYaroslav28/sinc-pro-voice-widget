@@ -1,3 +1,4 @@
+mod translator;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
@@ -13,8 +14,7 @@ use tokio_tungstenite::{connect_async_tls_with_config, tungstenite::Message};
 use uuid::Uuid;
 
 const EDGE_TTS_ENDPOINT: &str =
-    "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1\
-     ?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4";
+    "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4";
 
 async fn get_clock_skew() -> i64 {
     let client = reqwest::Client::new();
@@ -41,10 +41,9 @@ fn generate_sec_ms_gec(skew: i64) -> String {
     let now_sec = (chrono::Utc::now().timestamp() + skew) as u64;
     let mut ticks = now_sec + win_epoch;
     ticks -= ticks % 300;
-    ticks *= 10_000_000; // Конвертируем в 100-наносекундные тики
+    ticks *= 10_000_000;
 
     let str_to_hash = format!("{}{}", ticks, "6A5AA1D4EAFF4E9FB37E23D68491D6F4");
-
     let mut hasher = Sha256::new();
     hasher.update(str_to_hash.as_bytes());
     let result = hasher.finalize();
@@ -53,8 +52,7 @@ fn generate_sec_ms_gec(skew: i64) -> String {
 
 #[tauri::command]
 async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String, String> {
-    // rate: 1.0 = нормально, 1.5 = +50%, 0.5 = -50%
-    let rate_pct = (((rate - 1.0) * 100.0).round() as i32).clamp(-50, 200);
+    let rate_pct = (((rate - 1.0) * 100.0).round() as i32).clamp(-50, 100);
     let rate_str = if rate_pct >= 0 {
         format!("+{}%", rate_pct)
     } else {
@@ -64,6 +62,7 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
     let skew = get_clock_skew().await;
     let gec = generate_sec_ms_gec(skew);
     let gec_version = "1-143.0.3650.75";
+
     let conn_id = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
     let url = format!(
         "{}&ConnectionId={}&Sec-MS-GEC={}&Sec-MS-GEC-Version={}",
@@ -71,33 +70,19 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
     );
 
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-    let mut request = url.into_client_request().map_err(|e| {
-        let err_msg = format!("Failed to create WebSocket request: {}", e);
-        println!("SINC PRO TTS ERROR: {}", err_msg);
-        err_msg
-    })?;
-
+    let mut request = url.into_client_request().map_err(|e| format!("WebSocket request config failed: {}", e))?;
+    
     let headers = request.headers_mut();
-    headers.insert(
-        "Origin",
-        "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold"
-            .parse()
-            .unwrap(),
-    );
+    headers.insert("Origin", "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold".parse().unwrap());
     headers.insert("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0".parse().unwrap());
+    headers.insert("Accept-Encoding", "gzip, deflate, br, zstd".parse().unwrap());
+    headers.insert("Accept-Language", "en-US,en;q=0.9".parse().unwrap());
     headers.insert("Pragma", "no-cache".parse().unwrap());
     headers.insert("Cache-Control", "no-cache".parse().unwrap());
-
-    let muid = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
-    headers.insert("Cookie", format!("muid={};", muid).parse().unwrap());
-
-    let (mut ws, _) = connect_async_tls_with_config(request, None, false, None)
+    
+    let (mut ws, _) = tokio_tungstenite::connect_async_tls_with_config(request, None, false, None)
         .await
-        .map_err(|e| {
-            let err_msg = format!("WebSocket connect failed: {}", e);
-            println!("SINC PRO TTS ERROR: {}", err_msg);
-            err_msg
-        })?;
+        .map_err(|e| format!("WebSocket connect failed: {}", e))?;
 
     // 1. Отправляем конфигурационное сообщение
     let config_msg = format!(
@@ -106,13 +91,8 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
          \"wordBoundaryEnabled\":false}},\"outputFormat\":\"audio-24khz-48kbitrate-mono-mp3\"}}}}}}}}",
         ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S.000Z")
     );
-    ws.send(Message::Text(config_msg.into()))
-        .await
-        .map_err(|e| {
-            let err_msg = format!("Send config failed: {}", e);
-            println!("SINC PRO TTS ERROR: {}", err_msg);
-            err_msg
-        })?;
+    ws.send(Message::Text(config_msg.into())).await
+        .map_err(|e| format!("Send config failed: {}", e))?;
 
     // 2. SSML синтез
     let request_id = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
@@ -125,17 +105,14 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
          X-Timestamp:{ts}\r\nPath:ssml\r\n\r\n\
          <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>\
          <voice name='{voice}'><prosody rate='{rate}'>{text}</prosody></voice></speak>",
-        req = request_id,
-        ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S.000Z"),
+        req  = request_id,
+        ts   = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S.000Z"),
         voice = voice,
         rate = rate_str,
         text = ssml_text,
     );
-    ws.send(Message::Text(ssml_msg.into())).await.map_err(|e| {
-        let err_msg = format!("Send SSML failed: {}", e);
-        println!("SINC PRO TTS ERROR: {}", err_msg);
-        err_msg
-    })?;
+    ws.send(Message::Text(ssml_msg.into())).await
+        .map_err(|e| format!("Send SSML failed: {}", e))?;
 
     // 3. Собираем бинарные чанки MP3
     let mut audio_bytes: Vec<u8> = Vec::new();
@@ -144,7 +121,6 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
     loop {
         match ws.next().await {
             Some(Ok(Message::Binary(data))) => {
-                // Формат: заголовок + разделитель + аудио-данные
                 if let Some(pos) = data.windows(separator.len()).position(|w| w == separator) {
                     let audio_start = pos + separator.len();
                     if audio_start < data.len() {
@@ -153,17 +129,10 @@ async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String
                 }
             }
             Some(Ok(Message::Text(t))) => {
-                // turn.end = синтез завершён
-                if t.contains("Path:turn.end") {
-                    break;
-                }
+                if t.contains("Path:turn.end") { break; }
             }
             Some(Ok(Message::Close(_))) | None => break,
-            Some(Err(e)) => {
-                let err_msg = format!("WebSocket error: {}", e);
-                println!("SINC PRO TTS ERROR: {}", err_msg);
-                return Err(err_msg);
-            }
+            Some(Err(e)) => return Err(format!("WebSocket error: {}", e)),
             _ => {}
         }
     }
@@ -181,6 +150,7 @@ static MODEL_LOCKS: std::sync::LazyLock<Mutex<HashMap<String, Instant>>> =
 static CTRL_PRESSED: AtomicBool = AtomicBool::new(false);
 static WIN_PRESSED: AtomicBool = AtomicBool::new(false);
 static ALT_PRESSED: AtomicBool = AtomicBool::new(false);
+static SHIFT_PRESSED: AtomicBool = AtomicBool::new(false);
 static SHORTCUT_ACTIVE: AtomicBool = AtomicBool::new(false);
 static FORCE_SEND_ACTIVE: AtomicBool = AtomicBool::new(false);
 static RECORDING_OR_PAUSED: AtomicBool = AtomicBool::new(false);
@@ -223,6 +193,8 @@ const VK_LWIN: u32 = 0x5B;
 const VK_RWIN: u32 = 0x5C;
 const VK_LMENU: u32 = 0xA4;
 const VK_RMENU: u32 = 0xA5;
+const VK_LSHIFT: u32 = 0xA0;
+const VK_RSHIFT: u32 = 0xA1;
 const VK_ESCAPE: u32 = 0x1B;
 
 #[link(name = "user32")]
@@ -250,6 +222,12 @@ unsafe extern "system" fn low_level_keyboard_proc(
 ) -> isize {
     if code >= 0 {
         let info = *(l_param as *const KBDLLHOOKSTRUCT);
+        
+        // Ignore simulated events generated by our own simulate_ctrl_c
+        if info.dwExtraInfo == 0x12345678 {
+            return CallNextHookEx(0, code, w_param, l_param);
+        }
+
         let vk = info.vkCode;
         let is_key_down = w_param == WM_KEYDOWN || w_param == WM_SYSKEYDOWN;
 
@@ -270,6 +248,11 @@ unsafe extern "system" fn low_level_keyboard_proc(
             if prev != is_key_down {
                 state_changed = true;
             }
+        } else if vk == VK_LSHIFT || vk == VK_RSHIFT {
+            let prev = SHIFT_PRESSED.swap(is_key_down, Ordering::SeqCst);
+            if prev != is_key_down {
+                state_changed = true;
+            }
         } else if vk == VK_ESCAPE && is_key_down {
             if RECORDING_OR_PAUSED.load(Ordering::SeqCst) {
                 if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
@@ -282,8 +265,29 @@ unsafe extern "system" fn low_level_keyboard_proc(
             let ctrl = CTRL_PRESSED.load(Ordering::SeqCst);
             let win = WIN_PRESSED.load(Ordering::SeqCst);
             let alt = ALT_PRESSED.load(Ordering::SeqCst);
+            let shift = SHIFT_PRESSED.load(Ordering::SeqCst);
 
-            if ctrl && win {
+            if ctrl && shift && !alt && !win {
+                let was_active = SHORTCUT_ACTIVE.swap(true, Ordering::SeqCst);
+                println!("SINC PRO HOTKEY: Ctrl+Shift detected, was_active={}", was_active);
+                if !was_active {
+                    if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                        println!("SINC PRO HOTKEY: Emitting tts-action-read");
+                        let _ = app.emit("tts-action-read", ());
+                    }
+                    // TTS-чтение — одноразовое действие, сбрасываем флаг сразу,
+                    // чтобы следующее нажатие Ctrl+Shift снова сработало
+                    SHORTCUT_ACTIVE.store(false, Ordering::SeqCst);
+                }
+            } else if ctrl && alt && !shift && !win {
+                if !SHORTCUT_ACTIVE.swap(true, Ordering::SeqCst) {
+                    if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                        let _ = app.emit("tts-action-translate", ());
+                    }
+                    // TTS-перевод — одноразовое действие, аналогично
+                    SHORTCUT_ACTIVE.store(false, Ordering::SeqCst);
+                }
+            } else if ctrl && win {
                 if alt {
                     if !FORCE_SEND_ACTIVE.swap(true, Ordering::SeqCst) {
                         if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
@@ -298,8 +302,7 @@ unsafe extern "system" fn low_level_keyboard_proc(
                     }
                 }
             } else {
-                if SHORTCUT_ACTIVE.load(Ordering::SeqCst) && (!ctrl || !win) {
-                    SHORTCUT_ACTIVE.store(false, Ordering::SeqCst);
+                if SHORTCUT_ACTIVE.swap(false, Ordering::SeqCst) {
                     if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
                         let _ = app.emit("global-shortcut-released", ());
                     }
@@ -662,6 +665,10 @@ async fn save_audio(
         Vec::new()
     };
 
+    if bytes.len() < 100 {
+        return Err("Запись отменена: аудиофайл пуст или слишком мал (нет звука)".to_string());
+    }
+
     let app_data_dir = app_handle
         .path()
         .app_data_dir()
@@ -882,8 +889,27 @@ async fn save_audio(
             true,
         ),
         Some(raw_json) => {
+            // Очищаем от Markdown и мусора
+            let mut cleaned = raw_json.trim().to_string();
+            if cleaned.starts_with("```json") {
+                cleaned = cleaned.trim_start_matches("```json").to_string();
+            } else if cleaned.starts_with("```") {
+                cleaned = cleaned.trim_start_matches("```").to_string();
+            }
+            if cleaned.ends_with("```") {
+                cleaned = cleaned.trim_end_matches("```").to_string();
+            }
+            cleaned = cleaned.trim().to_string();
+
+            // Извлекаем от первой { до последней }
+            if let (Some(start), Some(end)) = (cleaned.find('{'), cleaned.rfind('}')) {
+                if start <= end {
+                    cleaned = cleaned[start..=end].to_string();
+                }
+            }
+
             // Пытаемся распарсить JSON
-            match serde_json::from_str::<serde_json::Value>(&raw_json) {
+            match serde_json::from_str::<serde_json::Value>(&cleaned) {
                 Ok(v) => {
                     let tr = v["transcript"].as_str().unwrap_or("").to_string();
                     let ai = v["ai_result"].as_str().unwrap_or("").to_string();
@@ -1075,6 +1101,207 @@ async fn write_clipboard_text(text: String) -> Result<(), String> {
     {
         Err("Поддерживается только Windows".to_string())
     }
+}
+
+
+#[cfg(target_os = "windows")]
+fn backup_clipboard() -> Result<Vec<(u32, Vec<u8>)>, String> {
+    #[link(name = "user32")]
+    extern "system" {
+        fn OpenClipboard(hWnd: isize) -> i32;
+        fn CloseClipboard() -> i32;
+        fn EnumClipboardFormats(format: u32) -> u32;
+        fn GetClipboardData(uFormat: u32) -> isize;
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GlobalLock(hMem: isize) -> *const u8;
+        fn GlobalUnlock(hMem: isize) -> i32;
+        fn GlobalSize(hMem: isize) -> usize;
+    }
+
+    let mut backup = Vec::new();
+    unsafe {
+        if OpenClipboard(0) == 0 {
+            return Err("Не удалось открыть буфер обмена для бэкапа".to_string());
+        }
+        let mut format = 0;
+        loop {
+            format = EnumClipboardFormats(format);
+            if format == 0 {
+                break;
+            }
+            if format == 2 || format == 8 || format == 17 {
+                continue;
+            }
+            let h_mem = GetClipboardData(format);
+            if h_mem != 0 {
+                let size = GlobalSize(h_mem);
+                if size > 0 && size < 1024 * 1024 * 10 {
+                    let ptr = GlobalLock(h_mem);
+                    if !ptr.is_null() {
+                        let mut data = vec![0u8; size];
+                        std::ptr::copy_nonoverlapping(ptr, data.as_mut_ptr(), size);
+                        GlobalUnlock(h_mem);
+                        backup.push((format, data));
+                    }
+                }
+            }
+        }
+        CloseClipboard();
+    }
+    Ok(backup)
+}
+
+#[cfg(target_os = "windows")]
+fn restore_clipboard(backup: Vec<(u32, Vec<u8>)>) -> Result<(), String> {
+    #[link(name = "user32")]
+    extern "system" {
+        fn OpenClipboard(hWnd: isize) -> i32;
+        fn CloseClipboard() -> i32;
+        fn EmptyClipboard() -> i32;
+        fn SetClipboardData(uFormat: u32, hMem: isize) -> isize;
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GlobalAlloc(uFlags: u32, dwBytes: usize) -> isize;
+        fn GlobalLock(hMem: isize) -> *mut u8;
+        fn GlobalUnlock(hMem: isize) -> i32;
+    }
+    const GMEM_MOVEABLE: u32 = 2;
+
+    unsafe {
+        if OpenClipboard(0) == 0 {
+            return Err("Не удалось открыть буфер обмена для восстановления".to_string());
+        }
+        EmptyClipboard();
+
+        for (format, data) in backup {
+            let size = data.len();
+            let h_mem = GlobalAlloc(GMEM_MOVEABLE, size);
+            if h_mem != 0 {
+                let ptr = GlobalLock(h_mem);
+                if !ptr.is_null() {
+                    std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, size);
+                    GlobalUnlock(h_mem);
+                    SetClipboardData(format, h_mem);
+                }
+            }
+        }
+        CloseClipboard();
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn simulate_ctrl_c() {
+    #[repr(C)]
+    struct INPUT {
+        type_: u32,
+        u: INPUT_UNION,
+    }
+    #[repr(C)]
+    union INPUT_UNION {
+        ki: KEYBDINPUT,
+        mi: [u8; 32],
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct KEYBDINPUT {
+        wVk: u16,
+        wScan: u16,
+        dwFlags: u32,
+        time: u32,
+        dwExtraInfo: usize,
+    }
+    const INPUT_KEYBOARD: u32 = 1;
+    const KEYEVENTF_KEYUP: u32 = 2;
+    const VK_CONTROL: u16 = 17;
+    const VK_C: u16 = 67;
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn SendInput(cInputs: u32, pInputs: *const INPUT, cbSize: i32) -> u32;
+    }
+
+    unsafe {
+        let mut inputs: Vec<INPUT> = Vec::new();
+        // Принудительно отпускаем все модификаторы
+        let release_keys = [
+            0x10, 0xA0, 0xA1, // Shift
+            0x11, 0xA2, 0xA3, // Ctrl
+            0x12, 0xA4, 0xA5, // Alt
+            0x5B, 0x5C,       // Win
+        ];
+        for k in release_keys.iter() {
+            inputs.push(INPUT {
+                type_: INPUT_KEYBOARD,
+                u: INPUT_UNION { ki: KEYBDINPUT { wVk: *k, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0x12345678 } },
+            });
+        }
+
+        // Зажимаем логический Ctrl
+        inputs.push(INPUT {
+            type_: INPUT_KEYBOARD,
+            u: INPUT_UNION { ki: KEYBDINPUT { wVk: VK_CONTROL, wScan: 0, dwFlags: 0, time: 0, dwExtraInfo: 0x12345678 } },
+        });
+        // Зажимаем C
+        inputs.push(INPUT {
+            type_: INPUT_KEYBOARD,
+            u: INPUT_UNION { ki: KEYBDINPUT { wVk: VK_C, wScan: 0, dwFlags: 0, time: 0, dwExtraInfo: 0x12345678 } },
+        });
+        // Отпускаем C
+        inputs.push(INPUT {
+            type_: INPUT_KEYBOARD,
+            u: INPUT_UNION { ki: KEYBDINPUT { wVk: VK_C, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0x12345678 } },
+        });
+        // Отпускаем логический Ctrl
+        inputs.push(INPUT {
+            type_: INPUT_KEYBOARD,
+            u: INPUT_UNION { ki: KEYBDINPUT { wVk: VK_CONTROL, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0x12345678 } },
+        });
+
+        SendInput(inputs.len() as u32, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32);
+    }
+}
+
+#[tauri::command]
+async fn capture_clipboard_text(app_handle: tauri::AppHandle, translate: bool) -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let backup = backup_clipboard().unwrap_or_default();
+        let _ = set_clipboard_text("");
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        simulate_ctrl_c();
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        
+        // После simulate_ctrl_c ОС считает модификаторы отжатыми (мы послали key-up через SendInput).
+        // Когда пользователь физически отпустит клавиши, ОС может не сгенерировать повторный key-up,
+        // и наши атомарные флаги залипнут в true. Сбрасываем их принудительно.
+        CTRL_PRESSED.store(false, Ordering::SeqCst);
+        SHIFT_PRESSED.store(false, Ordering::SeqCst);
+        ALT_PRESSED.store(false, Ordering::SeqCst);
+        
+        let text = get_clipboard_text_raw().unwrap_or_default();
+        let _ = restore_clipboard(backup);
+
+        if text.trim().is_empty() { return Ok("".to_string()); }
+
+        if translate {
+            let config = load_config_internal(&app_handle)?;
+            let translated = crate::translator::translate_hybrid(&text, &config.api_key, &config.ai_model).await?;
+            return Ok(translated);
+        }
+        Ok(text)
+    }
+    #[cfg(not(target_os = "windows"))]
+    { Err("Поддерживается только Windows".to_string()) }
+}
+
+#[tauri::command]
+fn set_ignore_cursor_events(window: tauri::Window, ignore: bool) -> Result<(), String> {
+    window.set_ignore_cursor_events(ignore).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[derive(serde::Serialize)]
@@ -1312,6 +1539,32 @@ async fn paste_text(app_handle: tauri::AppHandle, text: String) -> Result<bool, 
 
 #[tauri::command]
 #[cfg(target_os = "windows")]
+fn resize_window(window: tauri::Window, width: i32, height: i32) -> Result<(), String> {
+    if width <= 0 || height <= 0 {
+        return Err("Ширина и высота должны быть положительными".into());
+    }
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let hwnd = match window.window_handle().map_err(|e| e.to_string())?.as_raw() {
+        RawWindowHandle::Win32(handle) => handle.hwnd.get() as isize,
+        _ => return Err("Текущее окно не является Win32 HWND".into()),
+    };
+    #[link(name = "user32")]
+    extern "system" {
+        fn SetWindowPos(hWnd: isize, hWndInsertAfter: isize, X: i32, Y: i32, cx: i32, cy: i32, uFlags: u32) -> i32;
+    }
+    const SWP_NOMOVE: u32 = 0x0002;
+    const SWP_NOZORDER: u32 = 0x0004;
+    const SWP_NOACTIVATE: u32 = 0x0010;
+    const SWP_NOOWNERZORDER: u32 = 0x0200;
+    unsafe {
+        let res = SetWindowPos(hwnd, 0, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+        if res == 0 { return Err("Ошибка SetWindowPos".into()); }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+#[cfg(target_os = "windows")]
 fn resize_bottom_up_phys(
     window: tauri::Window,
     width: i32,
@@ -1361,6 +1614,9 @@ fn resize_bottom_up_phys(
             return Err("Ошибка при вызове SetWindowPos".into());
         }
     }
+    
+    // ПРИНУДИТЕЛЬНО восстанавливаем флаг TOPMOST, так как SetWindowPos может его сбить
+    let _ = window.set_always_on_top(true);
 
     Ok(())
 }
@@ -1474,6 +1730,26 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {}))
         .plugin(tauri_plugin_opener::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_shortcuts(["alt+q"])
+                .unwrap()
+                .with_handler(|app, shortcut, event| {
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        if shortcut.matches(tauri_plugin_global_shortcut::Modifiers::ALT, tauri_plugin_global_shortcut::Code::KeyQ) {
+                            if let Some(w) = app.get_webview_window("ocr") {
+                                if w.is_visible().unwrap_or(false) {
+                                    let _ = w.hide();
+                                } else {
+                                    let _ = w.show();
+                                    let _ = w.set_focus();
+                                }
+                            }
+                        }
+                    }
+                })
+                .build()
+        )
         .setup(|app| {
             // Сохраняем handle для отправки событий
             *APP_HANDLE.lock().unwrap() = Some(app.handle().clone());
@@ -1518,13 +1794,16 @@ pub fn run() {
             hide_capsule_window,
             show_widget_window,
             hide_widget_window,
+            resize_window,
             resize_bottom_up_phys,
             get_cursor_monitor,
             speak_edge_tts,
             read_clipboard_text,
             write_clipboard_text,
             get_cursor_pos,
-            set_click_region
+            set_click_region,
+            set_ignore_cursor_events,
+            capture_clipboard_text
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html class="dark" lang="ru">
+  <head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>SINC PRO - Виджет озвучки</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+    <style>
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0; padding: 0;
+        background: transparent;
+        width: 100vw; height: 100vh;
+        display: flex; align-items: flex-start; justify-content: center;
+        padding-top: 4px; /* Примагничен к верхней границе с небольшим отступом */
+      }
+
+      /* Анимация пульсации при воспроизведении */
+      .play-pulse { animation: pulse-glow 1.5s infinite; }
+      @keyframes pulse-glow {
+        0%, 100% { box-shadow: 0 0 8px rgba(142,82,255,0.5); transform: scale(1); }
+        50%       { box-shadow: 0 0 20px rgba(142,82,255,0.8); transform: scale(1.06); }
+      }
+
+      /* Dropdown-меню, открывающееся ВНИЗ (виджет в верхней части экрана) */
+      .dropdown-menu {
+        position: absolute;
+        top: calc(100% + 6px);
+        left: 0;
+        background: #1c1b23;
+        border: 1px solid rgba(142,82,255,0.3);
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          e.stopPropagation();
+          await window.__TAURI__.event.emit('open-history');
+        });
+        document.getElementById('widget-settings-trigger')?.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          await window.__TAURI__.event.emit('open-settings');
+        });
+        
+        // Капсула
+        const toggleCapsule = document.getElementById('widget-toggle-capsule');
+        if (toggleCapsule) {
+          toggleCapsule.addEventListener('change', async (e) => {
+            const win = WebviewWindow.getByLabel('capsule');
+            if (win) { e.target.checked ? await win.show() : await win.hide(); }
+          });
+        }
+        window.__TAURI__.event.listen('capsule-visibility-changed', (event) => {
+          if (toggleCapsule) toggleCapsule.checked = event.payload;
+        });
+
+        window.__TAURI__.event.emit('widget-visibility-changed', true);
+        appWindow.onCloseRequested(async () => {
+          window.__TAURI__.event.emit('widget-visibility-changed', false);
+        });
+        
+        // Drag logic
+        let savePositionTimer = null;
+        document.getElementById('widget-container').addEventListener('mousedown', (e) => {
+          if (e.buttons === 1 && !e.target.closest('button') && !e.target.closest('input') && !e.target.closest('.dropdown-menu')) {
+            appWindow.startDragging();
+          }
+        });
+      }
+
+      // Установка правильного click region при старте
+      document.addEventListener('DOMContentLoaded', () => {
+        setTimeout(updateWindowSize, 100);
+      });
+    </script>
+  </body>
+</html>
+

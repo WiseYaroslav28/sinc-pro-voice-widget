@@ -1,0 +1,376 @@
+// voice-core.js
+// Единое ядро логики Озвучки (TTS) и управления состоянием плеера
+// Обеспечивает потоковое воспроизведение, расчет умного таймлайна и синхронизацию состояний.
+
+class VoiceCore {
+    constructor() {
+        this.currentText = "";
+        this.sentences = [];
+        this.audioBuffers = []; // Base64 strings for each sentence
+        this.audioDurations = []; // Durations for smart timeline
+        
+        this.currentSentenceIndex = 0;
+        this.isPlaying = false;
+        this.isPaused = false;
+        this.isPrefetching = false; // Флаг работы фоновой очереди
+        
+        // Настройки по умолчанию
+        const savedSettings = JSON.parse(localStorage.getItem('tts-settings') || '{}');
+        this.settings = {
+            voice: savedSettings.voice || 'ru-RU-SvetlanaNeural',
+            speed: savedSettings.speed || 1.0,
+            translate: savedSettings.translate || false
+        };
+
+        this.audioElement = new Audio();
+        this.audioElement.playbackRate = this.settings.speed;
+        
+        // Слушатели событий
+        this.onProgress = null;       // (percentBuffered, percentPlayed)
+        this.onSentenceActive = null; // (index)
+        this.onStateChange = null;    // (isPlaying, isPaused)
+        this.onSettingsSync = null;   // (settingsObj)
+
+        this.setupAudioEvents();
+        this.setupTauriSync();
+        
+        setTimeout(() => {
+            this.broadcastState('settings', this.settings);
+        }, 500);
+    }
+
+    cleanText(text) {
+        if (!text) return "";
+        let cleaned = text.trim();
+        // Убираем кавычки, если нейросеть вернула текст в них
+        if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
+            cleaned = cleaned.substring(1, cleaned.length - 1).trim();
+        }
+        if (cleaned.startsWith('«') && cleaned.endsWith('»')) {
+            cleaned = cleaned.substring(1, cleaned.length - 1).trim();
+        }
+        return cleaned;
+    }
+
+    splitIntoSentences(text) {
+        text = this.cleanText(text);
+        if (!text) return [];
+
+        let processed = text;
+        // Защищаем числа (3.3)
+        processed = processed.replace(/(\d)\.(\d)/g, "$1<DOT>$2");
+        // Защищаем нумерацию списков (1., 2.)
+        processed = processed.replace(/(^\s*\d+)\./gm, "$1<DOT>");
+        processed = processed.replace(/(\s\d+)\./g, "$1<DOT>");
+        // Защищаем аббревиатуры
+        processed = processed.replace(/т\.к\./gi, "т<DOT>к<DOT>");
+        processed = processed.replace(/т\.д\./gi, "т<DOT>д<DOT>");
+        processed = processed.replace(/т\.е\./gi, "т<DOT>е<DOT>");
+        processed = processed.replace(/т\.п\./gi, "т<DOT>п<DOT>");
+        processed = processed.replace(/г\./gi, "г<DOT>");
+        processed = processed.replace(/ул\./gi, "ул<DOT>");
+        processed = processed.replace(/пр\./gi, "пр<DOT>");
+        // Защищаем многоточия
+        processed = processed.replace(/\.\.\./g, "<ELLIPSIS>");
+        
+        // Разбиваем по концам предложений ИЛИ по символам переноса строки (\n)
+        let rawSentences = processed.split(/(?<=[.!?])\s+(?=[A-ZА-ЯЁ])|\n+/);
+        
+        let sentences = [];
+        for (let s of rawSentences) {
+            s = s.replace(/<DOT>/g, ".");
+            s = s.replace(/<ELLIPSIS>/g, "...");
+            if (s.trim().length > 0) sentences.push(s.trim());
+        }
+        return sentences;
+    }
+
+    loadText(text) {
+        this.stop(); // Жесткая остановка старого воспроизведения при загрузке нового текста
+        this.isPrefetching = false; // Останавливаем старую очередь загрузки
+        this.currentText = this.cleanText(text);
+        this.sentences = this.splitIntoSentences(this.currentText);
+        this.audioBuffers = new Array(this.sentences.length).fill(null);
+        this.audioDurations = new Array(this.sentences.length).fill(0);
+        this.currentSentenceIndex = 0;
+        this.isPlaying = false;
+        this.isPaused = false;
+        this.notifyState();
+        
+        // Запускаем фоновую последовательную загрузку ВСЕХ предложений
+        if (this.sentences.length > 0) {
+            this.startPrefetchQueue();
+        }
+    }
+
+    appendText(text) {
+        if (!text || !text.trim()) return;
+        const cleaned = this.cleanText(text);
+        this.currentText += '\n\n' + cleaned;
+        
+        const newSentences = this.splitIntoSentences(cleaned);
+        if (newSentences.length === 0) return;
+        
+        this.sentences.push(...newSentences);
+        this.audioBuffers.push(...new Array(newSentences.length).fill(null));
+        this.audioDurations.push(...new Array(newSentences.length).fill(0));
+        
+        this.updateProgress();
+        
+        // Перезапускаем очередь загрузки, если она остановилась
+        if (!this.isPrefetching) {
+            this.startPrefetchQueue();
+        }
+    }
+
+    async startPrefetchQueue() {
+        // Уникальный ID для каждой очереди загрузки
+        const queueId = Date.now() + Math.random();
+        this.currentQueueId = queueId;
+
+        // Если очередь уже идет, она прервется, так как мы изменили currentQueueId
+        // Дадим ей миллисекунду на завершение (чтобы не дублировать логику)
+        await new Promise(r => setTimeout(r, 10));
+
+        this.isPrefetching = true;
+        const currentBuffersRef = this.audioBuffers;
+
+        for (let i = 0; i < this.sentences.length; i++) {
+            if (this.currentQueueId !== queueId || this.audioBuffers !== currentBuffersRef) {
+                return; // Очередь прервана новым вызовом, НЕ ставим isPrefetching = false
+            }
+            
+            if (!this.audioBuffers[i]) {
+                try {
+                    if (window.__TAURI__) {
+                        const base64Audio = await window.__TAURI__.core.invoke('speak_edge_tts', {
+                            text: this.sentences[i],
+                            voice: this.settings.voice,
+                            rate: 1.0 // ВСЕГДА 1.0x на сервере. Реальная скорость управляется в audioElement.playbackRate
+                        });
+                        
+                        if (this.audioBuffers === currentBuffersRef) {
+                            this.audioBuffers[i] = `data:audio/mp3;base64,${base64Audio}`;
+                            this.updateProgress(); // Обновляем шкалу загрузки
+                            
+                            // Если плеер стоит на месте и ждет именно этот буфер - запускаем
+                            console.log('[VoiceCore] prefetch done i=' + i + ' isPlaying=' + this.isPlaying + ' currentIdx=' + this.currentSentenceIndex + ' paused=' + this.audioElement.paused);
+                            if (this.isPlaying && this.currentSentenceIndex === i && this.audioElement.paused) {
+                                console.log('[VoiceCore] prefetch -> triggering playCurrentSentence()');
+                                this.playCurrentSentence();
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.error("Prefetch error at index " + i + ":", err);
+                    if (window.showToast) window.showToast("Ошибка TTS: " + err, true);
+                    this.audioBuffers[i] = "ERROR"; // Помечаем как ошибку, чтобы плеер мог перепрыгнуть
+                    
+                    // Если плеер ждет этот кусок, перепрыгиваем
+                    if (this.isPlaying && this.currentSentenceIndex === i && this.audioElement.paused) {
+                        this.currentSentenceIndex++;
+                        this.playCurrentSentence();
+                    }
+                    continue; // Продолжаем качать остальные предложения
+                }
+            }
+        }
+        this.isPrefetching = false;
+    }
+
+    seek(index) {
+        if (index >= 0 && index < this.sentences.length) {
+            this.currentSentenceIndex = index;
+            if (this.isPlaying) {
+                this.audioElement.pause();
+                this.playCurrentSentence();
+            } else {
+                this.updateProgress();
+                if (this.onSentenceActive) this.onSentenceActive(this.currentSentenceIndex);
+            }
+        }
+    }
+
+    async play() {
+        console.log('[VoiceCore] play() called, sentences=' + this.sentences.length);
+        if (this.sentences.length === 0) {
+            this.stop(); 
+            this.broadcastState('stop');
+            return;
+        }
+        
+        this.isPlaying = true;
+        this.isPaused = false;
+        this.notifyState();
+
+        const hasSrc = this.audioElement.hasAttribute('src');
+        const ended = this.audioElement.ended;
+        const paused = this.audioElement.paused;
+        console.log('[VoiceCore] play() state: hasSrc=' + hasSrc + ' ended=' + ended + ' paused=' + paused);
+
+        if (hasSrc && !ended && paused) {
+            console.log('[VoiceCore] play() -> resuming audio');
+            this.audioElement.play().catch(e => {
+                console.error("Audio play error:", e);
+                if (e.name === 'NotAllowedError') {
+                    if (window.showToast) window.showToast("Кликните в любое место программы для разблокировки звука", true);
+                    this.pause();
+                }
+            });
+        } else {
+            console.log('[VoiceCore] play() -> playCurrentSentence()');
+            this.playCurrentSentence();
+        }
+    }
+
+    pause() {
+        this.isPlaying = false;
+        this.isPaused = true;
+        this.audioElement.pause();
+        this.notifyState();
+    }
+
+    stop() {
+        this.isPlaying = false;
+        this.isPaused = false;
+        this.audioElement.pause();
+        this.audioElement.removeAttribute('src'); // Правильное удаление ресурса
+        this.currentSentenceIndex = 0; // Полный сброс к началу
+        this.notifyState();
+        if (this.onProgress) this.onProgress(0, 0);
+        if (this.onSentenceActive) this.onSentenceActive(-1);
+    }
+
+    async playCurrentSentence() {
+        console.log('[VoiceCore] playCurrentSentence() index=' + this.currentSentenceIndex + ' isPlaying=' + this.isPlaying);
+        if (!this.isPlaying) return;
+        
+        if (this.currentSentenceIndex >= this.sentences.length) {
+            this.stop(); // Естественное окончание текста
+            return;
+        }
+
+        if (this.onSentenceActive) {
+            this.onSentenceActive(this.currentSentenceIndex);
+        }
+
+        // Если аудио уже скачано
+        const bufferState = this.audioBuffers[this.currentSentenceIndex] ? (this.audioBuffers[this.currentSentenceIndex] === 'ERROR' ? 'ERROR' : 'READY') : 'NULL';
+        console.log('[VoiceCore] playCurrentSentence() buffer=' + bufferState);
+        if (this.audioBuffers[this.currentSentenceIndex]) {
+            if (this.audioBuffers[this.currentSentenceIndex] === "ERROR") {
+                this.currentSentenceIndex++;
+                this.playCurrentSentence();
+                return;
+            }
+            this.audioElement.src = this.audioBuffers[this.currentSentenceIndex];
+            this.audioElement.playbackRate = this.settings.speed;
+            console.log('[VoiceCore] playCurrentSentence() calling audioElement.play()');
+            this.audioElement.play().catch(e => {
+                console.error('[VoiceCore] Audio play FAILED:', e.name, e.message);
+                if (e.name === 'NotAllowedError') {
+                    if (window.showToast) window.showToast("Кликните в любое место программы для разблокировки звука", true);
+                    this.pause();
+                }
+            });
+        } else {
+            console.log('[VoiceCore] playCurrentSentence() buffer not ready, waiting for prefetch...');
+        }
+        this.updateProgress();
+    }
+
+    setupAudioEvents() {
+        this.audioElement.addEventListener('ended', () => {
+            if (this.isPlaying) {
+                this.currentSentenceIndex++;
+                this.playCurrentSentence();
+            }
+        });
+
+        this.audioElement.addEventListener('timeupdate', () => {
+            this.updateProgress();
+        });
+    }
+
+    setupTauriSync() {
+        if (!window.__TAURI__) return;
+        
+        window.__TAURI__.event.listen('tts-state-sync', (event) => {
+            if (event.payload) {
+                const p = event.payload;
+                if (p.action === 'play') {
+                    if (!this.isPlaying) this.play();
+                } else if (p.action === 'pause') {
+                    if (this.isPlaying) this.pause();
+                } else if (p.action === 'stop') {
+                    this.stop();
+                } else if (p.action === 'load') {
+                    if (this.currentText !== this.cleanText(p.text)) {
+                        this.loadText(p.text);
+                    }
+                } else if (p.action === 'append') {
+                    this.appendText(p.text);
+                } else if (p.action === 'settings' || p.action === 'setting') {
+                    if (p.settings) {
+                        this.settings = p.settings;
+                    } else {
+                        if (p.speed !== undefined) this.settings.speed = p.speed;
+                        if (p.voice !== undefined) this.settings.voice = p.voice;
+                        if (p.translate !== undefined) this.settings.translate = p.translate;
+                    }
+                    if (this.isPlaying && p.speed !== undefined) {
+                        this.audioElement.playbackRate = this.settings.speed;
+                    }
+                    localStorage.setItem('tts-settings', JSON.stringify(this.settings));
+                    if (this.onSettingsSync) this.onSettingsSync(this.settings);
+                }
+            }
+        });
+    }
+
+    notifyState() {
+        if (this.onStateChange) {
+            this.onStateChange(this.isPlaying, this.isPaused);
+        }
+    }
+
+    broadcastState(action, extra = {}) {
+        if (!window.__TAURI__) return;
+        window.__TAURI__.event.emit('tts-state-sync', { action, ...extra });
+    }
+
+    updateProgress() {
+        if (!this.onProgress || this.sentences.length === 0) return;
+        
+        let totalChars = this.currentText.length;
+        if (totalChars === 0) return;
+
+        let bufferedChars = 0;
+        let playedCharsBeforeCurrent = 0;
+
+        for (let i = 0; i < this.sentences.length; i++) {
+            if (this.audioBuffers[i]) {
+                bufferedChars += this.sentences[i].length;
+            }
+            if (i < this.currentSentenceIndex) {
+                playedCharsBeforeCurrent += this.sentences[i].length;
+            }
+        }
+
+        const percentBuffered = (bufferedChars / totalChars) * 100;
+        
+        let currentSentenceChars = this.sentences[this.currentSentenceIndex] ? this.sentences[this.currentSentenceIndex].length : 0;
+        let currentAudioProgress = 0;
+        
+        if (this.audioElement.duration && !isNaN(this.audioElement.duration)) {
+            currentAudioProgress = this.audioElement.currentTime / this.audioElement.duration;
+        }
+
+        const playedChars = playedCharsBeforeCurrent + (currentSentenceChars * currentAudioProgress);
+        const percentPlayed = (playedChars / totalChars) * 100;
+
+        this.onProgress(percentBuffered, percentPlayed);
+    }
+}
+
+window.VoiceCore = VoiceCore;

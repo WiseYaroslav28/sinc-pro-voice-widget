@@ -1,354 +1,172 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ru">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="stylesheet" href="styles.css" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SINC PRO - Экранный переводчик</title>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <style>
-      body {
-        background: rgba(11, 11, 16, 0.4); /* Полупрозрачный фон для эффекта оверлея */
-      }
-      
-      /* Контейнер для текстовой области */
-      .text-sandbox {
-        position: absolute;
-        top: 150px;
-        left: 80px;
-        width: 600px;
-        height: 300px;
-        line-height: 50px; /* Межстрочный интервал */
-      }
+<head>
+  <meta charset="UTF-8">
+  <title>SINC LENS</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    body {
+      background-color: transparent !important;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      pointer-events: none; /* clicks pass through the body */
+    }
+    
+    #lens-container {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      border: 3px solid rgba(142, 82, 255, 0.4);
+      box-shadow: inset 0 0 15px rgba(142, 82, 255, 0.2), 0 0 15px rgba(142, 82, 255, 0.2);
+      border-radius: 12px;
+      box-sizing: border-box;
+      pointer-events: none;
+      transition: border 0.2s, box-shadow 0.2s;
+    }
 
-      /* Группа слов предложения */
-      .sentence-group {
-        display: inline;
-      }
+    #toolbar-island {
+      position: absolute;
+      background: rgba(11, 12, 16, 0.7);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(142, 82, 255, 0.3);
+      border-radius: 9999px; /* pill shape */
+      padding: 6px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      pointer-events: auto;
+      z-index: 50;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
 
-      .ocr-word-span {
-        position: static; /* Используем относительное позиционирование в потоке, чтобы JS мог считать координаты */
-        display: inline-block;
-        font-family: var(--font-main);
-        font-size: 16px;
-        color: var(--text-primary);
-        cursor: pointer;
-        background-color: var(--bg-deep); /* Непрозрачный фон для маскирования нити */
-        border: 1px solid rgba(255,255,255,0.05);
-        padding: 0 6px;
-        margin: 0 4px;
-        border-radius: 4px;
-        transition: transform var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
-      }
+    /* Docking Positions */
+    .dock-tl { top: 16px; left: 16px; transform: none; }
+    .dock-tr { top: 16px; left: calc(100% - 16px); transform: translateX(-100%); }
+    .dock-bl { top: calc(100% - 16px); left: 16px; transform: translateY(-100%); }
+    .dock-br { top: calc(100% - 16px); left: calc(100% - 16px); transform: translate(-100%, -100%); }
 
-      .ocr-word-span:hover {
-        transform: scale(1.08);
-        color: #FFFFFF;
-        border-color: var(--color-purple);
-      }
+    /* Crosshair */
+    .crosshair-center {
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 40px; height: 40px;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+    .crosshair-center::before, .crosshair-center::after {
+      content: '';
+      position: absolute;
+      background: rgba(142, 82, 255, 0.5);
+    }
+    .crosshair-center::before { top: 19px; left: 0; width: 40px; height: 2px; }
+    .crosshair-center::after { left: 19px; top: 0; width: 2px; height: 40px; }
 
-      /* Стили для SVG нитей */
-      .thread-path {
-        fill: none;
-        stroke-dasharray: 4, 3;
-        stroke-linecap: round;
-        transition: stroke-width var(--transition-fast), opacity var(--transition-fast);
-      }
+    .icon-btn {
+      background: none; border: none; padding: 6px; cursor: pointer;
+      border-radius: 8px; display: flex; align-items: center; justify-content: center;
+      transition: all 0.2s;
+    }
+    .icon-btn svg { width: 20px; height: 20px; fill: #ccc3d8; transition: fill 0.2s; }
+    .icon-btn:hover { background: rgba(255,255,255,0.1); }
+    .icon-btn:hover svg { fill: #fff; }
+    .icon-btn.highlight svg { fill: #00FF66; }
+    .icon-btn.highlight:hover { background: rgba(0, 255, 102, 0.1); }
+    .icon-btn.highlight:hover svg { fill: #00FF66; filter: drop-shadow(0 0 8px rgba(0,255,102,0.6)); }
+    .icon-btn.danger:hover { background: rgba(255, 0, 85, 0.1); }
+    .icon-btn.danger:hover svg { fill: #FF0055; filter: drop-shadow(0 0 8px rgba(255,0,85,0.6)); }
 
-      /* Подсветка активного предложения */
-      .sentence-group:hover ~ .ocr-threads-svg .thread-path {
-        opacity: 0.15;
-      }
-      
-      /* Стили оверлея Gemini */
-      .gemini-ocr-panel {
-        background: rgba(27, 27, 37, 0.85);
-        backdrop-filter: blur(20px);
-        border: var(--border-glow);
-        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
-      }
-    </style>
-  </head>
+    #svg-canvas {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10;
+    }
+    #words-container {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 20;
+    }
+    .hover-word {
+      position: absolute;
+      pointer-events: auto;
+      cursor: pointer;
+      background: rgba(255,255,255,0.01);
+      border-radius: 4px;
+      transition: background 0.2s;
+    }
+    .hover-word:hover {
+      background: rgba(255, 255, 255, 0.15);
+      box-shadow: 0 0 8px rgba(255, 255, 255, 0.3);
+    }
 
-  <body>
-    <!-- 1. Панель управления оверлеем вверху -->
-    <div class="ocr-control-panel glass-panel">
-      <button class="ocr-mode-btn active" id="btn-lock-mode">
-        <i data-lucide-name="lock" style="width: 14px; height: 14px;"></i>
-        <span>Режим блокировки</span>
+    #tooltip {
+      position: fixed;
+      background: rgba(11, 12, 16, 0.9);
+      color: #fff; padding: 6px 12px; border-radius: 6px;
+      font-size: 13px; font-weight: 500;
+      pointer-events: none; opacity: 0; z-index: 100;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      border: 1px solid rgba(142, 82, 255, 0.4);
+      backdrop-filter: blur(8px);
+      transition: opacity 0.2s;
+      white-space: pre-wrap;
+      max-width: 300px;
+    }
+
+    /* Resize Handles */
+    .resize-handle {
+      position: absolute;
+      background: transparent;
+      pointer-events: auto;
+      z-index: 60;
+    }
+    .resize-n { top: -5px; left: 10px; right: 10px; height: 10px; cursor: n-resize; }
+    .resize-s { bottom: -5px; left: 10px; right: 10px; height: 10px; cursor: s-resize; }
+    .resize-e { top: 10px; bottom: 10px; right: -5px; width: 10px; cursor: e-resize; }
+    .resize-w { top: 10px; bottom: 10px; left: -5px; width: 10px; cursor: w-resize; }
+    .resize-nw { top: -5px; left: -5px; width: 15px; height: 15px; cursor: nw-resize; }
+    .resize-ne { top: -5px; right: -5px; width: 15px; height: 15px; cursor: ne-resize; }
+    .resize-sw { bottom: -5px; left: -5px; width: 15px; height: 15px; cursor: sw-resize; }
+    .resize-se { bottom: -5px; right: -5px; width: 15px; height: 15px; cursor: se-resize; }
+  </style>
+</head>
+<body>
+
+  <div id="lens-container">
+    <div class="crosshair-center"></div>
+
+    <div id="toolbar-island" class="dock-br">
+      <!-- Scan (AI) -->
+      <button id="btn-scan" class="icon-btn highlight" title="Сканировать экран">        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z"/></svg>
       </button>
-      <button class="ocr-mode-btn" id="btn-pass-mode">
-        <i data-lucide-name="mouse-pointer" style="width: 14px; height: 14px;"></i>
-        <span>Сквозной клик</span>
+
+      <div class="w-[1px] h-5 bg-[#4a4455] mx-1"></div>
+
+      <!-- Dock Toggle -->
+      <button id="btn-dock" class="icon-btn" title="Переместить панель">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M15 3l2.3 2.3-2.89 2.87 1.42 1.42L18.7 6.7 21 9V3h-6zM3 9l2.3-2.3 2.87 2.89 1.42-1.42L6.7 5.3 9 3H3v6zm6 12l-2.3-2.3 2.89-2.87-1.42-1.42L5.3 17.3 3 15v6h6zm12-6l-2.3 2.3-2.87-2.89-1.42 1.42 2.89 2.87L15 21h6v-6z"/></svg>
       </button>
-      <div class="widget-divider"></div>
-      <button class="action-btn" id="btn-ask-gemini">
-        <i data-lucide-name="sparkles" style="width: 14px; height: 14px; color: var(--color-purple);"></i>
-        <span>Спросить Gemini</span>
-      </button>
-      <button id="ocr-close" style="background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; margin-left: auto;">
-        <i data-lucide-name="x" style="width: 16px; height: 16px;"></i>
+
+      <!-- Close -->
+      <button id="btn-close" class="icon-btn danger" title="Закрыть">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
       </button>
     </div>
 
-    <!-- 2. SVG-холст для нитей (подложка под текстом) -->
-    <svg class="ocr-threads-svg" id="threads-svg">
-      <defs>
-        <!-- Маркеры будут рисоваться динамически в JS для лучшего позиционирования -->
-      </defs>
-    </svg>
+    <!-- Resize handles -->
+    <div class="resize-handle resize-n" id="res-n"></div>
+    <div class="resize-handle resize-s" id="res-s"></div>
+    <div class="resize-handle resize-e" id="res-e"></div>
+    <div class="resize-handle resize-w" id="res-w"></div>
+    <div class="resize-handle resize-nw" id="res-nw"></div>
+    <div class="resize-handle resize-ne" id="res-ne"></div>
+    <div class="resize-handle resize-sw" id="res-sw"></div>
+    <div class="resize-handle resize-se" id="res-se"></div>
 
-    <!-- 3. Текстовая песочница для демонстрации OCR -->
-    <div class="text-sandbox" id="text-sandbox">
-      <!-- Предложение 1 (Фиолетовая нить) -->
-      <span class="sentence-group" data-sentence-id="s1" data-color="#8E52FF">
-        <span class="ocr-word-span">Мы</span>
-        <span class="ocr-word-span">спроектировали</span>
-        <span class="ocr-word-span">новый</span>
-        <span class="ocr-word-span">способ</span>
-      </span>
+    <svg id="svg-canvas"></svg>
+    <div id="words-container"></div>
+  </div>
 
-      <!-- Предложение 2 (Тиловая нить - переносится на 2 строки) -->
-      <span class="sentence-group" data-sentence-id="s2" data-color="#45A29E">
-        <span class="ocr-word-span">связи</span>
-        <span class="ocr-word-span">слов</span>
-        <span class="ocr-word-span">в</span>
-        <span class="ocr-word-span">одном</span>
-        <span class="ocr-word-span">предложении</span>
-        <span class="ocr-word-span">с</span>
-        <span class="ocr-word-span">помощью</span>
-        <span class="ocr-word-span">тонких</span>
-        <span class="ocr-word-span">интерактивных</span>
-        <span class="ocr-word-span">нитей</span>
-        <span class="ocr-word-span">и</span>
-        <span class="ocr-word-span">плавных</span>
-        <span class="ocr-word-span">кривых</span>
-        <span class="ocr-word-span">Безье</span>
-        <span class="ocr-word-span">в</span>
-        <span class="ocr-word-span">межстрочных</span>
-        <span class="ocr-word-span">интервалах.</span>
-      </span>
+  <div id="tooltip"></div>
 
-      <!-- Предложение 3 (Коралловая нить) -->
-      <span class="sentence-group" data-sentence-id="s3" data-color="#F05454">
-        <span class="ocr-word-span">Все</span>
-        <span class="ocr-word-span">буквы</span>
-        <span class="ocr-word-span">оригинального</span>
-        <span class="ocr-word-span">текста</span>
-        <span class="ocr-word-span">остаются</span>
-        <span class="ocr-word-span">полностью</span>
-        <span class="ocr-word-span">читаемыми.</span>
-      </span>
-    </div>
-
-    <!-- 4. Панель Ask Gemini сбоку -->
-    <div class="gemini-ocr-panel" id="gemini-panel">
-      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
-        <i data-lucide-name="sparkles" style="color: var(--color-purple); width: 18px; height: 18px;"></i>
-        <h3 style="font-size: 14px; font-weight: 600; color: #FFFFFF;">Сводка и Анализ Gemini</h3>
-      </div>
-      
-      <div style="flex-grow: 1; overflow-y: auto; font-size: 12px; line-height: 1.5; color: var(--text-secondary); display: flex; flex-direction: column; gap: 8px;">
-        <p><strong>Определенный язык:</strong> Русский (RU)</p>
-        <p style="background: rgba(142, 82, 255, 0.08); padding: 8px; border-radius: 6px; border: var(--border-light);">
-          Выделенный фрагмент описывает технологию <em>Flow Threads v3.5</em>, в которой слова нанизываются на SVG-нити. Для предотвращения перекрытия букв линии прерываются непосредственно на границах слов и отрисовываются только в свободных зонах.
-        </p>
-        <p style="color: var(--text-muted); font-size: 11px;">* Наведите на любое предложение, чтобы подсветить соответствующую нить и сфокусировать внимание.</p>
-      </div>
-
-      <div style="margin-top: 12px; display: flex; gap: 6px;">
-        <button class="action-btn" style="flex-grow: 1; font-size: 11px; justify-content: center;"><i data-lucide-name="copy" style="width: 12px; height: 12px;"></i><span>Копировать</span></button>
-        <button class="action-btn" style="flex-grow: 1; font-size: 11px; justify-content: center;"><i data-lucide-name="volume-2" style="width: 12px; height: 12px;"></i><span>Озвучить</span></button>
-      </div>
-    </div>
-
-    <script>
-      // Функция безопасного вызова Lucide
-      function updateIcons() {
-        if (typeof lucide !== 'undefined') {
-          try {
-            lucide.createIcons();
-          } catch (e) {
-            console.error('Ошибка Lucide:', e);
-          }
-        }
-      }
-
-      // Инициализация Lucide иконок
-      updateIcons();
-
-      // Логика кнопок управления
-      const btnLock = document.getElementById('btn-lock-mode');
-      const btnPass = document.getElementById('btn-pass-mode');
-
-      btnLock.addEventListener('click', () => {
-        btnLock.classList.add('active');
-        btnPass.classList.remove('active');
-      });
-
-      btnPass.addEventListener('click', () => {
-        btnPass.classList.add('active');
-        btnLock.classList.remove('active');
-      });
-
-      if (window.__TAURI__) {
-        const appWindow = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
-        document.getElementById('ocr-close').addEventListener('click', () => {
-          appWindow.close();
-        });
-
-        // Добавляем перетаскивание окна за панель управления
-        const controlPanel = document.querySelector('.ocr-control-panel');
-        if (controlPanel) {
-          controlPanel.addEventListener('mousedown', (e) => {
-            // Разрешаем перетаскивание только если кликнули левой кнопкой мыши
-            // и не по кнопке/инпуту внутри панели
-            if (e.buttons === 1 && !e.target.closest('button')) {
-              appWindow.startDragging();
-            }
-          });
-        }
-      }
-
-      // ==========================================================================
-      // ПРОГРАММНЫЙ АЛГОРИТМ РЕНДЕРИНГА ЖЕМЧУЖНЫХ НИТЕЙ OCR (SVG)
-      // ==========================================================================
-      const svg = document.getElementById('threads-svg');
-      const sentences = document.querySelectorAll('.sentence-group');
-
-      function drawThreads() {
-        // Очищаем предыдущие пути и маркеры
-        const paths = svg.querySelectorAll('.thread-path, .thread-marker');
-        paths.forEach(p => p.remove());
-
-        sentences.forEach(sGroup => {
-          const sId = sGroup.getAttribute('data-sentence-id');
-          const color = sGroup.getAttribute('data-color');
-          const words = sGroup.querySelectorAll('.ocr-word-span');
-          if (words.length === 0) return;
-
-          let pathData = "";
-          let firstWord = true;
-
-          // Массив для хранения точек начала и конца каждого отрисованного отрезка
-          for (let i = 0; i < words.length - 1; i++) {
-            const wordN = words[i];
-            const wordNext = words[i + 1];
-
-            const rectN = wordN.getBoundingClientRect();
-            const rectNext = wordNext.getBoundingClientRect();
-
-            // Координаты выхода из текущего слова (правый центр)
-            const exitX = rectN.right;
-            const exitY = rectN.top + rectN.height / 2;
-
-            // Координаты входа в следующее слово (левый центр)
-            const enterX = rectNext.left;
-            const enterY = rectNext.top + rectNext.height / 2;
-
-            // Определяем, на одной ли строке находятся слова
-            const onSameLine = Math.abs(rectN.top - rectNext.top) < 15;
-
-            if (onSameLine) {
-              // Рисуем простую прямую линию в промежутке между словами
-              pathData += ` M ${exitX} ${exitY} L ${enterX} ${enterY}`;
-            } else {
-              // Слова на разных строках: строим плавный обход по Безье
-              const interLineY = exitY + (rectNext.top - rectN.bottom) / 2 + 4; // Середина межстрочного интервала
-
-              // Точки контроля Безье справа
-              const controlRightX = exitX + 25;
-              
-              // Точки контроля Безье слева
-              const controlLeftX = enterX - 25;
-
-              // Строим путь: 
-              // 1. Выходим вправо и загибаем Безье вниз
-              // 2. Идем горизонтально по межстрочному интервалу влево
-              // 3. Загибаем Безье вниз к началу слова на новой строке
-              pathData += ` M ${exitX} ${exitY}`;
-              pathData += ` C ${controlRightX} ${exitY}, ${controlRightX} ${interLineY}, ${exitX} ${interLineY}`;
-              pathData += ` L ${enterX} ${interLineY}`;
-              pathData += ` C ${controlLeftX} ${interLineY}, ${controlLeftX} ${enterY}, ${enterX} ${enterY}`;
-            }
-
-            // Рисуем маркер НАЧАЛА предложения (круг) у левого края первого слова
-            if (firstWord) {
-              const startX = rectN.left;
-              const startY = rectN.top + rectN.height / 2;
-              createCircleMarker(startX, startY, color);
-              firstWord = false;
-            }
-
-            // Рисуем маркер КОНЦА предложения (квадрат) у правого края последнего слова в конце цикла
-            if (i === words.length - 2) {
-              const endX = rectNext.right;
-              const endY = rectNext.top + rectNext.height / 2;
-              createSquareMarker(endX, endY, color);
-            }
-          }
-
-          // Добавляем путь на SVG-холст
-          const pathEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
-          pathEl.setAttribute("d", pathData);
-          pathEl.setAttribute("stroke", color);
-          pathEl.setAttribute("stroke-width", "1.5");
-          pathEl.setAttribute("class", "thread-path");
-          pathEl.setAttribute("id", `path-${sId}`);
-          svg.appendChild(pathEl);
-
-          // Добавляем интерактивность: подсветка нити при наведении на слова
-          sGroup.addEventListener('mouseenter', () => {
-            pathEl.setAttribute("stroke-width", "2.5");
-            pathEl.style.filter = `drop-shadow(0 0 4px ${color})`;
-            pathEl.style.opacity = "1";
-            
-            // Гасим остальные нити
-            document.querySelectorAll('.thread-path').forEach(p => {
-              if (p !== pathEl) p.style.opacity = "0.1";
-            });
-          });
-
-          sGroup.addEventListener('mouseleave', () => {
-            pathEl.setAttribute("stroke-width", "1.5");
-            pathEl.style.filter = "none";
-            
-            // Восстанавливаем прозрачность
-            document.querySelectorAll('.thread-path').forEach(p => {
-              p.style.opacity = "0.6";
-            });
-          });
-        });
-      }
-
-      // Создание круглого маркера начала
-      function createCircleMarker(x, y, color) {
-        const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        circle.setAttribute("cx", x);
-        circle.setAttribute("cy", y);
-        circle.setAttribute("r", "3.5");
-        circle.setAttribute("fill", "transparent");
-        circle.setAttribute("stroke", color);
-        circle.setAttribute("stroke-width", "1.5");
-        circle.setAttribute("class", "thread-marker");
-        svg.appendChild(circle);
-      }
-
-      // Создание квадратного маркера конца
-      function createSquareMarker(x, y, color) {
-        const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-        rect.setAttribute("x", x - 2);
-        rect.setAttribute("y", y - 2);
-        rect.setAttribute("width", "4");
-        rect.setAttribute("height", "4");
-        rect.setAttribute("fill", color);
-        rect.setAttribute("class", "thread-marker");
-        svg.appendChild(rect);
-      }
-
-      // Инициализируем отрисовку при загрузке и ресайзе
-      window.addEventListener('load', drawThreads);
-      window.addEventListener('resize', drawThreads);
-    </script>
-  </body>
+  <script src="ocr.js"></script>
+</body>
 </html>
+

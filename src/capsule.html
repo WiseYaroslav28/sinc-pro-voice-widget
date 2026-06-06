@@ -446,7 +446,7 @@
       let audioChunks = [];
       let recordingInterval = null;
       let recordSeconds = 0;
-      let currentPreset = 'summary'; 
+       
       let currentState = 'idle';
       let isMouseOver = false;
 
@@ -569,6 +569,8 @@
         ).join('');
       }
 
+      let currentPreset = localStorage.getItem('capsulePreset') || 'summary';
+
       // Привязывает обработчик к вееру через event delegation
       function bindPresetFan(containerId, attrName, onSelect) {
         const el = document.getElementById(containerId);
@@ -582,6 +584,7 @@
             openCustomPromptWindow();
           } else {
             currentPreset = preset;
+            localStorage.setItem('capsulePreset', preset);
             syncPresetUI(currentPreset);
             if (onSelect) onSelect(preset);
           }
@@ -1121,6 +1124,10 @@
 
             if (isError) {
               handleSendError(resultText);
+            } else if (!resultText || resultText.trim().length === 0) {
+              isSending = false;
+              showToast('ИИ: пустой ответ', true);
+              switchState('idle');
             } else {
               handleSendSuccess(resultText);
             }
@@ -1327,23 +1334,43 @@
           isHeld = true;
           const now = Date.now();
           if (currentState === 'cancel-confirm') { stopCancelCountdownAndRestore(); isHeld = false; return; }
-          if (currentState === 'recording' && mode === 'latch') { pauseRecordingProcess(); return; }
-          if (currentState === 'pause' && mode === 'latch') { resumeRecordingProcess(); return; }
+          if (currentState === 'recording' || currentState === 'pause') {
+             if (mode === 'latch') {
+                if (currentState === 'recording') pauseRecordingProcess();
+                else resumeRecordingProcess();
+                return;
+             }
+             if (mode === 'latch-wait') {
+                if (clickTimeout) { clearTimeout(clickTimeout); clickTimeout = null; }
+                mode = 'latch';
+                return;
+             }
+             // Одиночный клик (отпускание, пауза), переходим в latch
+             if (currentState === 'recording') pauseRecordingProcess();
+             else resumeRecordingProcess();
+             mode = 'latch';
+             return;
+          }
+
           if (currentState === 'idle' || currentState === 'hover') {
             pressStartTime = now;
-            if (pressTimeout) clearTimeout(pressTimeout);
-            pressTimeout = setTimeout(() => { if (isHeld) { mode = 'ptt'; startRecordingProcess(); } }, 250);
+            mode = 'ptt';
+            startRecordingProcess();
           }
         });
 
         window.__TAURI__.event.listen('global-shortcut-released', () => {
           isHeld = false;
           if (pressTimeout) { clearTimeout(pressTimeout); pressTimeout = null; }
-          if (mode === 'ptt') { stopAndSendRecording(); mode = null; return; }
-          if (currentState === 'idle' || currentState === 'hover') {
-            const duration = Date.now() - pressStartTime;
-            // Быстрый клик (< 250мс удержания)
+          
+          const duration = Date.now() - pressStartTime;
+          
+          if (mode === 'ptt') {
             if (duration < 250) {
+              // Это был быстрый клик (тап)
+              cancelRecordingProcess(true, true); // отменяем PTT запись
+              mode = null;
+              
               clickCount++;
               if (clickCount === 1) {
                 // Ждём 500мс для второго клика
@@ -1355,9 +1382,16 @@
                 mode = 'latch';
                 startRecordingProcess();
               }
+              return;
             }
-            // Одиночное долгое нажатие (>= 250мс) в idle/hover — ничего не делаем
-            // Это защита от случайного запуска (не PTT и не двойной клик)
+            // Иначе (>= 250мс) - это полноценный PTT
+            stopAndSendRecording(); 
+            mode = null; 
+            return; 
+          }
+
+          if (currentState === 'idle' || currentState === 'hover') {
+            mode = null;
           }
         });
 
