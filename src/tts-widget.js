@@ -81,7 +81,7 @@ window.renderTtsWidget = function(container, isMain = false) {
         50%       { transform: scale(1.15); box-shadow: 0 0 12px rgba(255,209,102,1); }
       }
     </style>
-    <div class="flex items-center py-2 gap-1 h-[52px]" style="${isMain ? 'padding-left: 20px; padding-right: 20px;' : 'padding-left: 14px; padding-right: 14px;'}" data-tauri-drag-region>
+    <div class="flex items-center py-2 gap-1 h-[52px] w-fit" style="${isMain ? 'padding-left: 20px; padding-right: 20px;' : 'padding-left: 14px; padding-right: 14px;'}" data-tauri-drag-region>
       
       <!-- Drag Handle -->
       ${isMain ? '' : `
@@ -92,13 +92,13 @@ window.renderTtsWidget = function(container, isMain = false) {
       `}
 
       <!-- 🔊 Голос -->
-      <div class="relative w-[115px] flex-shrink-0" id="tts-voice-wrapper">
+      <div class="relative w-[160px] flex-shrink-0" id="tts-voice-wrapper">
         <button class="bg-transparent text-[#e4e1e9] border-none flex items-center justify-center gap-1.5 px-3 py-1 rounded-full text-[11px] cursor-pointer transition-all hover:bg-[#3a3545] w-full" id="tts-btn-voice" title="Выбор голоса">
           <span class="material-symbols-outlined text-[14px] text-[#ccc3d8]/60" style="font-variation-settings:'FILL' 1;">volume_up</span>
           <span id="tts-selected-voice-label" class="flex-1 text-left truncate">Загрузка...</span>
           <span class="material-symbols-outlined text-[14px] text-[#4a4455]">expand_more</span>
         </button>
-        <div class="absolute top-[calc(100%+8px)] left-0 bg-[#1f1f24] border border-[#8e52ff]/30 rounded-[10px] p-1.5 hidden flex-col gap-[2px] shadow-[0_8px_24px_rgba(0,0,0,0.6)] max-h-[280px] overflow-y-auto z-50 min-w-[130px]" id="tts-voice-menu">
+        <div class="absolute top-[calc(100%+8px)] left-0 bg-[#1f1f24] border border-[#8e52ff]/30 rounded-[10px] p-1.5 hidden flex-col gap-[2px] shadow-[0_8px_24px_rgba(0,0,0,0.6)] max-h-[280px] overflow-y-auto z-50 w-full" id="tts-voice-menu">
           <div class="text-[9px] uppercase tracking-widest text-[#8e52ff] px-2 mb-1 opacity-70">Голоса</div>
           <!-- Заполняется динамически -->
         </div>
@@ -107,13 +107,13 @@ window.renderTtsWidget = function(container, isMain = false) {
       <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
 
       <!-- ⚡ Скорость -->
-      <div class="relative flex-shrink-0" id="tts-speed-wrapper">
-        <button class="bg-transparent text-[#e4e1e9] border-none flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] cursor-pointer transition-all hover:bg-[#3a3545]" id="tts-btn-speed" title="Скорость воспроизведения">
+      <div class="relative w-[72px] flex-shrink-0" id="tts-speed-wrapper">
+        <button class="bg-transparent text-[#e4e1e9] border-none flex items-center justify-center gap-1 w-full px-1 py-1 rounded-full text-[11px] cursor-pointer transition-all hover:bg-[#3a3545]" id="tts-btn-speed" title="Скорость воспроизведения">
           <span class="material-symbols-outlined text-[14px] text-[#45a29e]">bolt</span>
           <span id="tts-selected-speed-label">1.0x</span>
         </button>
         <!-- Выпадающее меню скорости -->
-        <div class="absolute top-[calc(100%+8px)] left-1/2 -translate-x-1/2 bg-[#1f1f24] border border-[#8e52ff]/30 rounded-[10px] p-3 min-w-[150px] hidden flex-col shadow-[0_8px_24px_rgba(0,0,0,0.6)] z-50" id="tts-speed-menu">
+        <div class="absolute top-[calc(100%+8px)] left-1/2 -translate-x-1/2 bg-[#1f1f24] border border-[#8e52ff]/30 rounded-[10px] p-2 w-[80px] hidden flex-col shadow-[0_8px_24px_rgba(0,0,0,0.6)] z-50" id="tts-speed-menu">
           <div class="text-[9px] uppercase tracking-widest text-[#8e52ff] px-2 mb-2 opacity-70">Скорость</div>
           <div class="flex flex-row relative">
             <div class="flex flex-col flex-1 gap-1" id="tts-speed-list">
@@ -146,7 +146,7 @@ window.renderTtsWidget = function(container, isMain = false) {
       </div>
 
       <!-- Пространство перетаскивания и разделения -->
-      <div class="flex-1" data-tauri-drag-region></div>
+      <div class="w-4" data-tauri-drag-region></div>
 
       <!-- Divider перед Translate -->
       <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>

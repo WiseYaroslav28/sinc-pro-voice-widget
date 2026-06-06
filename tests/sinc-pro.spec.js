@@ -69,6 +69,7 @@ test.describe('Навигация', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(1000); // Даем встроенному self-test завершиться
   });
 
   test('sidebar-items существуют для всех вкладок', async ({ page }) => {
