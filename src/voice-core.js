@@ -157,12 +157,12 @@ class VoiceCore {
         text = this.cleanText(text);
         if (!text) return [];
 
-        // Нормализуем переносы строк
+        // Нормализуем переносы строк (убираем \r)
         let processed = text.replace(/\r\n/g, "\n");
         // Защищаем абзацы (двойные и более переносы)
         processed = processed.replace(/\n{2,}/g, "<ABZAC>");
-        // Заменяем одиночные переносы строк внутри предложений на пробелы
-        processed = processed.replace(/\n/g, " ");
+        // Заменяем одиночные переносы строк на пробелы, только если после них идет строчная буква (Unicode)
+        processed = processed.replace(/\n+(?=\s*\p{Ll})/gu, " ");
         // Возвращаем абзацы обратно
         processed = processed.replace(/<ABZAC>/g, "\n");
 
@@ -183,7 +183,7 @@ class VoiceCore {
         processed = processed.replace(/\.\.\./g, "<ELLIPSIS>");
         
         // Разбиваем по концам предложений ИЛИ по символам переноса строки (абзацам \n)
-        let rawSentences = processed.split(/(?<=[.!?])\s+(?=[A-ZА-ЯЁ])|\n+/);
+        let rawSentences = processed.split(/(?<=[.!?])\s+(?=\p{Lu})|\n+/u);
         
         let sentences = [];
         for (let s of rawSentences) {
