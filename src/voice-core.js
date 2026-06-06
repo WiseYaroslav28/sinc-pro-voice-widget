@@ -2,6 +2,104 @@
 // Единое ядро логики Озвучки (TTS) и управления состоянием плеера
 // Обеспечивает потоковое воспроизведение, расчет умного таймлайна и синхронизацию состояний.
 
+class TtsCacheDB {
+    constructor() {
+        this.dbName = "SincProTtsCache";
+        this.storeName = "audio_cache";
+        this.db = null;
+        this.initPromise = this.init();
+    }
+
+    init() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(this.dbName, 1);
+            request.onerror = (e) => {
+                console.error("IndexedDB open error:", e);
+                reject(e);
+            };
+            request.onsuccess = (e) => {
+                this.db = e.target.result;
+                resolve(this.db);
+            };
+            request.onupgradeneeded = (e) => {
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains(this.storeName)) {
+                    db.createObjectStore(this.storeName, { keyPath: "id" });
+                }
+            };
+        });
+    }
+
+    async get(voice, text) {
+        await this.initPromise;
+        if (!this.db) return null;
+        const id = `${voice}_${text.trim()}`;
+        return new Promise((resolve) => {
+            const transaction = this.db.transaction([this.storeName], "readwrite");
+            const store = transaction.objectStore(this.storeName);
+            const request = store.get(id);
+            request.onsuccess = (e) => {
+                const record = e.target.result;
+                if (record) {
+                    record.lastUsed = Date.now();
+                    store.put(record);
+                    resolve(record.audio);
+                } else {
+                    resolve(null);
+                }
+            };
+            request.onerror = () => resolve(null);
+        });
+    }
+
+    async set(voice, text, audio) {
+        await this.initPromise;
+        if (!this.db) return;
+        const id = `${voice}_${text.trim()}`;
+        const record = {
+            id,
+            voice,
+            text: text.trim(),
+            audio,
+            lastUsed: Date.now()
+        };
+        return new Promise((resolve) => {
+            const transaction = this.db.transaction([this.storeName], "readwrite");
+            const store = transaction.objectStore(this.storeName);
+            const request = store.put(record);
+            request.onsuccess = () => resolve();
+            request.onerror = () => resolve();
+        });
+    }
+
+    async cleanOldRecords() {
+        await this.initPromise;
+        if (!this.db) return;
+        const limitTime = Date.now() - 48 * 3600 * 1000; // 48 часов назад
+        return new Promise((resolve) => {
+            const transaction = this.db.transaction([this.storeName], "readwrite");
+            const store = transaction.objectStore(this.storeName);
+            const request = store.openCursor();
+            let deletedCount = 0;
+            request.onsuccess = (e) => {
+                const cursor = e.target.result;
+                if (cursor) {
+                    const record = cursor.value;
+                    if (record.lastUsed < limitTime) {
+                        cursor.delete();
+                        deletedCount++;
+                    }
+                    cursor.continue();
+                } else {
+                    console.log(`[TtsCacheDB] Cleaned ${deletedCount} records older than 48 hours`);
+                    resolve();
+                }
+            };
+            request.onerror = () => resolve();
+        });
+    }
+}
+
 class VoiceCore {
     constructor() {
         this.currentText = "";
@@ -13,6 +111,9 @@ class VoiceCore {
         this.isPlaying = false;
         this.isPaused = false;
         this.isPrefetching = false; // Флаг работы фоновой очереди
+        
+        this.cache = new TtsCacheDB();
+        this.cache.cleanOldRecords();
         
         // Настройки по умолчанию
         const savedSettings = JSON.parse(localStorage.getItem('tts-settings') || '{}');
@@ -137,24 +238,96 @@ class VoiceCore {
 
         for (let i = 0; i < this.sentences.length; i++) {
             if (this.currentQueueId !== queueId || this.audioBuffers !== currentBuffersRef) {
-                return; // Очередь прервана новым вызовом, НЕ ставим isPrefetching = false
+                return; // Очередь прервана
             }
             
             if (!this.audioBuffers[i]) {
                 try {
+                    // 1. Проверяем IndexedDB кэш
+                    const cachedAudio = await this.cache.get(this.settings.voice, this.sentences[i]);
+                    if (cachedAudio) {
+                        if (this.audioBuffers === currentBuffersRef) {
+                            console.log(`[VoiceCore] Cache HIT for sentence ${i}`);
+                            this.audioBuffers[i] = cachedAudio;
+                            this.updateProgress();
+                            if (this.isPlaying && this.currentSentenceIndex === i && this.audioElement.paused) {
+                                console.log('[VoiceCore] cache -> triggering playCurrentSentence()');
+                                this.playCurrentSentence();
+                            }
+                        }
+                        continue; // Идем к следующему
+                    }
+
+                    // 2. Рассчитываем динамическую адаптивную задержку для защиты от DDoS/блокировок
+                    const distance = i - this.currentSentenceIndex;
+                    let delay = 250; // Базовый интервал между запросами
+
+                    // Партии по 3 предложения: добавляем дополнительную задержку
+                    if (i > 0 && i % 3 === 0) {
+                        delay += 800;
+                    }
+
+                    if (!this.isPlaying || this.isPaused) {
+                        // Если плеер стоит на паузе / не играет, а очередь ушла вперед
+                        if (distance >= 5) {
+                            delay = 4000;
+                        } else if (distance >= 3) {
+                            delay = 2000;
+                        }
+                    } else {
+                        // Если проигрывание активно
+                        if (distance >= 5) {
+                            delay = 2500;
+                        } else if (distance >= 3) {
+                            delay = 1000;
+                        } else {
+                            // Озвучка догоняет загрузку
+                            delay = 150;
+                        }
+                    }
+
+                    // 3. Выполняем адаптивное ожидание задержки (с шагом 50мс)
+                    const startWait = Date.now();
+                    while (Date.now() - startWait < delay) {
+                        if (this.currentQueueId !== queueId || this.audioBuffers !== currentBuffersRef) return;
+                        
+                        // Позволяет прервать или сократить задержку, если плеер сняли с паузы или он догнал
+                        const currentDistance = i - this.currentSentenceIndex;
+                        let currentDelay = 250;
+                        if (i > 0 && i % 3 === 0) currentDelay += 800;
+
+                        if (!this.isPlaying || this.isPaused) {
+                            if (currentDistance >= 5) currentDelay = 4000;
+                            else if (currentDistance >= 3) currentDelay = 2000;
+                        } else {
+                            if (currentDistance >= 5) currentDelay = 2500;
+                            else if (currentDistance >= 3) currentDelay = 1000;
+                            else currentDelay = 150;
+                        }
+
+                        if (Date.now() - startWait >= currentDelay) {
+                            break;
+                        }
+                        await new Promise(r => setTimeout(r, 50));
+                    }
+
+                    // 4. Скачиваем аудио через бэкенд
                     if (window.__TAURI__) {
+                        console.log(`[VoiceCore] Fetching sentence ${i} (delay=${delay}ms, distance=${distance})`);
                         const base64Audio = await window.__TAURI__.core.invoke('speak_edge_tts', {
                             text: this.sentences[i],
                             voice: this.settings.voice,
-                            rate: 1.0 // ВСЕГДА 1.0x на сервере. Реальная скорость управляется в audioElement.playbackRate
+                            rate: 1.0
                         });
                         
                         if (this.audioBuffers === currentBuffersRef) {
-                            this.audioBuffers[i] = `data:audio/mp3;base64,${base64Audio}`;
-                            this.updateProgress(); // Обновляем шкалу загрузки
+                            const dataUrl = `data:audio/mp3;base64,${base64Audio}`;
+                            this.audioBuffers[i] = dataUrl;
+                            this.updateProgress();
                             
-                            // Если плеер стоит на месте и ждет именно этот буфер - запускаем
-                            console.log('[VoiceCore] prefetch done i=' + i + ' isPlaying=' + this.isPlaying + ' currentIdx=' + this.currentSentenceIndex + ' paused=' + this.audioElement.paused);
+                            // Сохраняем в локальный кэш
+                            await this.cache.set(this.settings.voice, this.sentences[i], dataUrl);
+                            
                             if (this.isPlaying && this.currentSentenceIndex === i && this.audioElement.paused) {
                                 console.log('[VoiceCore] prefetch -> triggering playCurrentSentence()');
                                 this.playCurrentSentence();
@@ -164,14 +337,13 @@ class VoiceCore {
                 } catch (err) {
                     console.error("Prefetch error at index " + i + ":", err);
                     if (window.showToast) window.showToast("Ошибка TTS: " + err, true);
-                    this.audioBuffers[i] = "ERROR"; // Помечаем как ошибку, чтобы плеер мог перепрыгнуть
+                    this.audioBuffers[i] = "ERROR";
                     
-                    // Если плеер ждет этот кусок, перепрыгиваем
                     if (this.isPlaying && this.currentSentenceIndex === i && this.audioElement.paused) {
                         this.currentSentenceIndex++;
                         this.playCurrentSentence();
                     }
-                    continue; // Продолжаем качать остальные предложения
+                    continue;
                 }
             }
         }
