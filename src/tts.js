@@ -31,9 +31,13 @@ document.addEventListener('DOMContentLoaded', () => {
             
             if (action === 'play') {
                 if (contentEditable && contentEditable.innerText.trim()) {
-                    if (engine.currentText !== engine.cleanText(contentEditable.innerText)) {
-                        engine.loadText(contentEditable.innerText);
-                        engine.broadcastState('load', { text: contentEditable.innerText });
+                    const textToPlay = contentEditable.innerText.trim();
+                    if (textToPlay === DEFAULT_PLACEHOLDER) {
+                        return;
+                    }
+                    if (engine.currentText !== engine.cleanText(textToPlay)) {
+                        engine.loadText(textToPlay);
+                        engine.broadcastState('load', { text: textToPlay });
                     }
                     engine.play();
                 }
@@ -66,9 +70,26 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    const DEFAULT_PLACEHOLDER = "Вставьте сюда текст для озвучивания, или выделите текст в любом приложении и нажмите Ctrl+Shift...";
+
     contentEditable.addEventListener('input', () => {
         // Сброс при изменении текста
         engine.stop();
+    });
+
+    contentEditable.addEventListener('focus', () => {
+        if (contentEditable.innerText.trim() === DEFAULT_PLACEHOLDER) {
+            contentEditable.innerText = '';
+        }
+        if (engine.isPlaying || engine.isPaused) {
+            engine.stop();
+        }
+    });
+
+    contentEditable.addEventListener('blur', () => {
+        if (contentEditable.innerText.trim() === '') {
+            contentEditable.innerText = DEFAULT_PLACEHOLDER;
+        }
     });
 
     // Обратные вызовы от движка для обновления UI
@@ -77,14 +98,29 @@ document.addEventListener('DOMContentLoaded', () => {
             root.updateState({ isPlaying, isPaused });
         }
         
-        if (contentEditable && engine.sentences.length > 0) {
-            const wordsCount = engine.sentences.join(" ").split(/\s+/).length;
-            if (statsLabel) statsLabel.textContent = `${engine.sentences.length} предложений, ~${wordsCount} слов`;
-            
-            contentEditable.innerHTML = engine.sentences.map((s, i) => {
-                const isActive = (i === engine.currentSentenceIndex && isPlaying);
-                return `<span class="transition-colors ${isActive ? 'bg-[#7bd6d1]/20 text-[#7bd6d1] font-semibold' : ''}" id="sentence-${i}">${s}</span>`;
-            }).join(' ');
+        if (contentEditable) {
+            const text = contentEditable.innerText.trim();
+            if (text && text !== DEFAULT_PLACEHOLDER) {
+                if (isPlaying || isPaused) {
+                    if (engine.sentences.length > 0) {
+                        const wordsCount = engine.sentences.join(" ").split(/\s+/).length;
+                        if (statsLabel) statsLabel.textContent = `${engine.sentences.length} предложений, ~${wordsCount} слов`;
+                        
+                        contentEditable.innerHTML = engine.sentences.map((s, i) => {
+                            const isActive = (i === engine.currentSentenceIndex && isPlaying);
+                            return `<span class="transition-colors ${isActive ? 'bg-[#7bd6d1]/20 text-[#7bd6d1] font-semibold' : ''}" id="sentence-${i}">${s}</span>`;
+                        }).join(' ');
+                    }
+                } else {
+                    // Если остановлено (не играет и не на паузе), очищаем теги span
+                    // но делаем это только если они там реально присутствуют, чтобы не ломать каретку при обычном вводе.
+                    if (contentEditable.querySelector('span')) {
+                        contentEditable.innerHTML = contentEditable.innerText;
+                    }
+                }
+            } else {
+                if (statsLabel) statsLabel.textContent = `0 предложений`;
+            }
         }
     };
 

@@ -43,25 +43,25 @@
 
         <!-- Меню -->
         <div class="flex flex-col gap-1 flex-1">
-          <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#d2bbff] font-bold border-r-2 border-[#d2bbff] bg-[#1f1f24] opacity-90 transition-all focus:outline-none w-full text-left active" style="background-color: #1f1f24; border: none; border-right: 2px solid #d2bbff; cursor: pointer;" data-tab="tab-home">
+          <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#d2bbff] font-bold border-r-2 border-[#d2bbff] bg-[#1f1f24] opacity-90 transition-all focus:outline-none w-full text-left active" style="cursor: pointer;" data-tab="tab-home">
             <span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">home</span>
             <span class="text-[12px] sidebar-item-text">Главная</span>
           </button>
-          <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="background-color: transparent; border: none; cursor: pointer;" data-tab="tab-ocr">
+          <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="cursor: pointer;" data-tab="tab-ocr">
             <span class="material-symbols-outlined text-[20px]">screenshot_region</span>
             <span class="text-[12px] sidebar-item-text">Перевод экрана</span>
           </button>
-          <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="background-color: transparent; border: none; cursor: pointer;" data-tab="tab-history">
+          <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="cursor: pointer;" data-tab="tab-history">
             <span class="material-symbols-outlined text-[20px]">psychology</span>
             <span class="text-[12px] sidebar-item-text">Журнал ИИ</span>
           </button>
-          <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="background-color: transparent; border: none; cursor: pointer;" data-tab="tab-tts">
+          <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="cursor: pointer;" data-tab="tab-tts">
             <span class="material-symbols-outlined text-[20px]">record_voice_over</span>
             <span class="text-[12px] sidebar-item-text">Озвучка</span>
           </button>
           <!-- Настройки — пиннем к низу -->
           <div class="flex-1"></div>
-          <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="background-color: transparent; border: none; cursor: pointer;" data-tab="tab-settings">
+          <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="cursor: pointer;" data-tab="tab-settings">
             <span class="material-symbols-outlined text-[20px]">settings</span>
             <span class="text-[12px] sidebar-item-text">Настройки</span>
           </button>
@@ -283,12 +283,14 @@
           <!-- ВКЛАДКА 3.5: ОЗВУЧКА (ПЛЕЕР) -->
           <section class="tab-content flex flex-col gap-4 flex-1 min-h-0 py-4" id="tab-tts" style="display: none;">
             <!-- Заголовок -->
-            <div class="flex items-center justify-between flex-shrink-0">
+            <div class="flex items-center justify-between flex-shrink-0 relative">
               <h3 class="text-[14px] font-bold text-[#e4e1e9] flex items-center gap-2">
                 <span class="material-symbols-outlined text-[18px] text-[#7bd6d1]">record_voice_over</span>
                 Озвучка текста
               </h3>
-              <div id="tts-widget-root" class="bg-[#1b1b20] rounded-[26px] shadow-xl flex items-center relative z-10"></div>
+              <div class="absolute left-1/2 -translate-x-1/2">
+                <div id="tts-widget-root" class="bg-[#1b1b20] rounded-full overflow-hidden shadow-xl flex items-center relative z-10"></div>
+              </div>
             </div>
 
             <!-- Главный контейнер для текста и плавающего виджета -->
@@ -440,6 +442,8 @@
         menuItems.forEach(el => {
           el.classList.remove('active', 'text-[#d2bbff]', 'font-bold', 'border-r-2', 'border-[#d2bbff]', 'bg-[#1f1f24]');
           el.classList.add('text-[#ccc3d8]');
+          el.style.backgroundColor = 'transparent';
+          el.style.borderRight = 'none';
         });
         tabContents.forEach(el => el.style.display = 'none');
         
@@ -447,6 +451,8 @@
         if (targetItem) {
           targetItem.classList.add('active', 'text-[#d2bbff]', 'font-bold', 'border-r-2', 'border-[#d2bbff]', 'bg-[#1f1f24]');
           targetItem.classList.remove('text-[#ccc3d8]');
+          targetItem.style.backgroundColor = '#1f1f24';
+          targetItem.style.borderRight = '2px solid #d2bbff';
         }
         const targetTab = document.getElementById(tabId);
         if (targetTab) {
@@ -1527,6 +1533,7 @@
       // Инициализация при загрузке
       document.addEventListener('DOMContentLoaded', async () => {
         setupAudioPlayer();
+        switchTab('tab-home');
         await loadConfig();
         await refreshHistory();
         // Запускаем self-test через 500мс после загрузки

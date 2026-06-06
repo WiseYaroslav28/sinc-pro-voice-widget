@@ -20,16 +20,41 @@ window.renderTtsWidget = function(container, isMain = false) {
         cursor: pointer;
         box-shadow: 0 0 6px rgba(142,82,255,0.6);
       }
+      #tts-play-stop-wrapper {
+        position: relative;
+        width: 36px;
+        height: 36px;
+        flex-shrink: 0;
+      }
+      #tts-play-stop-wrapper.can-stop::after {
+        content: '';
+        position: absolute;
+        left: 36px;
+        top: 0;
+        width: 14px;
+        height: 100%;
+        background: transparent;
+        z-index: 5;
+      }
       .stop-btn-container {
-        width: 0;
+        position: absolute;
+        left: 40px;
+        top: 50%;
+        transform: translateY(-50%) translateX(-10px);
+        width: 28px;
+        height: 28px;
         opacity: 0;
-        overflow: hidden;
+        pointer-events: none;
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        justify-content: center;
       }
       #tts-play-stop-wrapper.can-stop:hover .stop-btn-container {
-        width: 28px;
         opacity: 1;
-        margin-left: 4px;
+        transform: translateY(-50%) translateX(0);
+        pointer-events: auto;
       }
       #tts-widget-stop:hover {
         background: #3a3545 !important;
@@ -56,7 +81,7 @@ window.renderTtsWidget = function(container, isMain = false) {
         50%       { transform: scale(1.15); box-shadow: 0 0 12px rgba(255,209,102,1); }
       }
     </style>
-    <div class="flex items-center px-2 py-2 gap-1 h-[52px]" data-tauri-drag-region>
+    <div class="flex items-center py-2 gap-1 h-[52px]" style="${isMain ? 'padding-left: 20px; padding-right: 20px;' : 'padding-left: 8px; padding-right: 8px;'}" data-tauri-drag-region>
       
       <!-- Drag Handle -->
       ${isMain ? '' : `
@@ -104,23 +129,12 @@ window.renderTtsWidget = function(container, isMain = false) {
       <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
 
       <!-- ▶ Play/Pause + Hover Stop (справа) -->
-      <div class="flex items-center flex-shrink-0" id="tts-play-stop-wrapper">
+      <div class="relative flex-shrink-0" id="tts-play-stop-wrapper" style="width: 36px; height: 36px;">
         <div class="relative w-9 h-9 flex-shrink-0" id="tts-widget-play-container">
           <button class="flex items-center justify-center w-9 h-9 rounded-full bg-[#8e52ff] text-white hover:bg-[#a377ff] transition-all active:scale-95 shadow-[0_0_12px_rgba(142,82,255,0.4)] flex-shrink-0 cursor-pointer border-0 outline-none"
                   id="tts-widget-play" title="Озвучить / Пауза">
             <span class="material-symbols-outlined text-[20px]" id="tts-widget-play-icon" style="font-variation-settings:'FILL' 1;">play_arrow</span>
           </button>
-          
-          <!-- Маленький желтый индикатор паузы -->
-          <div class="absolute bg-[#ffd166] rounded-full border border-[#1b1b20] flex items-center justify-center shadow-[0_0_6px_rgba(255,209,102,0.8)] hidden pointer-events-none" 
-               id="tts-widget-pause-badge" 
-               title="На паузе"
-               style="width: 22px; height: 22px; bottom: -2px; right: -2px; z-index: 60;">
-             <div class="flex gap-[3px] items-center justify-center">
-               <div style="width: 2.5px; height: 10px; background-color: #1b1b20; border-radius: 1px;"></div>
-               <div style="width: 2.5px; height: 10px; background-color: #1b1b20; border-radius: 1px;"></div>
-             </div>
-          </div>
         </div>
 
         <div class="stop-btn-container flex items-center justify-center">
@@ -137,7 +151,7 @@ window.renderTtsWidget = function(container, isMain = false) {
       <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
 
       <!-- 文A Перевод -->
-      <button class="bg-transparent text-[#ccc3d8] border-none flex items-center justify-center w-7 h-7 rounded-md cursor-pointer transition-all hover:bg-[#3a3545] hover:text-[#7bd6d1] outline-none" id="tts-btn-translate" title="Переводить перед чтением">
+      <button class="bg-transparent text-[#ccc3d8] border-none flex items-center justify-center w-7 h-7 rounded-md cursor-pointer transition-all hover:bg-[#3a3545] hover:text-[#7bd6d1] outline-none mx-3" id="tts-btn-translate" title="Переводить перед чтением">
         <span class="material-symbols-outlined text-[18px]">translate</span>
       </button>
 
