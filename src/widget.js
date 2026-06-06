@@ -2,6 +2,48 @@
 // Логика плавающего виджета
 
 document.addEventListener('DOMContentLoaded', () => {
+  // Кросс-версионное получение текущего окна Tauri
+  let appWindow = null;
+  if (window.__TAURI__) {
+    if (window.__TAURI__.webviewWindow) {
+      appWindow = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
+    } else if (window.__TAURI__.window) {
+      appWindow = window.__TAURI__.window.getCurrentWindow();
+    }
+  }
+
+  // Скрываем виджет при старте, если он отключен в настройках
+  if (window.__TAURI__ && appWindow) {
+    const isWidgetEnabled = localStorage.getItem('ttsWidgetEnabled') !== 'false';
+    if (!isWidgetEnabled) {
+      appWindow.hide().catch(console.error);
+    }
+  }
+
+  // Принудительная инициализация WinAPI SetWindowPos для обхода бага с системной рамкой DWM
+  async function initPosition() {
+    if (!window.__TAURI__ || !appWindow) return;
+    const { invoke } = window.__TAURI__.core;
+    try {
+      await new Promise(r => setTimeout(r, 100)); // Задержка для DWM
+      const size = await appWindow.innerSize();
+      const pos = await appWindow.outerPosition();
+      console.log(`[Widget] WinAPI init: size=${size.width}x${size.height}, pos=${pos.x},${pos.y}`);
+      await invoke('resize_bottom_up_phys', {
+        width: size.width,
+        height: size.height,
+        x: pos.x,
+        y: pos.y
+      });
+    } catch (e) {
+      console.error('[Widget] initPosition WinAPI failed:', e);
+    }
+  }
+
+  if (window.__TAURI__) {
+    initPosition();
+  }
+
   const root = document.getElementById('tts-widget-root');
   
   // Рендерим общий UI
@@ -24,19 +66,14 @@ document.addEventListener('DOMContentLoaded', () => {
   // ======================================================================
 
   const WIN_WIDTH = 560;
-  const WIN_HEIGHT_COLLAPSED = 88; // 52px панель + 16px padding-top + 20px тень снизу
-  const WIN_HEIGHT_EXPANDED = 380;
+  const WIN_HEIGHT_COLLAPSED = 100; // 52px панель + 16px padding-top + 32px тень снизу
+  const WIN_HEIGHT_EXPANDED = 480;
 
   let isRowExpanded = false;
   let isDropdownOpen = false;
 
-  function updateWindowHeight() {
-    if (!window.__TAURI__) return;
-    const appWindow = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
-    const LogicalSize = window.__TAURI__.dpi.LogicalSize;
-    const shouldExpand = isRowExpanded || isDropdownOpen;
-    const height = shouldExpand ? WIN_HEIGHT_EXPANDED : WIN_HEIGHT_COLLAPSED;
-    appWindow.setSize(new LogicalSize(WIN_WIDTH, height)).catch(console.error);
+  async function updateWindowHeight() {
+    // Больше не изменяем физический размер окна Tauri (всегда 560x380) для предотвращения сброса DWM стилей и появления нативной рамки
   }
 
   // ======================================================================
@@ -51,21 +88,19 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       let w, h, x, y;
 
+      // Контейнер виджета w=500px, отцентрован по горизонтали в окне 560px -> x = (560 - 500) / 2 = 30px
+      // Даем максимальный запас по бокам для тени: x = 2px, w = 556px (оставляем 2px зазора по бокам).
+      // Верхний край контейнера на y = 40px (padding-top: 40px).
+      // Зададим y = 35px для сохранения верхней тени и гарантированного отсечения Titlebar (y < 30px).
+      x = 2;
+      y = 35;
+      w = 556;
+
       if (state === 'collapsed') {
-        w = 516; // Виджет 500px + по 8px под тени слева/справа
-        h = 76;  // Панель 52px + 16px padding-top + 8px тень снизу
-        x = (WIN_WIDTH - w) / 2;
-        y = 8;   // Начинаем с 8px (из 16px padding-top)
-      } else if (state === 'expanded') {
-        w = 516;
-        h = WIN_HEIGHT_EXPANDED - 8;
-        x = (WIN_WIDTH - w) / 2;
-        y = 8;
-      } else if (state === 'dropdown') {
-        w = 516;
-        h = WIN_HEIGHT_EXPANDED - 8;
-        x = (WIN_WIDTH - w) / 2;
-        y = 8;
+        h = 110; // 52px панель + 58px запас для плавного затухания нижней тени (размытие 32px + сдвиг 8px)
+      } else {
+        // expanded / dropdown
+        h = 435; // 480px высота окна - 45px отступов (35px сверху, 10px снизу)
       }
 
       const scaleFactor = window.devicePixelRatio || 1;
