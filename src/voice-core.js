@@ -157,7 +157,15 @@ class VoiceCore {
         text = this.cleanText(text);
         if (!text) return [];
 
-        let processed = text;
+        // Нормализуем переносы строк
+        let processed = text.replace(/\r\n/g, "\n");
+        // Защищаем абзацы (двойные и более переносы)
+        processed = processed.replace(/\n{2,}/g, "<ABZAC>");
+        // Заменяем одиночные переносы строк внутри предложений на пробелы
+        processed = processed.replace(/\n/g, " ");
+        // Возвращаем абзацы обратно
+        processed = processed.replace(/<ABZAC>/g, "\n");
+
         // Защищаем числа (3.3)
         processed = processed.replace(/(\d)\.(\d)/g, "$1<DOT>$2");
         // Защищаем нумерацию списков (1., 2.)
@@ -174,7 +182,7 @@ class VoiceCore {
         // Защищаем многоточия
         processed = processed.replace(/\.\.\./g, "<ELLIPSIS>");
         
-        // Разбиваем по концам предложений ИЛИ по символам переноса строки (\n)
+        // Разбиваем по концам предложений ИЛИ по символам переноса строки (абзацам \n)
         let rawSentences = processed.split(/(?<=[.!?])\s+(?=[A-ZА-ЯЁ])|\n+/);
         
         let sentences = [];
