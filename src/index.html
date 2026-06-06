@@ -422,6 +422,21 @@
       // Tauri Core Invoke
       const invoke = window.__TAURI__ ? window.__TAURI__.core.invoke : null;
 
+      // Логирование ошибок фронтенда на бэкенд в tts_errors.log
+      if (window.__TAURI__) {
+        const oldError = console.error;
+        console.error = function(...args) {
+          oldError.apply(console, args);
+          window.__TAURI__.core.invoke('write_js_log', { log: `Console error: ${args.join(' ')}` }).catch(()=>{});
+        };
+        window.onerror = function(message, source, lineno, colno, error) {
+          window.__TAURI__.core.invoke('write_js_log', { log: `Global error: ${message} at ${source}:${lineno}:${colno}` }).catch(()=>{});
+        };
+        window.onunhandledrejection = function(event) {
+          window.__TAURI__.core.invoke('write_js_log', { log: `Unhandled promise rejection: ${event.reason}` }).catch(()=>{});
+        };
+      }
+
       // Глобальные состояния
       let currentHistory = [];
       let currentActiveEntry = null;

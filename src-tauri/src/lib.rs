@@ -82,6 +82,19 @@ fn log_tts_error(text: &str, err: &str) {
 }
 
 #[tauri::command]
+fn write_js_log(log: String) {
+    use std::io::Write;
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("c:\\Antigravity projects\\voice-server\\tts_errors.log")
+    {
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        let _ = writeln!(file, "[JS {}] {}", timestamp, log);
+    }
+}
+
+#[tauri::command]
 async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String, String> {
     let res = speak_edge_tts_internal(text.clone(), voice, rate).await;
     if let Err(ref e) = res {
@@ -1823,6 +1836,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            write_js_log,
             load_config,
             save_config,
             load_history,
