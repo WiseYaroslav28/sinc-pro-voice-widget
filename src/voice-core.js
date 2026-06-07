@@ -567,3 +567,64 @@ class VoiceCore {
 }
 
 window.VoiceCore = VoiceCore;
+
+// WindowToggleManager для чистого переиспользования логики и верстки тумблеров окон (капсулы и виджета)
+class WindowToggleManager {
+    static renderToggle(id, icon, title) {
+        return `
+            <div class="flex items-center gap-1.5 cursor-pointer" title="${title}">
+                <span class="material-symbols-outlined text-[15px] text-[#ccc3d8] select-none">${icon}</span>
+                <label class="switch" style="transform: scale(0.65); transform-origin: left center; width: 32px; height: 18px; display: inline-block; position: relative;">
+                    <input type="checkbox" id="${id}">
+                    <span class="slider"></span>
+                </label>
+            </div>
+        `;
+    }
+
+    static initToggle(checkboxId, targetWindowLabel) {
+        const checkbox = document.getElementById(checkboxId);
+        if (!checkbox) return;
+
+        const eventName = `${targetWindowLabel}-visibility-changed`;
+        const showCommand = `show_${targetWindowLabel}_window`;
+        const hideCommand = `hide_${targetWindowLabel}_window`;
+
+        // 1. Инициализация начального состояния при старте
+        if (targetWindowLabel === 'widget') {
+            const savedState = localStorage.getItem('ttsWidgetEnabled');
+            checkbox.checked = (savedState !== 'false');
+        } else {
+            checkbox.checked = true; // Капсула по умолчанию включена при старте
+        }
+
+        if (window.__TAURI__) {
+            const { invoke } = window.__TAURI__.core;
+            const { listen, emit } = window.__TAURI__.event;
+
+            // 2. Обработчик клика пользователя (change)
+            checkbox.addEventListener('change', async () => {
+                try {
+                    if (targetWindowLabel === 'widget') {
+                        localStorage.setItem('ttsWidgetEnabled', checkbox.checked ? 'true' : 'false');
+                    }
+                    if (checkbox.checked) {
+                        await invoke(showCommand).catch(() => {});
+                    } else {
+                        await invoke(hideCommand).catch(() => {});
+                    }
+                    await emit(eventName, checkbox.checked);
+                } catch (err) {
+                    console.error(`[WindowToggleManager] Error toggling ${targetWindowLabel}:`, err);
+                }
+            });
+
+            // 3. Синхронизация при внешних изменениях (из других окон или хоткеев)
+            listen(eventName, (event) => {
+                checkbox.checked = !!event.payload;
+            });
+        }
+    }
+}
+
+window.WindowToggleManager = WindowToggleManager;

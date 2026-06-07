@@ -45,8 +45,7 @@
     <script src="tts-widget.js"></script>
     
     <div class="transition-all duration-300 inline-flex flex-col w-[500px] h-fit"
-         id="widget-container"
-         data-tauri-drag-region>
+         id="widget-container">
       
       <!-- Контейнер для единого компонента -->
       <div id="tts-widget-root" class="flex justify-center w-full"></div>
@@ -65,11 +64,8 @@
           </button>
         </div>
         
-        <div class="flex items-center gap-2">
-          <span class="text-[11px] font-semibold tracking-wide text-[#ccc3d8]">AI</span>
-          <button class="w-7 h-4 bg-[#4a4455] rounded-full relative cursor-pointer outline-none border-none transition-colors" id="btn-ai-toggle">
-            <div class="w-3 h-3 bg-white rounded-full absolute left-0.5 top-0.5 transition-transform"></div>
-          </button>
+        <div class="flex items-center gap-3 bg-[#1b1b20]/50 border border-[#4a4455]/30 rounded-full px-3 py-1" id="widget-toggles-container">
+          <!-- Рендерится динамически через WindowToggleManager -->
         </div>
       </div>
 

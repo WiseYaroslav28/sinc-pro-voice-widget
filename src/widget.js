@@ -154,6 +154,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // При показе окна принудительно переприменяем регион кликов после завершения анимаций DWM
     listen('widget-shown', () => {
+      emit('widget-visibility-changed', true);
       setTimeout(() => {
         const isRowVisible = expandedRow && !expandedRow.classList.contains('hidden');
         updateClickRegion(isRowVisible ? 'expanded' : 'collapsed');
@@ -198,5 +199,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
     });
+
+    // Инициализация тумблеров через WindowToggleManager (DRY)
+    const togglesContainer = document.getElementById('widget-toggles-container');
+    if (togglesContainer && window.WindowToggleManager) {
+      togglesContainer.innerHTML = 
+        WindowToggleManager.renderToggle('toggle-capsule-widget', 'mic', 'Показать/скрыть капсулу диктовки') +
+        WindowToggleManager.renderToggle('toggle-widget-widget', 'record_voice_over', 'Скрыть плавающий виджет');
+
+      WindowToggleManager.initToggle('toggle-capsule-widget', 'capsule');
+      WindowToggleManager.initToggle('toggle-widget-widget', 'widget');
+    }
   }
 });

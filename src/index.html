@@ -8,6 +8,11 @@
     <link rel="stylesheet" href="styles.css" />
     <!-- Подключаем Google Material Symbols -->
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+    <!-- Подключаем JS скрипты ядра и виджета -->
+    <script src="voice-core.js"></script>
+    <script src="tts-widget.js"></script>
+    <script src="tts.js"></script>
+
     <style>
       @keyframes play-pulse-anim {
         0% { box-shadow: 0 0 0 0 rgba(142,82,255,0.7); }
@@ -80,8 +85,12 @@
         <!-- Меню -->
         <div class="flex flex-col gap-1 flex-1">
           <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#d2bbff] font-bold border-r-2 border-[#d2bbff] bg-[#1f1f24] opacity-90 transition-all focus:outline-none w-full text-left active" style="cursor: pointer;" data-tab="tab-home">
-            <span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">home</span>
-            <span class="text-[12px] sidebar-item-text">Главная</span>
+            <span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">auto_awesome</span>
+            <span class="text-[12px] sidebar-item-text">ИИ-обработка</span>
+          </button>
+          <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="cursor: pointer;" data-tab="tab-tts">
+            <span class="material-symbols-outlined text-[20px]">record_voice_over</span>
+            <span class="text-[12px] sidebar-item-text">Озвучка</span>
           </button>
           <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="cursor: pointer;" data-tab="tab-ocr">
             <span class="material-symbols-outlined text-[20px]">screenshot_region</span>
@@ -90,10 +99,6 @@
           <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="cursor: pointer;" data-tab="tab-history">
             <span class="material-symbols-outlined text-[20px]">psychology</span>
             <span class="text-[12px] sidebar-item-text">Журнал</span>
-          </button>
-          <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="cursor: pointer;" data-tab="tab-tts">
-            <span class="material-symbols-outlined text-[20px]">record_voice_over</span>
-            <span class="text-[12px] sidebar-item-text">Озвучка</span>
           </button>
           <!-- Настройки — пиннем к низу -->
           <div class="flex-1"></div>
@@ -128,23 +133,8 @@
               <span class="text-[11px] font-medium text-[#ccc3d8]">Все системы онлайн</span>
             </div>
             <!-- Переключатели плавающих окон (Капсула и Виджет) -->
-            <div class="flex items-center gap-3 bg-[#1b1b20] border border-[#4a4455]/30 rounded-full px-3.5 py-1 mt-1">
-              <!-- Капсула -->
-              <div class="flex items-center gap-1.5 cursor-help" title="Капсула (быстрый ИИ-ввод)&#10;Удерживайте Ctrl+Win для диктовки&#10;Ctrl+Win+Alt — ввод с промптом">
-                <span class="material-symbols-outlined text-[15px] text-[#ccc3d8] select-none">mic</span>
-                <label class="switch" style="transform: scale(0.65); transform-origin: left center;">
-                  <input type="checkbox" id="toggle-capsule" checked>
-                  <span class="slider"></span>
-                </label>
-              </div>
-              <!-- Виджет -->
-              <div class="flex items-center gap-1.5 cursor-help" title="Виджет озвучки (плавающий плеер)&#10;Ctrl+Shift — озвучить выделенное&#10;Escape — остановить воспроизведение">
-                <span class="material-symbols-outlined text-[15px] text-[#ccc3d8] select-none">record_voice_over</span>
-                <label class="switch" style="transform: scale(0.65); transform-origin: left center;">
-                  <input type="checkbox" id="toggle-widget">
-                  <span class="slider"></span>
-                </label>
-              </div>
+            <div class="flex items-center gap-3 bg-[#1b1b20] border border-[#4a4455]/30 rounded-full px-3.5 py-1 mt-1" id="dashboard-toggles-container">
+              <!-- Рендерится динамически через WindowToggleManager -->
             </div>
           </div>
           <div class="flex items-center gap-4 pr-24"> <!-- Смещение от кнопок окна -->
@@ -1505,44 +1495,15 @@
       }
 
 
-      // Тоггл: Капсула
-      const toggleCapsule = document.getElementById('toggle-capsule');
-      if (toggleCapsule) {
-        toggleCapsule.addEventListener('change', async () => {
-          if (!invoke) return;
-          try {
-            if (toggleCapsule.checked) {
-              await invoke('show_capsule_window');
-            } else {
-              await invoke('hide_capsule_window');
-            }
-          } catch (err) {
-            console.error('Ошибка управления капсулой:', err);
-          }
-        });
-      }
+      // Инициализация тумблеров через WindowToggleManager (DRY)
+      const dashboardToggles = document.getElementById('dashboard-toggles-container');
+      if (dashboardToggles && window.WindowToggleManager) {
+        dashboardToggles.innerHTML = 
+          WindowToggleManager.renderToggle('toggle-capsule', 'mic', 'Капсула (быстрый ИИ-ввод)&#10;Удерживайте Ctrl+Win для диктовки&#10;Ctrl+Win+Alt — ввод с промптом') +
+          WindowToggleManager.renderToggle('toggle-widget', 'record_voice_over', 'Виджет озвучки (плавающий плеер)&#10;Ctrl+Shift — озвучить выделенное&#10;Escape — остановить воспроизведение');
 
-      // Тоггл: Виджет
-      const toggleWidget = document.getElementById('toggle-widget');
-      if (toggleWidget) {
-        // Восстанавливаем состояние
-        const savedState = localStorage.getItem('ttsWidgetEnabled');
-        if (savedState === 'false') toggleWidget.checked = false;
-        else toggleWidget.checked = true; // по умолчанию включен
-
-        toggleWidget.addEventListener('change', async () => {
-          if (!invoke) return;
-          try {
-            localStorage.setItem('ttsWidgetEnabled', toggleWidget.checked ? 'true' : 'false');
-            if (toggleWidget.checked) {
-              await invoke('show_widget_window').catch(() => {});
-            } else {
-              await invoke('hide_widget_window').catch(() => {});
-            }
-          } catch (err) {
-            console.error('Ошибка управления виджетом:', err);
-          }
-        });
+        WindowToggleManager.initToggle('toggle-capsule', 'capsule');
+        WindowToggleManager.initToggle('toggle-widget', 'widget');
       }
 
 
@@ -1711,25 +1672,6 @@
         });
         document.getElementById('win-close').addEventListener('click', () => appWindow.close());
 
-        // Управление видимостью окон через тумблеры на панели
-        const toggleCapsule = document.getElementById('toggle-capsule');
-        const toggleWidget = document.getElementById('toggle-widget');
-
-        if (toggleCapsule) {
-          toggleCapsule.addEventListener('change', async (e) => {
-            const win = WebviewWindow.getByLabel('capsule');
-            if (win) {
-              if (e.target.checked) {
-                await win.show();
-              } else {
-                await win.hide();
-              }
-            }
-          });
-        }
-
-        // Тогглы окон (Tauri-блок) — слушаем только обратные события видимости
-
         // Слушаем события
         window.__TAURI__.event.listen('open-settings', () => {
           appWindow.show();
@@ -1743,27 +1685,13 @@
           switchTab('tab-history');
         });
 
-        window.__TAURI__.event.listen('capsule-visibility-changed', (event) => {
-          if (toggleCapsule) {
-            toggleCapsule.checked = event.payload;
-          }
-        });
-
-        window.__TAURI__.event.listen('widget-visibility-changed', (event) => {
-          if (toggleWidget) {
-            toggleWidget.checked = event.payload;
-          }
-        });
-
         // Слушаем событие обновления истории от капсулы
         window.__TAURI__.event.listen('history-updated', () => {
           refreshHistory();
         });
       }
     </script>
-    <script src="voice-core.js"></script>
-    <script src="tts-widget.js"></script>
-    <script src="tts.js"></script>
+
 
     <!-- Toast Notification -->
     <div class="fixed bottom-6 right-6 bg-[#1f1f24] text-white text-[13px] px-4 py-2.5 rounded-xl shadow-2xl border border-[#8e52ff]/30 transition-all duration-300 opacity-0 pointer-events-none z-[100] flex items-center gap-2" id="dashboard-toast">
