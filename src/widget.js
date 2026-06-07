@@ -98,8 +98,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (state === 'collapsed') {
         h = 118; // 52px панель + 66px запас для плавного затухания нижней тени
+      } else if (state === 'expanded') {
+        h = 165; // 52px панель + 45px второй ряд + 68px запас для тени
       } else {
-        // expanded / dropdown
+        // dropdown
         h = 443; // 480px высота окна - 37px отступов (30px сверху, 7px снизу)
       }
 
