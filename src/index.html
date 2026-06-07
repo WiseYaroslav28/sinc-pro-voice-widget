@@ -89,7 +89,7 @@
           </button>
           <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="cursor: pointer;" data-tab="tab-history">
             <span class="material-symbols-outlined text-[20px]">psychology</span>
-            <span class="text-[12px] sidebar-item-text">Журнал ИИ</span>
+            <span class="text-[12px] sidebar-item-text">Журнал</span>
           </button>
           <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="cursor: pointer;" data-tab="tab-tts">
             <span class="material-symbols-outlined text-[20px]">record_voice_over</span>
@@ -182,7 +182,7 @@
                     </button>
                   </div>
                   <div>
-                    <h3 class="text-[12px] font-semibold text-[#e4e1e9] leading-tight">Последняя активность</h3>
+                    <h3 class="text-[12px] font-semibold text-[#e4e1e9] leading-tight">ИИ-обработка</h3>
                     <div class="flex items-center gap-1.5">
                       <span class="text-[9px] text-[#d2bbff] bg-[#1f1f24] px-1 py-0.5 rounded border border-[#4a4455]/30" id="activity-model">Gemini 2.0 Flash</span>
                       <span class="text-[9px] text-[#ccc3d8] flex items-center gap-0.5">
@@ -207,7 +207,7 @@
                 <button id="btn-speak-text"
                         class="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-[#ccc3d8] border border-[#4a4455]/30 bg-[#1b1b20] hover:text-[#d2bbff] hover:border-[#d2bbff]/40 hover:bg-[#2a292f] transition-all flex-shrink-0"
                         title="Озвучить текст">
-                  <span class="material-symbols-outlined text-[14px]">volume_up</span>
+                  <span class="material-symbols-outlined text-[14px]">record_voice_over</span>
                   <span class="hidden sm:inline">Озвучить</span>
                 </button>
 
@@ -278,14 +278,14 @@
           </section>
 
 
-          <!-- ВКЛАДКА 3: ЖУРНАЛ ИИ -->
+          <!-- ВКЛАДКА 3: ЖУРНАЛ -->
           <section class="tab-content flex flex-col gap-3 flex-1 min-h-0 overflow-y-auto py-4" id="tab-history" style="display: none;">
 
             <!-- Заголовок секции -->
             <div class="flex items-center justify-between">
               <h3 class="text-[13px] font-bold text-[#e4e1e9] flex items-center gap-2">
                 <span class="material-symbols-outlined text-[16px] text-[#d2bbff]">psychology</span>
-                Журнал ИИ
+                Журнал
               </h3>
               <span class="text-[11px] text-[#ccc3d8]" id="history-count">—</span>
             </div>
@@ -1311,7 +1311,7 @@
               btnSpeakText.classList.add('text-[#d2bbff]', 'border-[#d2bbff]/40', 'bg-[#2a292f]');
             } else if (payload.action === 'pause' || payload.action === 'stop') {
               dashboardTtsPlaying = false;
-              btnSpeakText.innerHTML = `<span class="material-symbols-outlined text-[14px]">volume_up</span><span class="hidden sm:inline">Озвучить</span>`;
+              btnSpeakText.innerHTML = `<span class="material-symbols-outlined text-[14px]">record_voice_over</span><span class="hidden sm:inline">Озвучить</span>`;
               btnSpeakText.classList.remove('text-[#d2bbff]', 'border-[#d2bbff]/40', 'bg-[#2a292f]');
             }
           });
