@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SINC PRO - Капсула</title>
+    <title>SINC Orb</title>
     <!-- Локальный CSS от Tailwind -->
     <link rel="stylesheet" href="styles.css" />
     <!-- Google Material Symbols -->
@@ -66,7 +66,7 @@
       /* Стиль для парящих веерных кнопок пресетов */
       .preset-btn {
         position: absolute;
-        transform: translate(-50%, 50%);
+        transform: translate(-50%, -50%);
         white-space: nowrap;
         background: rgba(27, 27, 37, 0.9);
         border: 1px solid rgba(74, 68, 85, 0.6);
@@ -87,7 +87,7 @@
         background: rgba(142, 82, 255, 0.25);
         border-color: #8e52ff;
         color: #a377ff;
-        transform: translate(-50%, 50%) scale(1.08);
+        transform: translate(-50%, -50%) scale(1.08);
         box-shadow: 0 0 10px rgba(142, 82, 255, 0.4);
       }
       .preset-btn.active {
@@ -185,6 +185,168 @@
         box-shadow: 0 4px 16px rgba(0,0,0,0.6);
       }
       .error-wrapper:hover .error-tooltip { opacity: 1; pointer-events: auto; }
+
+      /* Dictation Orb Стили */
+      #active-pill {
+        position: relative;
+        z-index: 30;
+        width: 56px;
+        height: 56px;
+        border-radius: 9999px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #1b1b25;
+        border: 1px solid rgba(142, 82, 255, 0.4);
+        box-shadow: 0 0 15px rgba(142, 82, 255, 0.35), inset 0 0 10px rgba(142, 82, 255, 0.15);
+        transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), 
+                    height 0.35s cubic-bezier(0.4, 0, 0.2, 1), 
+                    border-color 0.35s cubic-bezier(0.4, 0, 0.2, 1), 
+                    background-color 0.35s cubic-bezier(0.4, 0, 0.2, 1), 
+                    border-radius 0.35s cubic-bezier(0.4, 0, 0.2, 1), 
+                    padding 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+                    transform 0.1s ease-out;
+        overflow: hidden;
+        pointer-events: auto;
+        margin: 0 auto;
+        box-sizing: border-box;
+        backdrop-filter: blur(12px);
+      }
+      
+      #active-pill.expanded {
+        width: 240px;
+        height: 48px;
+        padding: 0 12px;
+        border-color: rgba(142, 82, 255, 0.6);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6), 0 0 15px rgba(142, 82, 255, 0.25);
+      }
+
+      #active-pill .active-left-sec {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.3s ease;
+        flex-shrink: 0;
+      }
+
+      #active-pill.expanded #active-mini-timer {
+        display: none;
+      }
+      #active-pill.expanded #active-dot {
+        display: none;
+      }
+
+      #active-pill.expanded .active-left-sec {
+        border-right: 1px solid rgba(74, 68, 85, 0.4);
+        padding-right: 8px;
+        flex-direction: row !important;
+        gap: 0px !important;
+      }
+
+      #active-pill .active-center-sec,
+      #active-pill .active-right-sec {
+        opacity: 0;
+        max-width: 0;
+        visibility: hidden;
+        overflow: hidden;
+        transition: opacity 0.25s ease, max-width 0.3s ease, visibility 0.25s;
+        display: flex;
+        align-items: center;
+        flex-shrink: 0;
+      }
+
+      #active-pill.expanded .active-center-sec {
+        opacity: 1;
+        max-width: 35px;
+        visibility: visible;
+        margin: 0 8px;
+        gap: 1.5px;
+      }
+
+      #active-pill.expanded .active-right-sec {
+        opacity: 1;
+        max-width: 95px;
+        visibility: visible;
+        border-left: 1px solid rgba(74, 68, 85, 0.4);
+        padding-left: 8px;
+        gap: 6px;
+      }
+
+      /* Анимация пульсации дыхания для idle полоски */
+      @keyframes idle-breath {
+        0%, 100% { box-shadow: 0 4px 10px rgba(0,0,0,0.45), 0 0 4px rgba(142,82,255,0.2); opacity: 0.85; }
+        50% { box-shadow: 0 4px 12px rgba(0,0,0,0.5), 0 0 10px rgba(142,82,255,0.5); opacity: 1; }
+      }
+      #state-idle div {
+        animation: idle-breath 3s infinite ease-in-out;
+      }
+
+      /* Новые стили для предотвращения обрезки и плавной пульсации */
+      #state-active {
+        bottom: 8px !important;
+        height: 100px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .active-pill-wrapper {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 240px;
+        height: 100px;
+        pointer-events: none;
+      }
+      #active-cancel-banner:not(.pointer-events-none),
+      #active-error-banner:not(.pointer-events-none),
+      #active-presets-fan:not(.pointer-events-none) {
+        pointer-events: auto !important;
+      }
+
+      /* ========================================= */
+      /* Новые CSS-классы для компактных состояний */
+      /* ========================================= */
+
+      /* Отправка: пульсирующая градиентная рамка */
+      #active-pill.state-sending {
+        border-color: transparent;
+        box-shadow: 0 0 20px rgba(142, 82, 255, 0.5);
+        background: radial-gradient(circle, #1b1b25 70%, rgba(142, 82, 255, 0.2) 100%);
+        animation: pulse-border 1.5s infinite ease-in-out;
+      }
+      
+      @keyframes pulse-border {
+        0%, 100% { box-shadow: 0 0 15px rgba(142, 82, 255, 0.4); border-color: rgba(142, 82, 255, 0.3); }
+        50% { box-shadow: 0 0 25px rgba(142, 82, 255, 0.8); border-color: rgba(142, 82, 255, 0.7); }
+      }
+
+      /* Успех: зеленый Orb */
+      #active-pill.state-success {
+        border-color: #45a29e;
+        background-color: rgba(69, 162, 158, 0.15);
+        box-shadow: 0 0 25px rgba(69, 162, 158, 0.8), inset 0 0 15px rgba(69, 162, 158, 0.3);
+      }
+
+      /* Ошибка: красный Orb */
+      #active-pill.state-error {
+        border-color: #f05454;
+        background-color: rgba(240, 84, 84, 0.15);
+        box-shadow: 0 0 25px rgba(240, 84, 84, 0.8), inset 0 0 15px rgba(240, 84, 84, 0.3);
+      }
+
+      /* Отмена: оранжево-красный пульсирующий Orb */
+      #active-pill.state-cancel-confirm {
+        border-color: #f05454;
+        background-color: rgba(240, 84, 84, 0.1);
+        box-shadow: 0 0 20px rgba(240, 84, 84, 0.6), inset 0 0 10px rgba(240, 84, 84, 0.2);
+        animation: cancel-pulse 0.8s infinite ease-in-out;
+      }
+      
+      @keyframes cancel-pulse {
+        0%, 100% { transform: scale(1); box-shadow: 0 0 15px rgba(240, 84, 84, 0.5); }
+        50% { transform: scale(1.08); box-shadow: 0 0 25px rgba(240, 84, 84, 0.9); }
+      }
     </style>
   </head>
 
@@ -229,59 +391,14 @@
         </div>
       </div>
 
-      <!-- СОСТОЯНИЕ 3: Активная Капсула (Запись/Пауза) -->
+      <!-- СОСТОЯНИЕ 3: Активная Капсула (Запись/Пауза/Отправка/Успех/Ошибка/Отмена) -->
       <div class="capsule-state" id="state-active">
-        
-        <div class="flex flex-col items-center gap-1 w-full z-10">
-          <!-- Парящие пресеты и волшебная палочка во время паузы/наведения -->
-          <div class="relative flex justify-center items-center h-11 w-full mb-0.5 opacity-0 pointer-events-none transition-all duration-300" id="active-magic-area">
-            <button class="w-8 h-8 rounded-full bg-[#1b1b25]/90 border border-[#35343a] flex items-center justify-center text-[#e4e1e9] hover:text-[#45a29e] hover:border-[#45a29e] transition-all shadow-lg active:scale-90 gpu-layer" id="btn-active-presets" style="background-color: #1b1b25;">
-              <span class="material-symbols-outlined text-[15px]">auto_awesome</span>
-            </button>
-            <div class="absolute bottom-full mb-1 w-0 h-0 flex justify-center items-center opacity-0 pointer-events-none transition-all duration-300" id="active-presets-fan"></div>
-          </div>
+        <div class="active-pill-wrapper">
+          <!-- Веер пресетов абсолютно над пилюлей -->
+          <div class="absolute bottom-[64px] left-1/2 -translate-x-1/2 w-0 h-0 flex justify-center items-center opacity-0 pointer-events-none transition-all duration-300 z-20" id="active-presets-fan"></div>
           
-          <!-- Единая пилюля -->
-          <div class="bg-[#1b1b25] border border-[#35343a] rounded-full h-10 flex items-center px-4 shadow-[0_8px_24px_rgba(0,0,0,0.6)] gap-3 cursor-pointer transition-all w-fit mx-auto justify-between gpu-layer hover:border-[#8e52ff]/50" id="active-pill">
-            
-            <!-- Left: Icon + Dot -->
-            <div class="flex items-center gap-1.5 border-r border-[#4a4455]/40 pr-2">
-              <span class="material-symbols-outlined text-[#f05454] text-[16px] transition-colors" id="active-icon" style="font-variation-settings: 'FILL' 1;">mic</span>
-              <div class="w-1.5 h-1.5 rounded-full bg-[#f05454] pulse-dot transition-colors" id="active-dot"></div>
-            </div>
-            
-            <!-- Center: Waveform -->
-            <div class="flex items-center gap-[1.5px] h-4 justify-center" id="recording-waveform">
-              <div class="waveform-bar" style="animation: none !important;"></div>
-              <div class="waveform-bar" style="animation: none !important;"></div>
-              <div class="waveform-bar" style="animation: none !important;"></div>
-              <div class="waveform-bar" style="animation: none !important;"></div>
-              <div class="waveform-bar" style="animation: none !important;"></div>
-              <div class="waveform-bar" style="animation: none !important;"></div>
-              <div class="waveform-bar" style="animation: none !important;"></div>
-            </div>
-            
-            <!-- Right: Control Buttons + Timer -->
-            <div class="flex items-center gap-1.5 border-l border-[#4a4455]/40 pl-2">
-              <div class="font-mono text-[11px] text-[#45a29e] tracking-wider pr-1 transition-colors" id="active-timer">
-                00:00
-              </div>
-              <button class="text-[#ccc3d8] hover:text-[#8e52ff] bg-transparent border-0 flex items-center justify-center active:scale-90 cursor-pointer p-0 gpu-layer" id="btn-active-send" title="Отправить в Gemini 🚀">
-                <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
-              </button>
-              <button class="text-[#f05454] hover:text-[#ff7676] bg-transparent border-0 flex items-center justify-center active:scale-90 cursor-pointer p-0 gpu-layer ml-3 opacity-60 hover:opacity-100 transition-opacity" id="btn-active-cancel" title="Отменить запись">
-                <span class="material-symbols-outlined" style="font-size: 10px;">close</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- СОСТОЯНИЕ 5: Подтверждение отмены (Cancel Confirm) -->
-      <div class="capsule-state" id="state-cancel-confirm">
-        <div class="flex flex-col items-center gap-1.5 w-full">
-          <!-- Крупный баннер предупреждения сверху -->
-          <div class="bg-[#1b1b25]/95 border border-[#f05454]/60 rounded-2xl p-3 shadow-2xl flex flex-col gap-2.5 w-[260px] justify-between items-center backdrop-blur-md" id="cancel-banner">
+          <!-- Баннер подтверждения отмены над пилюлей -->
+          <div class="absolute bottom-[64px] left-1/2 -translate-x-1/2 bg-[#1b1b25]/95 border border-[#f05454]/60 rounded-2xl p-3 shadow-2xl flex flex-col gap-2.5 w-[260px] justify-between items-center backdrop-blur-md opacity-0 pointer-events-none transition-all duration-300 z-40" id="active-cancel-banner">
             <div class="flex items-center gap-2 text-[#f05454]">
               <span class="material-symbols-outlined text-[20px]">warning</span>
               <span class="text-[11px] font-bold uppercase tracking-wider">Отмена записи</span>
@@ -294,50 +411,8 @@
             </button>
           </div>
 
-          <!-- Пилюля отмены внизу -->
-          <div class="bg-[#1b1b25] border border-[#f05454] rounded-full h-10 flex items-center px-3 shadow-[0_8px_24px_rgba(0,0,0,0.6)] gap-2.5 w-[240px] justify-between" id="cancel-pill">
-            <span class="material-symbols-outlined text-[#f05454] text-[16px]">delete</span>
-            <div class="flex-grow flex items-center justify-center">
-              <div class="w-1.5 h-1.5 rounded-full bg-[#f05454] animate-ping"></div>
-            </div>
-            <div class="font-mono text-[11px] text-[#f05454] tracking-wider" id="cancel-timer">
-              00:00
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- СОСТОЯНИЕ 6: Отправка (Sending — орбитальный спиннер) -->
-      <div class="capsule-state" id="state-sending">
-        <div class="flex flex-col items-center gap-3 w-full">
-          <!-- Орбитальный спиннер -->
-          <div class="relative w-10 h-10 flex items-center justify-center">
-            <div class="orbit-dot"></div>
-            <div class="orbit-dot"></div>
-            <div class="orbit-dot"></div>
-          </div>
-          <!-- Пилюля-статус -->
-          <div class="bg-[#1b1b25] border border-[#4a4455]/60 rounded-full h-10 flex items-center px-4 gap-2 shadow-[0_8px_24px_rgba(0,0,0,0.6)] w-[240px] justify-center">
-            <span class="material-symbols-outlined text-[#8e52ff] text-[14px] spinner">progress_activity</span>
-            <span class="text-[11px] text-[#ccc3d8] tracking-wide font-medium">Обрабатывается...</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- СОСТОЯНИЕ 7: Успех (Send Success — зелёная галочка) -->
-      <div class="capsule-state" id="state-send-success">
-        <div class="bg-[#1b1b25] border border-[#45a29e]/60 rounded-full h-10 flex items-center px-5 gap-2.5 shadow-[0_8px_24px_rgba(0,0,0,0.6)] w-[200px] justify-center">
-          <span class="material-symbols-outlined text-[#45a29e] text-[20px] success-icon" style="font-variation-settings:'FILL' 1;">check_circle</span>
-          <span class="text-[12px] text-[#45a29e] font-bold tracking-wide">Готово</span>
-        </div>
-      </div>
-
-      <!-- СОСТОЯНИЕ 8: Ошибка (Send Error) -->
-      <div class="capsule-state" id="state-send-error">
-        <div class="flex flex-col items-center gap-2 w-full">
-          <!-- Баннер ошибки -->
-          <div class="bg-[#1b1b25]/95 border border-[#f05454]/50 rounded-2xl p-3 shadow-2xl flex flex-col gap-2.5 w-[260px] backdrop-blur-md">
-            <!-- Треугольник + текст + кнопка копировать -->
+          <!-- Баннер ошибки над пилюлей -->
+          <div class="absolute bottom-[64px] left-1/2 -translate-x-1/2 bg-[#1b1b25]/95 border border-[#f05454]/50 rounded-2xl p-3 shadow-2xl flex flex-col gap-2.5 w-[260px] backdrop-blur-md opacity-0 pointer-events-none transition-all duration-300 z-40" id="active-error-banner">
             <div class="relative error-wrapper flex items-start gap-2">
               <span class="material-symbols-outlined text-[#f05454] text-[20px] mt-0.5 flex-shrink-0" style="font-variation-settings:'FILL' 1;">warning</span>
               <div class="flex flex-col gap-1 flex-1 min-w-0">
@@ -348,9 +423,8 @@
                 <span class="material-symbols-outlined text-[12px]">content_copy</span>
               </button>
               <!-- Tooltip с полным текстом ошибки -->
-              <div class="error-tooltip" id="error-full-tooltip">–</div>
+              <div class="error-tooltip" id="error-full-tooltip" style="bottom: calc(100% + 8px);">–</div>
             </div>
-            <!-- Кнопки -->
             <div class="flex gap-2">
               <button class="flex-1 py-1.5 rounded-xl bg-[#8e52ff] hover:bg-[#a377ff] text-white text-[10px] font-bold transition-all shadow-lg active:scale-95 cursor-pointer border-0" id="btn-retry-send">
                 Повторить
@@ -360,10 +434,42 @@
               </button>
             </div>
           </div>
-          <!-- Пилюля внизу -->
-          <div class="bg-[#1b1b25] border border-[#f05454]/40 rounded-full h-10 flex items-center px-4 gap-2 shadow-[0_8px_24px_rgba(0,0,0,0.6)] w-[240px] justify-center">
-            <span class="material-symbols-outlined text-[#f05454] text-[14px]">cloud_off</span>
-            <span class="text-[11px] text-[#f05454]/80 tracking-wide font-medium">Не доставлено</span>
+          
+          <!-- Единая пилюля (Dictation Orb) -->
+          <div class="gpu-layer" id="active-pill">
+            
+            <!-- Left: Icon + Dot + Mini Timer -->
+            <div class="active-left-sec flex flex-col items-center justify-center" id="active-left-sec" style="gap: 1px;">
+              <div class="flex items-center justify-center">
+                <span class="material-symbols-outlined text-[#f05454] text-[18px] transition-colors" id="active-icon" style="font-variation-settings: 'FILL' 1;">mic</span>
+                <div class="w-1.5 h-1.5 rounded-full bg-[#f05454] pulse-dot transition-colors ml-1" id="active-dot"></div>
+              </div>
+              <div class="font-mono text-[9px] text-[#f05454]/90 tracking-tighter transition-all duration-300" id="active-mini-timer" style="line-height: 1; margin-top: 1px;">
+                00:00
+              </div>
+            </div>
+            
+            <!-- Center: Waveform -->
+            <div class="active-center-sec" id="recording-waveform">
+              <div class="waveform-bar" style="animation: none !important;"></div>
+              <div class="waveform-bar" style="animation: none !important;"></div>
+              <div class="waveform-bar" style="animation: none !important;"></div>
+              <div class="waveform-bar" style="animation: none !important;"></div>
+              <div class="waveform-bar" style="animation: none !important;"></div>
+            </div>
+            
+            <!-- Right: Control Buttons + Timer -->
+            <div class="active-right-sec">
+              <div class="font-mono text-[11px] text-[#45a29e] tracking-wider pr-1 transition-colors" id="active-timer">
+                00:00
+              </div>
+              <button class="text-[#ccc3d8] hover:text-[#8e52ff] bg-transparent border-0 flex items-center justify-center active:scale-90 cursor-pointer p-0 gpu-layer" id="btn-active-send" title="Отправить в Gemini 🚀">
+                <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+              </button>
+              <button class="text-[#f05454] hover:text-[#ff7676] bg-transparent border-0 flex items-center justify-center active:scale-90 cursor-pointer p-0 gpu-layer ml-2.5 opacity-60 hover:opacity-100 transition-opacity" id="btn-active-cancel" title="Отменить запись">
+                <span class="material-symbols-outlined" style="font-size: 14px;">close</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -404,13 +510,11 @@
       const stateIdle = document.getElementById('state-idle');
       const stateHover = document.getElementById('state-hover');
       const stateActive = document.getElementById('state-active');
-      const stateCancelConfirm = document.getElementById('state-cancel-confirm');
-      const stateSending = document.getElementById('state-sending');
-      const stateSendSuccess = document.getElementById('state-send-success');
-      const stateSendError = document.getElementById('state-send-error');
+      const activeCancelBanner = document.getElementById('active-cancel-banner');
+      const activeErrorBanner = document.getElementById('active-error-banner');
+      const activeMiniTimer = document.getElementById('active-mini-timer');
       const cancelCountdownText = document.getElementById('cancel-countdown-text');
       const btnKeepRecording = document.getElementById('btn-keep-recording');
-      const cancelPill = document.getElementById('cancel-pill');
       
       const btnStartRec = document.getElementById('btn-start-rec');
       const btnHoverPresets = document.getElementById('btn-hover-presets');
@@ -424,9 +528,8 @@
       const activeIcon = document.getElementById('active-icon');
       const activeDot = document.getElementById('active-dot');
 
-      const btnActivePresets = document.getElementById('btn-active-presets');
+      const btnActivePresetsInside = document.getElementById('btn-active-presets-inside');
       const activePresetsFan = document.getElementById('active-presets-fan');
-      const activeMagicArea = document.getElementById('active-magic-area');
 
       // Кросс-версионное получение текущего окна Tauri 2.0
       let appWindow = null;
@@ -444,6 +547,20 @@
       let mediaRecorder = null;
       let audioStream = null;
       let audioChunks = [];
+      let globalAudioStream = null;
+      
+      async function initAlwaysOnMicrophone() {
+        try {
+          globalAudioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          console.log("SINC PRO: Always-on microphone initialized successfully");
+        } catch (e) {
+          console.error("SINC PRO: Always-on microphone failed:", e);
+        }
+      }
+      
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        initAlwaysOnMicrophone();
+      }
       let recordingInterval = null;
       let recordSeconds = 0;
        
@@ -537,9 +654,9 @@
       // Позиции в веере — кучнее, ближе к кнопке и друг к другу
       // bottom/left в px относительно центра контейнера (transform: translate(-50%,50%))
       const PRESETS = [
-        { id: 'summary',    label: 'Суть',   pos: { bottom: 10, left: -52 } },
-        { id: 'custom',     label: 'Промпт', pos: { bottom: 40, left:  -4 } },
-        { id: 'transcript', label: 'Текст',  pos: { bottom: 10, left:  44 } },
+        { id: 'summary',    label: 'Суть',   pos: { bottom: 24, left: -52 } },
+        { id: 'custom',     label: 'Промпт', pos: { bottom: 54, left:  -4 } },
+        { id: 'transcript', label: 'Текст',  pos: { bottom: 24, left:  44 } },
       ];
 
       // Рендерит кнопки пресетов в контейнер с нужным data-атрибутом
@@ -564,7 +681,7 @@
         
         el.innerHTML = hoverBridge + PRESETS.map(p =>
           `<button class="preset-btn"
-                   style="bottom:${p.pos.bottom}px; left:${p.pos.left}px; transform:translate(-50%,50%);"
+                   style="bottom:${p.pos.bottom}px; left:${p.pos.left}px; transform:translate(-50%,-50%);"
                    ${attrName}="${p.id}">${p.label}</button>`
         ).join('');
       }
@@ -662,23 +779,34 @@
       }
 
       let activePresetsTimer = null;
-      if (activeMagicArea) {
-        activeMagicArea.addEventListener('mouseenter', () => {
-          if (activePresetsTimer) { clearTimeout(activePresetsTimer); activePresetsTimer = null; }
-          activePresetsFan.classList.remove('opacity-0', 'pointer-events-none'); activePresetsFan.classList.add('opacity-100', 'pointer-events-auto');
-          updateClickRegion(currentState === 'recording' ? 'recording-fan' : 'pause-fan');
-        });
-        activeMagicArea.addEventListener('mouseleave', () => {
-          if (activePresetsTimer) clearTimeout(activePresetsTimer);
-          activePresetsTimer = setTimeout(() => { 
-            activePresetsFan.classList.remove('opacity-100', 'pointer-events-auto'); activePresetsFan.classList.add('opacity-0', 'pointer-events-none'); 
+      function showActivePresets() {
+        if (activePresetsTimer) { clearTimeout(activePresetsTimer); activePresetsTimer = null; }
+        activePresetsFan.classList.remove('opacity-0', 'pointer-events-none');
+        activePresetsFan.classList.add('opacity-100', 'pointer-events-auto');
+        updateClickRegion(currentState === 'recording' ? 'recording-fan' : 'pause-fan');
+      }
+      function hideActivePresets() {
+        if (activePresetsTimer) clearTimeout(activePresetsTimer);
+        activePresetsTimer = setTimeout(() => { 
+          activePresetsFan.classList.remove('opacity-100', 'pointer-events-auto'); 
+          activePresetsFan.classList.add('opacity-0', 'pointer-events-none'); 
+          if (isMouseOver) {
             if (currentState === 'recording') {
-              updateClickRegion(isMouseOver ? 'recording-hover' : 'recording-idle');
+              updateClickRegion('recording-hover');
             } else if (currentState === 'pause') {
-              updateClickRegion(isMouseOver ? 'pause-hover' : 'pause-idle');
+              updateClickRegion('pause-hover');
             }
-          }, 400);
-        });
+          }
+        }, 400);
+      }
+
+      if (activePill) {
+        activePill.addEventListener('mouseenter', showActivePresets);
+        activePill.addEventListener('mouseleave', hideActivePresets);
+      }
+      if (activePresetsFan) {
+        activePresetsFan.addEventListener('mouseenter', showActivePresets);
+        activePresetsFan.addEventListener('mouseleave', hideActivePresets);
       }
 
       let toastActive = false;
@@ -740,10 +868,20 @@
         stateIdle.classList.remove('active');
         stateHover.classList.remove('active');
         stateActive.classList.remove('active');
-        stateCancelConfirm.classList.remove('active');
-        stateSending.classList.remove('active');
-        stateSendSuccess.classList.remove('active');
-        stateSendError.classList.remove('active');
+
+        // Сбрасываем классы состояний и баннеры по умолчанию
+        if (activePill) {
+          activePill.classList.remove('state-sending', 'state-success', 'state-error', 'state-cancel-confirm');
+        }
+        if (activeIcon) {
+          activeIcon.style.color = '';
+        }
+        if (activeCancelBanner) {
+          activeCancelBanner.classList.add('opacity-0', 'pointer-events-none');
+        }
+        if (activeErrorBanner) {
+          activeErrorBanner.classList.add('opacity-0', 'pointer-events-none');
+        }
 
         if (state === 'idle') {
           stateIdle.classList.add('active');
@@ -752,51 +890,108 @@
         } else if (state === 'recording' || state === 'pause') {
           stateActive.classList.add('active');
           
+          if (isMouseOver) {
+            activePill.classList.add('expanded');
+          } else {
+            activePill.classList.remove('expanded');
+          }
+
+          // Показываем стандартную иконку и точку
+          activeDot.style.display = 'block';
+
           if (state === 'recording') {
             activePill.classList.remove('hover:border-[#ffc107]/50');
             activePill.classList.add('hover:border-[#8e52ff]/50');
             activeIcon.textContent = 'mic';
             activeIcon.style.color = '#f05454';
+            activeIcon.className = 'material-symbols-outlined text-[#f05454] text-[18px] transition-colors';
             activeDot.style.backgroundColor = '#f05454';
             activeDot.classList.add('pulse-dot');
             activeTimer.style.color = '#45a29e';
+            activeMiniTimer.style.color = '#f05454';
           } else {
             activePill.classList.remove('hover:border-[#8e52ff]/50');
             activePill.classList.add('hover:border-[#ffc107]/50');
             activeIcon.textContent = 'pause';
             activeIcon.style.color = '#ffc107';
+            activeIcon.className = 'material-symbols-outlined text-[#ffc107] text-[18px] transition-colors';
             activeDot.style.backgroundColor = '#ffc107';
             activeDot.classList.remove('pulse-dot');
             activeTimer.style.color = '#ffc107';
+            activeMiniTimer.style.color = '#ffc107';
             syncPresetUI(currentPreset);
           }
 
-          if (activeMagicArea) {
-            if (isMouseOver) {
-              activeMagicArea.classList.remove('opacity-0', 'pointer-events-none');
-              activeMagicArea.classList.add('opacity-100', 'pointer-events-auto');
-            } else {
-              activeMagicArea.classList.remove('opacity-100', 'pointer-events-auto');
-              activeMagicArea.classList.add('opacity-0', 'pointer-events-none');
-            }
-          }
           if (activePresetsFan) {
             activePresetsFan.classList.remove('opacity-100', 'pointer-events-auto'); 
             activePresetsFan.classList.add('opacity-0', 'pointer-events-none');
           }
         } else if (state === 'cancel-confirm') {
-          stateCancelConfirm.classList.add('active');
+          stateActive.classList.add('active');
+          activePill.classList.remove('expanded');
+          activePill.classList.add('state-cancel-confirm');
+          
+          activeIcon.textContent = 'delete';
+          activeIcon.className = 'material-symbols-outlined text-[#f05454] text-[18px] transition-colors';
+          activeDot.style.display = 'none';
+          activeMiniTimer.style.color = '#f05454';
+          
+          activeCancelBanner.classList.remove('opacity-0', 'pointer-events-none');
         } else if (state === 'sending') {
-          stateSending.classList.add('active');
+          stateActive.classList.add('active');
+          activePill.classList.remove('expanded');
+          activePill.classList.add('state-sending');
+          
+          activeIcon.textContent = 'progress_activity';
+          activeIcon.className = 'material-symbols-outlined text-[#8e52ff] text-[18px] transition-colors spinner';
+          activeDot.style.display = 'none';
+          activeMiniTimer.textContent = 'ИИ';
+          activeMiniTimer.style.color = '#8e52ff';
         } else if (state === 'send-success') {
-          stateSendSuccess.classList.add('active');
+          stateActive.classList.add('active');
+          activePill.classList.remove('expanded');
+          activePill.classList.add('state-success');
+          
+          activeIcon.textContent = 'check_circle';
+          activeIcon.className = 'material-symbols-outlined text-[#45a29e] text-[20px] transition-colors success-icon';
+          activeDot.style.display = 'none';
+          activeMiniTimer.textContent = 'ОК';
+          activeMiniTimer.style.color = '#45a29e';
         } else if (state === 'send-error') {
-          stateSendError.classList.add('active');
+          stateActive.classList.add('active');
+          activePill.classList.remove('expanded');
+          activePill.classList.add('state-error');
+          
+          activeIcon.textContent = 'cloud_off';
+          activeIcon.className = 'material-symbols-outlined text-[#f05454] text-[18px] transition-colors';
+          activeDot.style.display = 'none';
+          activeMiniTimer.textContent = 'ERR';
+          activeMiniTimer.style.color = '#f05454';
+          
+          activeErrorBanner.classList.remove('opacity-0', 'pointer-events-none');
         }
         
         // Обновляем физический регион окна для кликов (прозрачность на уровне ОС)
-        await updateClickRegion(state);
-
+        if (state === 'recording' || state === 'pause') {
+          const regionState = `${state}-${isMouseOver ? 'hover' : 'idle'}`;
+          await updateClickRegion(regionState);
+        } else if (state === 'sending' || state === 'send-success') {
+          // Задерживаем сужение региона клика на время анимации сворачивания (450мс)
+          setTimeout(() => {
+            if (currentState === state) {
+              updateClickRegion(state);
+            }
+          }, 450);
+        } else if (state === 'idle') {
+          // Задерживаем сужение региона клика на время плавного исчезновения кнопок hover (200мс)
+          setTimeout(() => {
+            if (currentState === 'idle') {
+              updateClickRegion('idle');
+            }
+          }, 200);
+        } else {
+          await updateClickRegion(state);
+        }
 
         if (invoke) {
           const isActive = (state === 'recording' || state === 'pause' || state === 'cancel-confirm' || state === 'sending' || state === 'send-success' || state === 'send-error');
@@ -858,19 +1053,21 @@
           let w = 320, h = 200; // default for active states
 
           if (state === 'idle') {
-            w = 88; h = 24;
+            w = 88; h = 32;
           } else if (state === 'hover') {
             w = 200; h = 180;
           } else if (state === 'sending') {
-            w = 280; h = 120;
+            w = 180; h = 130;
           } else if (state === 'send-success') {
-            w = 220; h = 52;
+            w = 180; h = 130;
           } else if (state === 'send-error') {
             w = 280; h = 200;
-          } else if (state === 'recording-idle' || state === 'pause-idle' || state === 'recording' || state === 'pause') {
-            w = 240; h = 48;
+          } else if (state === 'cancel-confirm') {
+            w = 280; h = 200;
+          } else if (state === 'recording-idle' || state === 'pause-idle') {
+            w = 180; h = 130;
           } else if (state === 'recording-hover' || state === 'pause-hover') {
-            w = 240; h = 94;
+            w = 240; h = 100;
           } else if (state === 'recording-fan' || state === 'pause-fan') {
             w = 320; h = 200;
           }
@@ -895,13 +1092,8 @@
         if (currentState === 'idle') {
           switchState('hover');
         } else if (currentState === 'recording' || currentState === 'pause') {
-          if (activeMagicArea) {
-            activeMagicArea.classList.remove('opacity-0', 'pointer-events-none');
-            activeMagicArea.classList.add('opacity-100', 'pointer-events-auto');
-          }
-          if (activePresetsFan && activePresetsFan.classList.contains('opacity-0')) {
-            updateClickRegion(currentState === 'recording' ? 'recording-hover' : 'pause-hover');
-          }
+          if (activePill) activePill.classList.add('expanded');
+          showActivePresets();
         }
       });
 
@@ -912,11 +1104,22 @@
         collapseTimer = setTimeout(() => {
           if (!isMouseOver) {
             if (currentState === 'recording' || currentState === 'pause') {
-              if (activePresetsFan) { activePresetsFan.classList.remove('opacity-100', 'pointer-events-auto'); activePresetsFan.classList.add('opacity-0', 'pointer-events-none'); }
-              if (activeMagicArea) { activeMagicArea.classList.remove('opacity-100', 'pointer-events-auto'); activeMagicArea.classList.add('opacity-0', 'pointer-events-none'); }
-              updateClickRegion(currentState === 'recording' ? 'recording-idle' : 'pause-idle');
+              if (activePill) activePill.classList.remove('expanded');
+              if (activePresetsFan) { 
+                activePresetsFan.classList.remove('opacity-100', 'pointer-events-auto'); 
+                activePresetsFan.classList.add('opacity-0', 'pointer-events-none'); 
+              }
+              // Задерживаем сужение клик-региона на время анимации сжатия капсулы (450мс)
+              setTimeout(() => {
+                if (!isMouseOver && (currentState === 'recording' || currentState === 'pause')) {
+                  updateClickRegion(currentState === 'recording' ? 'recording-idle' : 'pause-idle');
+                }
+              }, 450);
             } else if (currentState === 'hover') {
-              if (hoverPresetsMenu) { hoverPresetsMenu.classList.remove('opacity-100', 'pointer-events-auto'); hoverPresetsMenu.classList.add('opacity-0', 'pointer-events-none'); }
+              if (hoverPresetsMenu) { 
+                hoverPresetsMenu.classList.remove('opacity-100', 'pointer-events-auto'); 
+                hoverPresetsMenu.classList.add('opacity-0', 'pointer-events-none'); 
+              }
               switchState('idle');
             }
           }
@@ -962,12 +1165,20 @@
 
       async function startRecordingProcess() {
         if (mediaRecorder && mediaRecorder.state !== 'inactive') return;
+        
+        // Мгновенный запуск звукового сигнала старта записи
+        playAudioCue('start');
+        
         try {
           if (invoke) await invoke('start_recording_session');
           recordSeconds = 0;
           activeTimer.textContent = '00:00';
 
-          audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          // Используем постоянно открытый поток
+          if (!globalAudioStream) {
+            globalAudioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          }
+          audioStream = globalAudioStream;
           
           let mimeType = 'audio/webm';
           if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
@@ -991,7 +1202,6 @@
           };
 
           mediaRecorder.onstart = () => {
-            playAudioCue('start');
             switchState('recording');
             startTimer();
             startVisualizer(audioStream);
@@ -1014,9 +1224,8 @@
           mediaRecorder.onstop = () => {
             stopTimer();
             stopVisualizer();
-            if (audioStream) {
-              audioStream.getTracks().forEach(track => track.stop());
-            }
+            // Стрим микрофона остается активным в globalAudioStream
+            audioStream = null;
           };
 
           mediaRecorder.start(500);
@@ -1047,18 +1256,18 @@
         playAudioCue('warning');
         preCancelState = currentState;
         
-        const cancelTimer = document.getElementById('cancel-timer');
-        if (cancelTimer) cancelTimer.textContent = activeTimer.textContent;
-        
         switchState('cancel-confirm');
         cancelSecondsLeft = 5;
         cancelCountdownText.textContent = `Вся надиктованная запись будет сброшена в архив через ${cancelSecondsLeft} сек...`;
+        if (activeMiniTimer) activeMiniTimer.textContent = `${cancelSecondsLeft}с`;
+
         if (cancelInterval) clearInterval(cancelInterval);
         cancelInterval = setInterval(() => {
           cancelSecondsLeft--;
           if (cancelSecondsLeft > 0) {
             playAudioCue('tick');
             cancelCountdownText.textContent = `Вся надиктованная запись будет сброшена в архив через ${cancelSecondsLeft} сек...`;
+            if (activeMiniTimer) activeMiniTimer.textContent = `${cancelSecondsLeft}с`;
           } else {
             clearInterval(cancelInterval);
             cancelInterval = null;
@@ -1086,21 +1295,32 @@
           mediaRecorder.stop();
           await new Promise(resolve => setTimeout(resolve, 200));
         }
+
+        if (hardDelete && invoke) {
+          try {
+            await invoke('save_audio', {
+              durationSecs: finalSeconds,
+              preset: 'cancelled', customPrompt: null, isCancelled: true, hardDelete: true
+            });
+          } catch (e) {
+            console.error('Ошибка очистки аудио при hardDelete:', e);
+          }
+        } else if (isUserCancelled && finalSeconds >= 1 && invoke) {
+          try {
+            await invoke('save_audio', {
+              durationSecs: finalSeconds,
+              preset: 'cancelled', customPrompt: null, isCancelled: true, hardDelete: false
+            });
+          } catch (e) {
+            console.error('Ошибка сохранения отменённого аудио:', e);
+          }
+        }
+
         if (isUserCancelled) {
-          if (finalSeconds < 1) {
+          if (finalSeconds < 1 && !hardDelete) {
             showToast('Запись пустая — не сохранено', false);
           } else {
-            try {
-              if (invoke) {
-                await invoke('save_audio', {
-                  durationSecs: finalSeconds,
-                  preset: 'cancelled', customPrompt: null, isCancelled: true, hardDelete: hardDelete
-                });
-              }
-              showToast(hardDelete ? 'Запись уничтожена' : 'Запись отменена (в архиве)', false);
-            } catch (e) {
-              console.error('Ошибка сохранения отменённого аудио:', e);
-            }
+            showToast(hardDelete ? 'Запись уничтожена' : 'Запись отменена (в архиве)', false);
           }
         }
         switchState('idle');
@@ -1119,8 +1339,19 @@
 
             // Извлекаем текст результата (поддерживаем обе структуры)
             const firstAi = entry.ai_results && entry.ai_results.length > 0 ? entry.ai_results[0] : null;
-            const resultText = firstAi ? firstAi.text : (entry.raw_transcript || entry.transcript || '');
             const isError = (entry.preset === 'error') || (firstAi && firstAi.preset === 'error');
+            
+            let resultText = '';
+            const rawText = entry.raw_transcript || entry.transcript || '';
+            
+            if (isError) {
+              resultText = firstAi ? firstAi.text : rawText;
+            } else if (firstAi && firstAi.preset !== 'transcript' && firstAi.preset !== 'cancelled') {
+              // Объединяем дословную транскрипцию и результат ИИ-обработки через разделитель
+              resultText = `${rawText}\n\n[${firstAi.preset_label}]:\n${firstAi.text}`;
+            } else {
+              resultText = rawText;
+            }
 
             if (isError) {
               handleSendError(resultText);
@@ -1139,25 +1370,27 @@
         }
       }
 
-      function handleSendSuccess(resultText) {
-        playAudioCue('success');
-        switchState('send-success');
+      async function handleSendSuccess(resultText) {
         customPromptText = "";
         isSending = false;
 
-        setTimeout(async () => {
-          switchState('idle');
-          // Пробуем авто-вставить в предыдущий фокус
-          let pasted = false;
-          try {
-            if (invoke) {
-              await invoke('paste_text', { text: resultText });
-              pasted = true;
-            }
-          } catch (e) {
-            console.warn('Авто-вставка не удалась:', e);
+        // Пробуем авто-вставить в предыдущий фокус ДО звука успеха
+        let pasted = false;
+        try {
+          if (invoke) {
+            await invoke('paste_text', { text: resultText });
+            pasted = true;
           }
+        } catch (e) {
+          console.warn('Авто-вставка не удалась:', e);
+        }
 
+        // Воспроизводим звук успеха и меняем состояние только после вставки
+        playAudioCue('success');
+        switchState('send-success');
+
+        setTimeout(() => {
+          switchState('idle');
           if (pasted) {
             showToast('Готово! Текст вставлен.', false);
           } else {
@@ -1242,16 +1475,20 @@
       
       if (activePill) {
         activePill.addEventListener('click', (e) => {
-          if (e.target.closest('#btn-active-send') || e.target.closest('#btn-active-cancel')) return;
-          if (currentState === 'recording') pauseRecordingProcess();
-          else resumeRecordingProcess();
+          if (e.target.closest('#btn-active-send') || e.target.closest('#btn-active-cancel') || e.target.closest('#btn-active-presets-inside')) return;
+          if (currentState === 'recording') {
+            pauseRecordingProcess();
+          } else if (currentState === 'pause') {
+            resumeRecordingProcess();
+          } else if (currentState === 'cancel-confirm') {
+            cancelRecordingProcess(true, true);
+          }
         });
       }
       btnActiveCancel.addEventListener('click', () => { cancelRecordingProcess(true, true); });
       btnActiveSend.addEventListener('click', () => { stopAndSendRecording(); });
       
       btnKeepRecording.addEventListener('click', () => { stopCancelCountdownAndRestore(); });
-      cancelPill.addEventListener('click', () => { cancelRecordingProcess(true, true); });
 
       function startTimer() {
         if (recordingInterval) clearInterval(recordingInterval);
@@ -1260,8 +1497,7 @@
           const mins = Math.floor(recordSeconds / 60).toString().padStart(2, '0');
           const secs = (recordSeconds % 60).toString().padStart(2, '0');
           if (activeTimer) activeTimer.textContent = `${mins}:${secs}`;
-          const cancelTimer = document.getElementById('cancel-timer');
-          if (cancelTimer) cancelTimer.textContent = `${mins}:${secs}`;
+          if (activeMiniTimer) activeMiniTimer.textContent = `${mins}:${secs}`;
         }, 1000);
       }
 
@@ -1329,32 +1565,34 @@
         });
 
         // Хоткеи
+        let errorTimeout = null;
+
         window.__TAURI__.event.listen('global-shortcut-pressed', () => {
           if (isHeld) return; // Защита от спама автоповтора ОС
           isHeld = true;
           const now = Date.now();
           if (currentState === 'cancel-confirm') { stopCancelCountdownAndRestore(); isHeld = false; return; }
+          
           if (currentState === 'recording' || currentState === 'pause') {
+             // Если мы были в режиме ожидания второго клика (ошибка тапа)
+             if (mode === 'ptt-maybe-waiting') {
+                if (errorTimeout) { clearTimeout(errorTimeout); errorTimeout = null; }
+                mode = 'latch'; // Фиксируем режим Latch!
+                console.log("SINC PRO: Double click detected, switching to Latch mode");
+                return;
+             }
+             
+             // Если мы в режиме Latch — одиночный клик переключает паузу / продолжение
              if (mode === 'latch') {
                 if (currentState === 'recording') pauseRecordingProcess();
                 else resumeRecordingProcess();
                 return;
              }
-             if (mode === 'latch-wait') {
-                if (clickTimeout) { clearTimeout(clickTimeout); clickTimeout = null; }
-                mode = 'latch';
-                return;
-             }
-             // Одиночный клик (отпускание, пауза), переходим в latch
-             if (currentState === 'recording') pauseRecordingProcess();
-             else resumeRecordingProcess();
-             mode = 'latch';
-             return;
           }
 
           if (currentState === 'idle' || currentState === 'hover') {
             pressStartTime = now;
-            mode = 'ptt';
+            mode = 'ptt-maybe';
             startRecordingProcess();
           }
         });
@@ -1365,26 +1603,26 @@
           
           const duration = Date.now() - pressStartTime;
           
-          if (mode === 'ptt') {
+          if (mode === 'ptt-maybe') {
             if (duration < 250) {
-              // Это был быстрый клик (тап)
-              cancelRecordingProcess(true, true); // отменяем PTT запись
-              mode = null;
+              // Это короткий клик (тап).
+              // Мы НЕ останавливаем запись. Мы переводим режим в ожидание второго клика
+              mode = 'ptt-maybe-waiting';
               
-              clickCount++;
-              if (clickCount === 1) {
-                // Ждём 500мс для второго клика
-                clickTimeout = setTimeout(() => { clickCount = 0; }, 500);
-              } else if (clickCount >= 2) {
-                // Двойной быстрый клик → Latch-запись
-                if (clickTimeout) clearTimeout(clickTimeout);
-                clickCount = 0;
-                mode = 'latch';
-                startRecordingProcess();
-              }
+              if (errorTimeout) clearTimeout(errorTimeout);
+              errorTimeout = setTimeout(async () => {
+                // Второго клика не последовало за 500 мс! Это ошибка.
+                // Тихо останавливаем запись, удаляя файл без архивации.
+                console.log("SINC PRO: Single click timeout, canceling recording as error");
+                await cancelRecordingProcess(false, true); // isUserCancelled = false, hardDelete = true
+                mode = null;
+                errorTimeout = null;
+              }, 500);
               return;
             }
-            // Иначе (>= 250мс) - это полноценный PTT
+            
+            // Иначе (>= 250мс) - это полноценное удержание PTT
+            console.log("SINC PRO: PTT release detected, sending recording");
             stopAndSendRecording(); 
             mode = null; 
             return; 
@@ -1558,8 +1796,29 @@
         const bars = document.querySelectorAll('#recording-waveform .waveform-bar');
         if (bars.length === 0) return;
 
-        // Берем 7 частотных диапазонов для 7 полосочек (пропускаем самый бас и ультразвук)
-        const indices = [1, 3, 5, 8, 11, 15, 20];
+        // Вычисляем среднюю громкость для пульсации Orb
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          sum += dataArray[i];
+        }
+        const avgVolume = sum / dataArray.length; // от 0 до 255
+
+        // Если пилюля сжата (компактный Orb), применяем эффект дыхания
+        if (activePill) {
+          if (!activePill.classList.contains('expanded')) {
+            const scale = 1 + (avgVolume / 255) * 0.38; // максимум +38%
+            const glow = 15 + (avgVolume / 255) * 35; // тень до 50px
+            activePill.style.transform = `scale(${scale})`;
+            activePill.style.boxShadow = `0 0 ${glow}px rgba(142, 82, 255, ${0.35 + (avgVolume / 255) * 0.55}), inset 0 0 10px rgba(142, 82, 255, 0.15)`;
+          } else {
+            // В расширенном состоянии сбрасываем пульсацию
+            activePill.style.transform = '';
+            activePill.style.boxShadow = '';
+          }
+        }
+
+        // Берем 5 частотных диапазонов для 5 полосочек (пропускаем самый бас и ультразвук)
+        const indices = [1, 3, 5, 8, 11];
         
         for (let i = 0; i < bars.length; i++) {
           const value = dataArray[indices[i]] || 0; // От 0 до 255
@@ -1607,6 +1866,12 @@
         // Сброс всех полос в прямую линию (тишина)
         const bars = document.querySelectorAll('.waveform-bar');
         bars.forEach(b => b.style.height = '4px');
+
+        // Сброс пульсации Orb
+        if (activePill) {
+          activePill.style.transform = '';
+          activePill.style.boxShadow = '';
+        }
       }
 
     </script>

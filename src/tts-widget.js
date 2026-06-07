@@ -98,7 +98,7 @@ window.renderTtsWidget = function(container, isMain = false) {
           <span id="tts-selected-voice-label" class="flex-1 text-left truncate">Загрузка...</span>
           <span class="material-symbols-outlined text-[14px] text-[#4a4455]">expand_more</span>
         </button>
-        <div class="absolute top-[calc(100%+8px)] left-0 bg-[#1f1f24] border border-[#8e52ff]/30 rounded-[10px] p-1.5 hidden flex-col gap-[2px] shadow-[0_8px_24px_rgba(0,0,0,0.6)] max-h-[280px] overflow-y-auto z-50 w-full" id="tts-voice-menu">
+        <div class="absolute top-[calc(100%+8px)] left-0 bg-[#1b1b22]/95 border border-[#8e52ff]/35 rounded-[12px] p-1.5 hidden flex-col gap-[2px] shadow-[0_12px_32px_rgba(0,0,0,0.7)] backdrop-blur-md max-h-[280px] overflow-y-auto z-50 w-full" id="tts-voice-menu">
           <div class="text-[9px] uppercase tracking-widest text-[#8e52ff] px-2 mb-1 opacity-70">Голоса</div>
           <!-- Заполняется динамически -->
         </div>
@@ -113,7 +113,7 @@ window.renderTtsWidget = function(container, isMain = false) {
           <span id="tts-selected-speed-label">1.0x</span>
         </button>
         <!-- Выпадающее меню скорости -->
-        <div class="absolute top-[calc(100%+8px)] left-1/2 -translate-x-1/2 bg-[#1f1f24] border border-[#8e52ff]/30 rounded-[10px] p-2 w-[80px] hidden flex-col shadow-[0_8px_24px_rgba(0,0,0,0.6)] z-50" id="tts-speed-menu">
+        <div class="absolute top-[calc(100%+8px)] left-1/2 -translate-x-1/2 bg-[#1b1b22]/95 border border-[#8e52ff]/35 rounded-[12px] p-2 w-[80px] hidden flex-col shadow-[0_12px_32px_rgba(0,0,0,0.7)] backdrop-blur-md z-50" id="tts-speed-menu">
           <div class="text-[9px] uppercase tracking-widest text-[#8e52ff] px-2 mb-2 opacity-70">Скорость</div>
           <div class="flex flex-row relative">
             <div class="flex flex-col flex-1 gap-1" id="tts-speed-list">

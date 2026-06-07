@@ -77,7 +77,7 @@ pub async fn translate_hybrid(
         let client = Client::new();
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-            if model.is_empty() { "gemini-2.0-flash" } else { model },
+            if model.is_empty() { "gemini-2.5-flash" } else { model },
             api_key
         );
 

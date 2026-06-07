@@ -342,28 +342,29 @@ unsafe extern "system" fn low_level_keyboard_proc(
                     // TTS-перевод — одноразовое действие, аналогично
                     SHORTCUT_ACTIVE.store(false, Ordering::SeqCst);
                 }
-            } else if ctrl && win {
-                if alt {
-                    if !FORCE_SEND_ACTIVE.swap(true, Ordering::SeqCst) {
-                        if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
-                            let _ = app.emit("global-force-send", ());
-                        }
+            } else if win && alt && !ctrl && !shift {
+                if !FORCE_SEND_ACTIVE.swap(true, Ordering::SeqCst) {
+                    if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                        println!("SINC PRO HOTKEY: Win+Alt (Send) detected");
+                        let _ = app.emit("global-force-send", ());
                     }
-                } else {
-                    if !SHORTCUT_ACTIVE.swap(true, Ordering::SeqCst) {
-                        if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
-                            let _ = app.emit("global-shortcut-pressed", ());
-                        }
+                }
+            } else if ctrl && win && !alt && !shift {
+                if !SHORTCUT_ACTIVE.swap(true, Ordering::SeqCst) {
+                    if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                        println!("SINC PRO HOTKEY: Ctrl+Win (Record) pressed");
+                        let _ = app.emit("global-shortcut-pressed", ());
                     }
                 }
             } else {
                 if SHORTCUT_ACTIVE.swap(false, Ordering::SeqCst) {
                     if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                        println!("SINC PRO HOTKEY: Ctrl+Win released");
                         let _ = app.emit("global-shortcut-released", ());
                     }
                 }
-                if FORCE_SEND_ACTIVE.load(Ordering::SeqCst) && (!ctrl || !win || !alt) {
-                    FORCE_SEND_ACTIVE.store(false, Ordering::SeqCst);
+                if FORCE_SEND_ACTIVE.swap(false, Ordering::SeqCst) {
+                    println!("SINC PRO HOTKEY: Win+Alt released");
                 }
             }
         }
@@ -646,6 +647,9 @@ fn is_stub_transcript(text: &str) -> bool {
         || lower.contains("пожалуйста, предоставьте аудио")
         || lower.contains("не могу распознать аудио")
         || lower.contains("аудиозапись отсутствует")
+        || lower.contains("здесь будет дословная транскрипция")
+        || lower.contains("очищенная от слов-паразитов")
+        || lower.contains("сохранением всех мыслей")
 }
 
 static RECORDING_FILE: std::sync::LazyLock<Mutex<Option<String>>> =
@@ -740,7 +744,7 @@ async fn save_audio(
 
     let timestamp = Local::now().format("%d.%m.%Y • %H:%M").to_string();
 
-    // Если запись отменена пользователем — сохраняем в историю без Gemini
+    // Если запись отменена пользователем — сохраняем в историю без Gemini (для Escape отмен)
     if is_cancelled.unwrap_or(false) {
         let entry = HistoryEntry {
             id: id.clone(),
@@ -830,18 +834,21 @@ async fn save_audio(
         }
     });
 
-    // Fallback цепочка моделей: основная → резерв 1 → резерв 2
+    // Fallback цепочка моделей: расширяем до максимальной отказоустойчивости на бесплатном тарифе
     let primary_model = if config.ai_model.is_empty() {
-        "gemini-2.0-flash".to_string()
+        "gemini-2.5-flash-lite".to_string()
     } else {
         config.ai_model.clone()
     };
     let fallback_models = vec![
         primary_model.clone(),
-        "gemini-3.5-flash".to_string(),
-        "gemini-2.5-flash".to_string(),
         "gemini-3.1-flash-lite".to_string(),
+        "gemini-2.5-flash".to_string(),
+        "gemini-3.5-flash".to_string(),
+        "gemini-2.5-flash-lite".to_string(),
         "gemini-2.0-flash".to_string(),
+        "gemini-2.0-flash-lite".to_string(),
+        "gemini-2.5-pro".to_string(),
     ];
     // Убираем дубли, сохраняем порядок
     let mut seen = std::collections::HashSet::new();
@@ -850,7 +857,10 @@ async fn save_audio(
         .filter(|m| seen.insert(m.clone()))
         .collect();
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
     let api_key = config.api_key.trim().to_string();
 
     // Пробуем модели по очереди
@@ -875,6 +885,7 @@ async fn save_audio(
         match client.post(&url).json(&request_payload).send().await {
             Err(e) => {
                 last_err = format!("Сетевая ошибка ({}): {}", model, e);
+                log_tts_error("Gemini network error", &last_err);
                 continue;
             }
             Ok(res) => {
@@ -888,20 +899,29 @@ async fn save_audio(
                         locks.insert(model.clone(), unlock_time);
                     }
                     last_err = format!("Модель {} заблокирована (429) на {:?}", model, delay);
+                    log_tts_error("Gemini rate limit 429", &last_err);
                     continue;
                 }
                 if status.as_u16() == 503 {
                     last_err = format!("Сервис недоступен (503) для {}", model);
+                    log_tts_error("Gemini service unavailable 503", &last_err);
                     continue;
                 }
                 if !status.is_success() {
                     let err_text = res.text().await.unwrap_or_default();
                     last_err = format!("Ошибка {} ({}): {}", status, model, err_text);
+                    log_tts_error("Gemini API error status", &last_err);
+                    if err_text.contains("RESOURCE_EXHAUSTED") || err_text.contains("quota") {
+                        let unlock_time = Instant::now() + Duration::from_secs(3600);
+                        let mut locks = MODEL_LOCKS.lock().unwrap();
+                        locks.insert(model.clone(), unlock_time);
+                    }
                     continue;
                 }
                 match res.json::<GeminiResponse>().await {
                     Err(e) => {
                         last_err = format!("Парсинг ответа ({}): {}", model, e);
+                        log_tts_error("Gemini JSON deserialize error", &last_err);
                         continue;
                     }
                     Ok(gr) => {
@@ -923,6 +943,7 @@ async fn save_audio(
                             if is_stub_transcript(&transcript) {
                                 last_err =
                                     format!("Модель {} вернула заглушку: {}", model, transcript);
+                                log_tts_error("Gemini stub returned", &last_err);
                                 continue;
                             }
 
@@ -930,6 +951,7 @@ async fn save_audio(
                             break;
                         } else {
                             last_err = format!("Пустой ответ от {}", model);
+                            log_tts_error("Gemini empty candidates", &last_err);
                         }
                     }
                 }
@@ -939,11 +961,11 @@ async fn save_audio(
 
     // Парсим JSON-ответ от Gemini
     let (raw_transcript, ai_result_text, is_error) = match gemini_text {
-        None => (
-            format!("[Ошибка: все модели недоступны. {}]", last_err),
-            String::new(),
-            true,
-        ),
+        None => {
+            let err_msg = format!("[Ошибка: все модели недоступны. {}]", last_err);
+            log_tts_error("Gemini call failed entirely", &err_msg);
+            (err_msg, String::new(), true)
+        }
         Some(raw_json) => {
             // Очищаем от Markdown и мусора
             let mut cleaned = raw_json.trim().to_string();
@@ -971,17 +993,43 @@ async fn save_audio(
                     let ai = v["ai_result"].as_str().unwrap_or("").to_string();
                     (tr, ai, false)
                 }
-                Err(_) => {
-                    // Gemini не вернул JSON — весь текст кладём как транскрипцию
-                    (raw_json, String::new(), false)
+                Err(e) => {
+                    // Логируем ошибку парсинга в файл
+                    println!("SINC PRO ERROR: Ошибка парсинга JSON от Gemini: {}. Пробуем регулярные выражения.", e);
+                    log_tts_error("Gemini JSON parse failed", &format!("Error: {}, Raw input: {}", e, cleaned));
+                    
+                    // Пытаемся вытащить значения полей регулярными выражениями
+                    let re_tr = regex::Regex::new(r#""transcript"\s*:\s*"((?:[^"\\]|\\.)*)""#).unwrap();
+                    let re_ai = regex::Regex::new(r#""ai_result"\s*:\s*"((?:[^"\\]|\\.)*)""#).unwrap();
+                    
+                    let tr = if let Some(cap) = re_tr.captures(&cleaned) {
+                        cap.get(1).map(|m| m.as_str().replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\")).unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    
+                    let ai = if let Some(cap) = re_ai.captures(&cleaned) {
+                        cap.get(1).map(|m| m.as_str().replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\")).unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+
+                    if !tr.is_empty() || !ai.is_empty() {
+                        (tr, ai, false)
+                    } else {
+                        // Если регулярки тоже не сработали, возвращаем raw_json как транскрипцию
+                        (raw_json, String::new(), false)
+                    }
                 }
             }
         }
     };
 
-    let preset_key = if custom_prompt
-        .as_deref()
-        .map(|s| !s.is_empty())
+    let preset_key = if is_error {
+        "error".to_string()
+    } else if custom_prompt
+        .as_ref()
+        .map(|p| !p.trim().is_empty())
         .unwrap_or(false)
     {
         "custom".to_string()
@@ -994,12 +1042,12 @@ async fn save_audio(
         vec![AiResult {
             preset: "error".to_string(),
             preset_label: "Ошибка API".to_string(),
-            text: ai_result_text,
+            text: raw_transcript.clone(),
             timestamp: ts,
         }]
     } else if !ai_result_text.is_empty() {
         vec![AiResult {
-            preset: preset_key,
+            preset: preset_key.clone(),
             preset_label: preset_label_str.clone(),
             text: ai_result_text,
             timestamp: ts,
@@ -1012,10 +1060,10 @@ async fn save_audio(
         id: id.clone(),
         timestamp,
         duration_secs,
-        raw_transcript,
-        transcript: String::new(),
-        preset: String::new(),
-        preset_label: String::new(),
+        raw_transcript: raw_transcript.clone(),
+        transcript: if is_error { String::new() } else { raw_transcript },
+        preset: if is_error { "error".to_string() } else { preset_key },
+        preset_label: if is_error { "Ошибка".to_string() } else { preset_label_str },
         ai_results,
         audio_path: file_path.to_string_lossy().to_string(),
     };
@@ -1352,6 +1400,295 @@ async fn capture_clipboard_text(app_handle: tauri::AppHandle, translate: bool) -
     }
     #[cfg(not(target_os = "windows"))]
     { Err("Поддерживается только Windows".to_string()) }
+}
+
+#[tauri::command]
+async fn translate_hybrid(
+    app_handle: tauri::AppHandle,
+    text: String,
+    target_lang: Option<String>,
+) -> Result<String, String> {
+    let config = load_config_internal(&app_handle)?;
+    let translated = crate::translator::translate_hybrid(&text, &config.api_key, &config.ai_model).await?;
+    Ok(translated)
+}
+
+#[tauri::command]
+async fn process_ocr_vision(
+    app_handle: tauri::AppHandle,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> Result<serde_json::Value, String> {
+    // 1. Поиск монитора
+    let center_x = x + (width as i32) / 2;
+    let center_y = y + (height as i32) / 2;
+    
+    let (screenshot, scale, monitor_x, monitor_y) = {
+        let monitor = xcap::Monitor::from_point(center_x, center_y)
+            .map_err(|e| format!("Не удалось найти монитор в точке ({}, {}): {}", center_x, center_y, e))?;
+            
+        let screenshot = monitor.capture_image()
+            .map_err(|e| format!("Ошибка захвата экрана: {}", e))?;
+            
+        let scale = monitor.scale_factor().map_err(|e| e.to_string())?;
+        let monitor_x = monitor.x().map_err(|e| e.to_string())?;
+        let monitor_y = monitor.y().map_err(|e| e.to_string())?;
+        
+        (screenshot, scale, monitor_x, monitor_y)
+    };
+    
+    let local_x = x - monitor_x;
+    let local_y = y - monitor_y;
+    
+    let phys_x = ((local_x as f32) * scale).round() as u32;
+    let phys_y = ((local_y as f32) * scale).round() as u32;
+    let phys_w = ((width as f32) * scale).round() as u32;
+    let phys_h = ((height as f32) * scale).round() as u32;
+    
+    let img_w = screenshot.width();
+    let img_h = screenshot.height();
+    
+    let crop_x = phys_x.min(img_w);
+    let crop_y = phys_y.min(img_h);
+    let crop_w = phys_w.min(img_w - crop_x);
+    let crop_h = phys_h.min(img_h - crop_y);
+    
+    if crop_w == 0 || crop_h == 0 {
+        return Err("Размер области захвата равен нулю".to_string());
+    }
+    
+    // 4. Обрезка
+    let cropped = image::imageops::crop_imm(&screenshot, crop_x, crop_y, crop_w, crop_h).to_image();
+    
+    // 5. Кодирование в PNG -> Base64
+    let mut png_bytes = Vec::new();
+    cropped.write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageFormat::Png)
+        .map_err(|e| format!("Ошибка сжатия PNG: {}", e))?;
+        
+    let base64_image = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
+    
+    // 6. Gemini Vision API запрос
+    let config = load_config_internal(&app_handle)?;
+    let api_key = config.api_key.trim().to_string();
+    if api_key.is_empty() {
+        return Err("API ключ Gemini пуст в конфигурации".to_string());
+    }
+    
+    let ocr_prompt = r#"Распознай весь текст на изображении (OCR) и верни его СТРОГО в формате JSON без markdown, без пояснений, без ```json, только чистый JSON.
+Раздели текст на логические предложения. Каждое слово в предложении должно иметь точные координаты bounding box в виде нормализованных координат от 0 до 1000 относительно ширины и высоты изображения в формате: [ymin, xmin, ymax, xmax].
+
+Формат ответа:
+{
+  "sentences": [
+    {
+      "text": "Полный текст предложения",
+      "words": [
+        {
+          "text": "слово",
+          "box": [ymin, xmin, ymax, xmax]
+        }
+      ]
+    }
+  ]
+}
+
+Правила:
+- Координаты "box": [ymin, xmin, ymax, xmax] должны быть целыми числами от 0 до 1000.
+- Не пропускай слова и не склеивай их. Каждое отдельное слово должно быть в массиве words.
+- Ответ должен содержать ТОЛЬКО валидный JSON-объект."#;
+
+    let request_payload = serde_json::json!({
+        "contents": [{
+            "parts": [
+                {"inlineData": {"mimeType": "image/png", "data": base64_image}},
+                {"text": ocr_prompt}
+            ]
+        }],
+        "generationConfig": {
+            "temperature": 0.1,
+            "responseMimeType": "application/json"
+        }
+    });
+
+    let primary_model = if config.ai_model.is_empty() {
+        "gemini-2.5-flash-lite".to_string()
+    } else {
+        config.ai_model.clone()
+    };
+    
+    let fallback_models = vec![
+        primary_model.clone(),
+        "gemini-3.1-flash-lite".to_string(),
+        "gemini-2.5-flash".to_string(),
+        "gemini-3.5-flash".to_string(),
+        "gemini-2.5-flash-lite".to_string(),
+        "gemini-2.0-flash".to_string(),
+        "gemini-2.0-flash-lite".to_string(),
+        "gemini-2.5-pro".to_string(),
+    ];
+    
+    let mut seen = std::collections::HashSet::new();
+    let fallback_models: Vec<String> = fallback_models
+        .into_iter()
+        .filter(|m| seen.insert(m.clone()))
+        .collect();
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+    let mut last_err = String::new();
+    let mut gemini_text: Option<String> = None;
+    
+    for model in &fallback_models {
+        // Проверяем блокировку модели по времени разблокировки
+        {
+            let locks = MODEL_LOCKS.lock().unwrap();
+            if let Some(unlock_time) = locks.get(model) {
+                if std::time::Instant::now() < *unlock_time {
+                    last_err = format!("Модель {} временно заблокирована из-за 429", model);
+                    continue;
+                }
+            }
+        }
+
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            model, api_key
+        );
+
+        match client.post(&url).json(&request_payload).send().await {
+            Err(e) => {
+                last_err = format!("Сетевая ошибка для {}: {}", model, e);
+                continue;
+            }
+            Ok(res) => {
+                let status = res.status();
+                if status.as_u16() == 429 {
+                    let delay = std::time::Duration::from_secs(60);
+                    let unlock_time = std::time::Instant::now() + delay;
+                    {
+                        let mut locks = MODEL_LOCKS.lock().unwrap();
+                        locks.insert(model.clone(), unlock_time);
+                    }
+                    last_err = format!("Модель {} заблокирована (429)", model);
+                    continue;
+                }
+                if !status.is_success() {
+                    let err_text = res.text().await.unwrap_or_default();
+                    last_err = format!("Ошибка {} для {}: {}", status, model, err_text);
+                    if err_text.contains("RESOURCE_EXHAUSTED") || err_text.contains("quota") {
+                        let unlock_time = std::time::Instant::now() + std::time::Duration::from_secs(3600);
+                        let mut locks = MODEL_LOCKS.lock().unwrap();
+                        locks.insert(model.clone(), unlock_time);
+                    }
+                    continue;
+                }
+                match res.json::<GeminiResponse>().await {
+                    Err(e) => {
+                        last_err = format!("Парсинг ответа для {}: {}", model, e);
+                        continue;
+                    }
+                    Ok(gr) => {
+                        let mut found = false;
+                        if let Some(cands) = gr.candidates {
+                            for cand in cands {
+                                if let Some(content) = cand.content {
+                                    if let Some(parts) = content.parts {
+                                        for part in parts {
+                                            if let Some(text) = part.text {
+                                                if !text.trim().is_empty() {
+                                                    gemini_text = Some(text);
+                                                    found = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if found { break; }
+                            }
+                        }
+                        if !found {
+                            last_err = format!("Пустой ответ кандидатов от {}", model);
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    let raw_json = match gemini_text {
+        None => return Err(format!("Все модели ИИ недоступны. Последняя ошибка: {}", last_err)),
+        Some(txt) => txt,
+    };
+    
+    // Очищаем от markdown разметки типа ```json ... ```
+    let mut cleaned = raw_json.trim().to_string();
+    if cleaned.starts_with("```") {
+        if let Some(first_newline) = cleaned.find('\n') {
+            cleaned = cleaned[first_newline..].to_string();
+        }
+        if cleaned.ends_with("```") {
+            cleaned.truncate(cleaned.len() - 3);
+        }
+        cleaned = cleaned.trim().to_string();
+    }
+    
+    // Парсим ответ в JSON
+    let parsed: serde_json::Value = serde_json::from_str(&cleaned)
+        .map_err(|e| format!("Ошибка парсинга JSON от Gemini: {}. Исходный текст: {}", e, cleaned))?;
+        
+    // Пересчитываем нормализованные координаты в локальные пиксели оверлея
+    let mut sentences_out = Vec::new();
+    
+    if let Some(sentences) = parsed["sentences"].as_array() {
+        for sentence in sentences {
+            let sentence_text = sentence["text"].as_str().unwrap_or("").to_string();
+            let mut words_out = Vec::new();
+            
+            if let Some(words) = sentence["words"].as_array() {
+                for word in words {
+                    let word_text = word["text"].as_str().unwrap_or("").to_string();
+                    if let Some(box_arr) = word["box"].as_array() {
+                        if box_arr.len() == 4 {
+                            let ymin = box_arr[0].as_f64().unwrap_or(0.0);
+                            let xmin = box_arr[1].as_f64().unwrap_or(0.0);
+                            let ymax = box_arr[2].as_f64().unwrap_or(0.0);
+                            let xmax = box_arr[3].as_f64().unwrap_or(0.0);
+                            
+                            // Пересчет координат [0, 1000] в пиксели оверлея
+                            let wx = ((xmin / 1000.0) * (width as f64)).round();
+                            let wy = ((ymin / 1000.0) * (height as f64)).round();
+                            let ww = (((xmax - xmin) / 1000.0) * (width as f64)).round();
+                            let wh = (((ymax - ymin) / 1000.0) * (height as f64)).round();
+                            
+                            words_out.push(serde_json::json!({
+                                "text": word_text,
+                                "x": wx as i32,
+                                "y": wy as i32,
+                                "w": ww as i32,
+                                "h": wh as i32
+                            }));
+                        }
+                    }
+                }
+            }
+            
+            sentences_out.push(serde_json::json!({
+                "text": sentence_text,
+                "words": words_out
+            }));
+        }
+    }
+    
+    Ok(serde_json::json!({
+        "sentences": sentences_out
+    }))
 }
 
 #[tauri::command]
@@ -1860,7 +2197,9 @@ pub fn run() {
             get_cursor_pos,
             set_click_region,
             set_ignore_cursor_events,
-            capture_clipboard_text
+            capture_clipboard_text,
+            translate_hybrid,
+            process_ocr_vision
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
