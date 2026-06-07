@@ -243,13 +243,18 @@
         gap: 0px !important;
       }
 
+      #active-pill:not(.expanded) .active-left-sec {
+        border-right-color: transparent;
+        transition: border-color 0.1s ease, padding-right 0.1s ease;
+      }
+
       #active-pill .active-center-sec,
       #active-pill .active-right-sec {
         opacity: 0;
         max-width: 0;
         visibility: hidden;
         overflow: hidden;
-        transition: opacity 0.25s ease, max-width 0.3s ease, visibility 0.25s;
+        transition: opacity 0.1s ease, max-width 0.1s ease, visibility 0.1s;
         display: flex;
         align-items: center;
         flex-shrink: 0;
@@ -261,6 +266,7 @@
         visibility: visible;
         margin: 0 8px;
         gap: 1.5px;
+        transition: opacity 0.25s ease 0.1s, max-width 0.3s ease, visibility 0.25s;
       }
 
       #active-pill.expanded .active-right-sec {
@@ -270,6 +276,7 @@
         border-left: 1px solid rgba(74, 68, 85, 0.4);
         padding-left: 8px;
         gap: 6px;
+        transition: opacity 0.25s ease 0.1s, max-width 0.3s ease, visibility 0.25s;
       }
 
       /* Анимация пульсации дыхания для idle полоски */
