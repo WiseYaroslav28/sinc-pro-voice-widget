@@ -835,11 +835,14 @@ async fn save_audio(
     });
 
     // Fallback цепочка моделей: расширяем до максимальной отказоустойчивости на бесплатном тарифе
-    let primary_model = if config.ai_model.is_empty() {
+    let mut primary_model = if config.ai_model.is_empty() {
         "gemini-2.5-flash-lite".to_string()
     } else {
         config.ai_model.clone()
     };
+    if primary_model.contains("tts-preview") {
+        primary_model = "gemini-2.0-flash".to_string();
+    }
     let fallback_models = vec![
         primary_model.clone(),
         "gemini-3.1-flash-lite".to_string(),
@@ -1512,11 +1515,14 @@ async fn process_ocr_vision(
         }
     });
 
-    let primary_model = if config.ai_model.is_empty() {
+    let mut primary_model = if config.ai_model.is_empty() {
         "gemini-2.5-flash-lite".to_string()
     } else {
         config.ai_model.clone()
     };
+    if primary_model.contains("tts-preview") {
+        primary_model = "gemini-2.0-flash".to_string();
+    }
     
     let fallback_models = vec![
         primary_model.clone(),

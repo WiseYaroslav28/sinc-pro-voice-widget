@@ -505,7 +505,7 @@ class VoiceCore {
                     this.appendText(p.text);
                 } else if (p.action === 'settings' || p.action === 'setting') {
                     if (p.settings) {
-                        this.settings = p.settings;
+                        this.settings = { ...this.settings, ...p.settings };
                     } else {
                         if (p.speed !== undefined) this.settings.speed = p.speed;
                         if (p.voice !== undefined) this.settings.voice = p.voice;
