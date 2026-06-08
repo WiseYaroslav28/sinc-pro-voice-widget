@@ -228,8 +228,10 @@
                     <button class="text-[#e4e1e9] hover:text-[#d2bbff] transition-colors flex-shrink-0 focus:outline-none" id="player-play" title="Воспроизвести">
                       <span class="material-symbols-outlined text-[16px]" id="player-play-icon" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
                     </button>
-                    <div class="flex-1 h-1 bg-[#35343a] rounded-full overflow-hidden relative cursor-pointer" id="player-scrubber-container">
-                      <div class="absolute top-0 left-0 h-full w-0 bg-[#d2bbff] rounded-full" id="player-progress"></div>
+                    <div class="flex-1 h-1.5 bg-[#4a4455]/50 rounded-full relative cursor-pointer group" id="player-scrubber-container">
+                      <div class="absolute top-0 left-0 h-full w-0 bg-[#d2bbff] rounded-full flex items-center justify-end" id="player-progress">
+                        <span class="w-2.5 h-2.5 rounded-full bg-white absolute right-0 translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md"></span>
+                      </div>
                     </div>
                     <span class="text-[10px] text-[#ccc3d8] w-7 text-right font-mono" id="player-time">0:00</span>
                   </div>
@@ -882,8 +884,12 @@
         });
         
         audioPlayerElement.addEventListener('timeupdate', () => {
-          if (audioPlayerElement.duration) {
-            const progress = (audioPlayerElement.currentTime / audioPlayerElement.duration) * 100;
+          const duration = (audioPlayerElement.duration && isFinite(audioPlayerElement.duration)) 
+            ? audioPlayerElement.duration 
+            : (currentActiveEntry ? currentActiveEntry.duration_secs : 0);
+            
+          if (duration > 0) {
+            const progress = (audioPlayerElement.currentTime / duration) * 100;
             progressBar.style.width = `${progress}%`;
             
             const curMins = Math.floor(audioPlayerElement.currentTime / 60);
@@ -903,14 +909,42 @@
           }
         });
 
+        // Диагностика ошибок загрузки аудио
+        audioPlayerElement.addEventListener('error', () => {
+          const err = audioPlayerElement.error;
+          let errMsg = 'Ошибка воспроизведения аудио';
+          if (err) {
+            switch (err.code) {
+              case err.MEDIA_ERR_ABORTED:
+                errMsg = 'Воспроизведение прервано';
+                break;
+              case err.MEDIA_ERR_NETWORK:
+                errMsg = 'Сетевая ошибка при загрузке аудио';
+                break;
+              case err.MEDIA_ERR_DECODE:
+                errMsg = 'Ошибка декодирования аудиофайла';
+                break;
+              case err.MEDIA_ERR_SRC_NOT_SUPPORTED:
+                errMsg = 'Аудиофайл не найден или формат не поддерживается';
+                break;
+            }
+          }
+          console.error("Ошибка аудио элемента:", err);
+          showToast(errMsg, true);
+        });
+
         // Перемотка
         scrubberContainer.addEventListener('click', (e) => {
-          if (!audioPlayerElement.src || !audioPlayerElement.duration) return;
+          const duration = (audioPlayerElement.duration && isFinite(audioPlayerElement.duration)) 
+            ? audioPlayerElement.duration 
+            : (currentActiveEntry ? currentActiveEntry.duration_secs : 0);
+            
+          if (!audioPlayerElement.src || duration <= 0) return;
           const rect = scrubberContainer.getBoundingClientRect();
           const clickX = e.clientX - rect.left;
           const width = rect.width;
           const percentage = clickX / width;
-          audioPlayerElement.currentTime = percentage * audioPlayerElement.duration;
+          audioPlayerElement.currentTime = percentage * duration;
         });
       }
 

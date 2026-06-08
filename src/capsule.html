@@ -1353,8 +1353,8 @@
             
             if (isError) {
               resultText = firstAi ? firstAi.text : rawText;
-            } else if (firstAi && firstAi.preset !== 'transcript' && firstAi.preset !== 'cancelled') {
-              // Вставляем исключительно результат ИИ-обработки
+            } else if (firstAi && firstAi.preset !== 'cancelled') {
+              // Вставляем исключительно результат ИИ-обработки (включая очищенный "Текст")
               resultText = firstAi.text;
             } else {
               resultText = rawText;
