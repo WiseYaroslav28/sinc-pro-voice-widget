@@ -221,16 +221,8 @@
                 </button>
               </div>
 
-              <!-- Текст сводки — занимает всё свободное место -->
-              <div class="flex-1 relative overflow-hidden">
-                <div class="p-5 h-full overflow-y-auto">
-                  <p class="text-[13px] leading-[1.7] text-[#ccc3d8] whitespace-pre-wrap" id="summary-text" style="user-select: text; -webkit-user-select: text;">Нет данных. Создайте первую запись через капсулу (Ctrl+Win).</p>
-                </div>
-                <div class="absolute bottom-0 left-0 w-full h-10 pointer-events-none" style="background: linear-gradient(to top, #1f1f24, transparent);"></div>
-              </div>
-
               <!-- Коллапсируемая панель с плеером (по клику на иконку в шапке) -->
-              <div class="hidden flex-col border-t border-[#4a4455]/20 bg-[#1b1b20]/50" id="player-panel">
+              <div class="hidden flex-col border-b border-[#4a4455]/20 bg-[#1b1b20]/50" id="player-panel">
                 <div class="px-4 py-2 flex items-center gap-2">
                   <div class="bg-[#2a292f] h-6 rounded-full border border-[#4a4455]/30 flex items-center px-2 gap-2 flex-1">
                     <button class="text-[#e4e1e9] hover:text-[#d2bbff] transition-colors flex-shrink-0 focus:outline-none" id="player-play" title="Воспроизвести">
@@ -242,6 +234,14 @@
                     <span class="text-[10px] text-[#ccc3d8] w-7 text-right font-mono" id="player-time">0:00</span>
                   </div>
                 </div>
+              </div>
+
+              <!-- Текст сводки — занимает всё свободное место -->
+              <div class="flex-1 relative overflow-hidden">
+                <div class="p-5 h-full overflow-y-auto">
+                  <p class="text-[13px] leading-[1.7] text-[#ccc3d8] whitespace-pre-wrap" id="summary-text" style="user-select: text; -webkit-user-select: text;">Нет данных. Создайте первую запись через капсулу (Ctrl+Win).</p>
+                </div>
+                <div class="absolute bottom-0 left-0 w-full h-10 pointer-events-none" style="background: linear-gradient(to top, #1f1f24, transparent);"></div>
               </div>
 
               <!-- Скрытый spoiler-content -->

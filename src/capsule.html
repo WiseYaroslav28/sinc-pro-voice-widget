@@ -1354,8 +1354,8 @@
             if (isError) {
               resultText = firstAi ? firstAi.text : rawText;
             } else if (firstAi && firstAi.preset !== 'transcript' && firstAi.preset !== 'cancelled') {
-              // Объединяем дословную транскрипцию и результат ИИ-обработки через разделитель
-              resultText = `${rawText}\n\n[${firstAi.preset_label}]:\n${firstAi.text}`;
+              // Вставляем исключительно результат ИИ-обработки
+              resultText = firstAi.text;
             } else {
               resultText = rawText;
             }
