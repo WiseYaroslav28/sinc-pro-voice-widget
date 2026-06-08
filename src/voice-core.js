@@ -594,6 +594,8 @@ class WindowToggleManager {
         if (targetWindowLabel === 'widget') {
             const savedState = localStorage.getItem('ttsWidgetEnabled');
             checkbox.checked = (savedState !== 'false');
+        } else if (targetWindowLabel === 'ocr') {
+            checkbox.checked = false; // Оверлей по умолчанию выключен при старте
         } else {
             checkbox.checked = true; // Капсула по умолчанию включена при старте
         }

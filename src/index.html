@@ -609,10 +609,7 @@
       if (btnTriggerOcr) {
         btnTriggerOcr.addEventListener('click', () => {
           if (window.__TAURI__) {
-            const ocrWin = window.__TAURI__.webviewWindow.WebviewWindow.getByLabel('ocr');
-            if (ocrWin) {
-              ocrWin.show();
-            }
+            window.__TAURI__.core.invoke('show_ocr_window').catch(() => {});
           } else {
             console.log('[Tauri Mock] Запуск оверлея OCR (окно "ocr")');
           }
@@ -622,10 +619,7 @@
       // Глобальный хоткей из Rust (Alt + Q)
       if (window.__TAURI__) {
         window.__TAURI__.event.listen('ocr-action-trigger', () => {
-          const ocrWin = window.__TAURI__.webviewWindow.WebviewWindow.getByLabel('ocr');
-          if (ocrWin) {
-            ocrWin.show();
-          }
+          window.__TAURI__.core.invoke('show_ocr_window').catch(() => {});
         });
       }
 
@@ -1534,10 +1528,12 @@
       if (dashboardToggles && window.WindowToggleManager) {
         dashboardToggles.innerHTML = 
           WindowToggleManager.renderToggle('toggle-capsule', 'mic', 'Капсула (быстрый ИИ-ввод)&#10;Удерживайте Ctrl+Win для диктовки&#10;Ctrl+Win+Alt — ввод с промптом') +
-          WindowToggleManager.renderToggle('toggle-widget', 'record_voice_over', 'Виджет озвучки (плавающий плеер)&#10;Ctrl+Shift — озвучить выделенное&#10;Escape — остановить воспроизведение');
+          WindowToggleManager.renderToggle('toggle-widget', 'record_voice_over', 'Виджет озвучки (плавающий плеер)&#10;Ctrl+Shift — озвучить выделенное&#10;Escape — остановить воспроизведение') +
+          WindowToggleManager.renderToggle('toggle-ocr', 'screenshot_region', 'Оверлей переводчика OCR&#10;Alt+Q — открыть/закрыть оверлей');
 
         WindowToggleManager.initToggle('toggle-capsule', 'capsule');
         WindowToggleManager.initToggle('toggle-widget', 'widget');
+        WindowToggleManager.initToggle('toggle-ocr', 'ocr');
       }
 
 

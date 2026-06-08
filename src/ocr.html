@@ -5,10 +5,12 @@
   <title>SINC LENS</title>
   <link rel="stylesheet" href="styles.css">
   <style>
-    body {
-      background-color: transparent !important;
+    html, body {
+      width: 100%;
+      height: 100%;
       margin: 0;
       padding: 0;
+      background-color: transparent !important;
       overflow: hidden;
       pointer-events: none; /* clicks pass through the body */
     }
@@ -20,7 +22,8 @@
       box-shadow: inset 0 0 15px rgba(142, 82, 255, 0.2), 0 0 15px rgba(142, 82, 255, 0.2);
       border-radius: 12px;
       box-sizing: border-box;
-      pointer-events: none;
+      pointer-events: auto;
+      background: rgba(0, 0, 0, 0.005); /* catch clicks for dragging */
       transition: border 0.2s, box-shadow 0.2s;
     }
 
@@ -46,22 +49,6 @@
     .dock-tr { top: 16px; left: calc(100% - 16px); transform: translateX(-100%); }
     .dock-bl { top: calc(100% - 16px); left: 16px; transform: translateY(-100%); }
     .dock-br { top: calc(100% - 16px); left: calc(100% - 16px); transform: translate(-100%, -100%); }
-
-    /* Crosshair */
-    .crosshair-center {
-      position: absolute;
-      top: 50%; left: 50%;
-      width: 40px; height: 40px;
-      transform: translate(-50%, -50%);
-      pointer-events: none;
-    }
-    .crosshair-center::before, .crosshair-center::after {
-      content: '';
-      position: absolute;
-      background: rgba(142, 82, 255, 0.5);
-    }
-    .crosshair-center::before { top: 19px; left: 0; width: 40px; height: 2px; }
-    .crosshair-center::after { left: 19px; top: 0; width: 2px; height: 40px; }
 
     .icon-btn {
       background: none; border: none; padding: 6px; cursor: pointer;
@@ -110,31 +97,190 @@
       max-width: 300px;
     }
 
-    /* Resize Handles */
+    /* Resize Handles (внутренние ручки, чтобы не обрезались) */
     .resize-handle {
       position: absolute;
       background: transparent;
       pointer-events: auto;
       z-index: 60;
     }
-    .resize-n { top: -5px; left: 10px; right: 10px; height: 10px; cursor: n-resize; }
-    .resize-s { bottom: -5px; left: 10px; right: 10px; height: 10px; cursor: s-resize; }
-    .resize-e { top: 10px; bottom: 10px; right: -5px; width: 10px; cursor: e-resize; }
-    .resize-w { top: 10px; bottom: 10px; left: -5px; width: 10px; cursor: w-resize; }
-    .resize-nw { top: -5px; left: -5px; width: 15px; height: 15px; cursor: nw-resize; }
-    .resize-ne { top: -5px; right: -5px; width: 15px; height: 15px; cursor: ne-resize; }
-    .resize-sw { bottom: -5px; left: -5px; width: 15px; height: 15px; cursor: sw-resize; }
-    .resize-se { bottom: -5px; right: -5px; width: 15px; height: 15px; cursor: se-resize; }
+    .resize-n { top: 0; left: 10px; right: 10px; height: 8px; cursor: n-resize; }
+    .resize-s { bottom: 0; left: 10px; right: 10px; height: 8px; cursor: s-resize; }
+    .resize-e { top: 10px; bottom: 10px; right: 0; width: 8px; cursor: e-resize; }
+    .resize-w { top: 10px; bottom: 10px; left: 0; width: 8px; cursor: w-resize; }
+    .resize-nw { top: 0; left: 0; width: 12px; height: 12px; cursor: nw-resize; }
+    .resize-ne { top: 0; right: 0; width: 12px; height: 12px; cursor: ne-resize; }
+    .resize-sw { bottom: 0; left: 0; width: 12px; height: 12px; cursor: sw-resize; }
+    .resize-se { bottom: 0; right: 0; width: 12px; height: 12px; cursor: se-resize; }
+
+    /* Стили выделения (Ножницы) */
+    #selection-overlay {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(11, 11, 16, 0.45);
+      z-index: 9000;
+      cursor: crosshair;
+      display: none;
+      pointer-events: auto;
+    }
+    #selection-box {
+      position: absolute;
+      border: 2px solid #a377ff;
+      box-shadow: 0 0 15px rgba(163, 119, 255, 0.5);
+      background: transparent;
+      pointer-events: none;
+      box-sizing: border-box;
+    }
+
+    /* Плавающие плашки перевода предложений */
+    .translation-badge {
+      position: absolute;
+      background: rgba(11, 12, 16, 0.85);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid rgba(163, 119, 255, 0.4);
+      color: #fff;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      pointer-events: auto;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      max-width: 300px;
+      white-space: pre-wrap;
+      opacity: 0;
+      transform: translateX(-50%) scale(0.95);
+      transition: opacity 0.2s, transform 0.2s;
+      z-index: 100;
+    }
+    .translation-badge.active {
+      opacity: 1;
+      transform: translateX(-50%) scale(1);
+    }
+
+    /* Скрытие контента при зажатом Alt */
+    body.alt-held .hover-word,
+    body.alt-held .resize-handle,
+    body.alt-held #toolbar-island,
+    body.alt-held #svg-canvas,
+    body.alt-held #words-container,
+    body.alt-held #translation-container,
+    body.alt-held #tooltip {
+      opacity: 0 !important;
+      pointer-events: none !important;
+    }
+    body.alt-held #lens-container {
+      pointer-events: none !important;
+    }
+    .thread-path {
+      stroke-dasharray: none !important;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      opacity: 0.7 !important;
+      transition: all 0.2s;
+    }
+
+    /* Лазерная линия сканирования */
+    #laser-line {
+      display: none;
+      position: absolute;
+      left: 0;
+      width: 100%;
+      height: 4px;
+      background: linear-gradient(90deg, transparent, #8e52ff, #00d7ff, #8e52ff, transparent);
+      box-shadow: 0 0 12px #8e52ff, 0 0 20px #00d7ff;
+      z-index: 99;
+      animation: laser-move 2s ease-in-out infinite;
+      pointer-events: none;
+    }
+
+    /* Оверлей загрузки процесса распознавания */
+    #scan-loader {
+      display: none;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(11, 12, 16, 0.85);
+      border: 1px solid rgba(142, 82, 255, 0.4);
+      border-radius: 16px;
+      padding: 20px 30px;
+      align-items: center;
+      flex-direction: column;
+      gap: 12px;
+      z-index: 1000;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      pointer-events: auto;
+      color: #fff;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+
+    .spinner-loader {
+      width: 36px;
+      height: 36px;
+      border: 3px solid rgba(142, 82, 255, 0.2);
+      border-top-color: #8e52ff;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    #loader-status {
+      font-size: 14px;
+      font-weight: 600;
+      text-shadow: 0 0 8px rgba(142, 82, 255, 0.5);
+    }
+
+    #loader-progress {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #8e52ff, #00d7ff);
+      border-radius: 3px;
+      transition: width 0.1s;
+    }
+
+    #loader-percent {
+      font-size: 12px;
+      color: #ccc3d8;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes laser-move {
+      0% { top: 0%; }
+      50% { top: 100%; }
+      100% { top: 0%; }
+    }
   </style>
 </head>
 <body>
 
-  <div id="lens-container">
-    <div class="crosshair-center"></div>
+  <div id="selection-overlay">
+    <div id="selection-box"></div>
+  </div>
 
+  <!-- Лазерная линия сканирования -->
+  <div id="laser-line"></div>
+
+  <!-- SVG холст и контейнер слов вынесены из lens-container, чтобы рамка их не смещала -->
+  <svg id="svg-canvas"></svg>
+  <div id="words-container"></div>
+
+  <div id="lens-container">
     <div id="toolbar-island" class="dock-br">
+      <!-- Model/Fallback Status -->
+      <span id="model-status" style="color: #00FF66; font-size: 11px; font-family: monospace; padding-left: 6px; display: none; align-self: center;"></span>
+
       <!-- Scan (AI) -->
       <button id="btn-scan" class="icon-btn highlight" title="Сканировать экран">        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z"/></svg>
+      </button>
+
+      <!-- Play All -->
+      <button id="btn-play-all" class="icon-btn" title="Озвучить весь текст">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
       </button>
 
       <div class="w-[1px] h-5 bg-[#4a4455] mx-1"></div>
@@ -159,10 +305,19 @@
     <div class="resize-handle resize-ne" id="res-ne"></div>
     <div class="resize-handle resize-sw" id="res-sw"></div>
     <div class="resize-handle resize-se" id="res-se"></div>
-
-    <svg id="svg-canvas"></svg>
-    <div id="words-container"></div>
   </div>
+
+  <!-- Оверлей загрузки процесса распознавания -->
+  <div id="scan-loader">
+    <div class="spinner-loader"></div>
+    <div id="loader-status">Распознавание ИИ...</div>
+    <div style="width: 180px; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; position: relative;">
+      <div id="loader-progress"></div>
+    </div>
+    <div id="loader-percent">0%</div>
+  </div>
+
+  <div id="translation-container" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 40;"></div>
 
   <div id="tooltip"></div>
 

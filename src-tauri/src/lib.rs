@@ -200,8 +200,41 @@ async fn speak_edge_tts_internal(text: String, voice: String, rate: f32) -> Resu
 }
 
 static APP_HANDLE: Mutex<Option<tauri::AppHandle>> = Mutex::new(None);
+static OCR_WINDOW_VISIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static MODEL_LOCKS: std::sync::LazyLock<Mutex<HashMap<String, Instant>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+static MODEL_REQUEST_LOGS: std::sync::LazyLock<Mutex<HashMap<String, Vec<i64>>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn check_and_record_rate_limit(model: &str) -> Result<(usize, usize), String> {
+    let now = chrono::Utc::now().timestamp();
+    let mut logs = MODEL_REQUEST_LOGS.lock().unwrap();
+    let timestamps = logs.entry(model.to_string()).or_insert_with(Vec::new);
+
+    // Очищаем метки старше 24 часов (86400 секунд)
+    timestamps.retain(|&t| now - t < 86400);
+
+    // Считаем RPM (последние 60 секунд)
+    let rpm_count = timestamps.iter().filter(|&&t| now - t < 60).count();
+    // Считаем RPD (за последние 24 часа)
+    let rpd_count = timestamps.len();
+
+    // Безопасные пороги: 14 RPM, 1450 RPD
+    let max_rpm = 14;
+    let max_rpd = 1450;
+
+    if rpm_count >= max_rpm {
+        return Err(format!("лимит RPM ({}/15)", rpm_count));
+    }
+    if rpd_count >= max_rpd {
+        return Err(format!("лимит RPD ({}/1500)", rpd_count));
+    }
+
+    // Записываем текущий запрос
+    timestamps.push(now);
+
+    Ok((rpm_count + 1, rpd_count + 1))
+}
 static CTRL_PRESSED: AtomicBool = AtomicBool::new(false);
 static WIN_PRESSED: AtomicBool = AtomicBool::new(false);
 static ALT_PRESSED: AtomicBool = AtomicBool::new(false);
@@ -407,6 +440,96 @@ async fn hide_widget_window(app_handle: tauri::AppHandle) -> Result<(), String> 
     if let Some(w) = app_handle.get_webview_window("widget") {
         w.hide().map_err(|e| e.to_string())?;
     }
+    Ok(())
+}
+
+#[tauri::command]
+async fn show_ocr_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+    if let Some(w) = app_handle.get_webview_window("ocr") {
+        let _ = w.show();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        if let Ok(handle) = w.window_handle() {
+            if let RawWindowHandle::Win32(win_handle) = handle.as_raw() {
+                let hwnd = win_handle.hwnd.get() as isize;
+                
+                use winapi::um::winuser::{GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN};
+                let x = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
+                let y = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
+                let width = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) };
+                let height = unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) };
+                
+                println!("SINC PRO OCR NATIVE SHOW: hwnd=0x{:X}, x={}, y={}, w={}, h={}", hwnd, x, y, width, height);
+                
+                #[link(name = "user32")]
+                extern "system" {
+                    fn SetWindowPos(
+                        hWnd: isize,
+                        hWndInsertAfter: isize,
+                        X: i32,
+                        Y: i32,
+                        cx: i32,
+                        cy: i32,
+                        uFlags: u32,
+                    ) -> i32;
+                    fn ShowWindow(hWnd: isize, nCmdShow: i32) -> i32;
+                    fn SetForegroundWindow(hWnd: isize) -> i32;
+                }
+                
+                const HWND_TOPMOST: isize = -1;
+                const SWP_NOACTIVATE: u32 = 0x0010;
+                const SWP_NOCOPYBITS: u32 = 0x0100;
+                const SWP_NOOWNERZORDER: u32 = 0x0200;
+                const SWP_SHOWWINDOW: u32 = 0x0040;
+                
+                unsafe {
+                    SetWindowPos(
+                        hwnd,
+                        HWND_TOPMOST,
+                        x,
+                        y,
+                        width,
+                        height,
+                        SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOCOPYBITS | SWP_SHOWWINDOW,
+                    );
+                    ShowWindow(hwnd, 5); // SW_SHOW
+                    SetForegroundWindow(hwnd);
+                }
+            }
+        }
+        let _ = w.set_always_on_top(true);
+        let _ = app_handle.emit("ocr-visibility-changed", true);
+    }
+    OCR_WINDOW_VISIBLE.store(true, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}
+
+#[tauri::command]
+async fn hide_ocr_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+    println!("SINC PRO OCR: hide_ocr_window command called");
+    if let Some(w) = app_handle.get_webview_window("ocr") {
+        #[cfg(target_os = "windows")]
+        {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            if let Ok(handle) = w.window_handle() {
+                if let RawWindowHandle::Win32(win_handle) = handle.as_raw() {
+                    let hwnd = win_handle.hwnd.get() as isize;
+                    #[link(name = "user32")]
+                    extern "system" {
+                        fn ShowWindow(hWnd: isize, nCmdShow: i32) -> i32;
+                    }
+                    unsafe {
+                        ShowWindow(hwnd, 0); // SW_HIDE
+                    }
+                    println!("SINC PRO OCR: Native ShowWindow SW_HIDE executed for hwnd=0x{:X}", hwnd);
+                }
+            }
+        }
+        w.hide().map_err(|e| e.to_string())?;
+        let _ = app_handle.emit("ocr-visibility-changed", false);
+        println!("SINC PRO OCR: ocr-visibility-changed false emitted");
+    }
+    OCR_WINDOW_VISIBLE.store(false, std::sync::atomic::Ordering::SeqCst);
     Ok(())
 }
 
@@ -1428,7 +1551,14 @@ async fn process_ocr_vision(
     let center_x = x + (width as i32) / 2;
     let center_y = y + (height as i32) / 2;
     
-    let (screenshot, scale, monitor_x, monitor_y) = {
+    // Скрываем окно оверлея на время скриншота, чтобы его рамка и элементы (лоадер, тулбар) не попадали на снимок
+    if let Some(w) = app_handle.get_webview_window("ocr") {
+        let _ = w.hide();
+        // Даем Windows время перерисовать рабочий стол под окном (асинхронно, чтобы не блокировать поток)
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    }
+    
+    let capture_res = (|| -> Result<(image::RgbaImage, f32, i32, i32), String> {
         let monitor = xcap::Monitor::from_point(center_x, center_y)
             .map_err(|e| format!("Не удалось найти монитор в точке ({}, {}): {}", center_x, center_y, e))?;
             
@@ -1439,16 +1569,24 @@ async fn process_ocr_vision(
         let monitor_x = monitor.x().map_err(|e| e.to_string())?;
         let monitor_y = monitor.y().map_err(|e| e.to_string())?;
         
-        (screenshot, scale, monitor_x, monitor_y)
-    };
+        Ok((screenshot, scale, monitor_x, monitor_y))
+    })();
+
+    // Показываем окно оверлея обратно
+    if let Some(w) = app_handle.get_webview_window("ocr") {
+        let _ = w.show();
+        let _ = w.set_always_on_top(true);
+    }
+
+    let (screenshot, scale, monitor_x, monitor_y) = capture_res?;
     
     let local_x = x - monitor_x;
     let local_y = y - monitor_y;
     
-    let phys_x = ((local_x as f32) * scale).round() as u32;
-    let phys_y = ((local_y as f32) * scale).round() as u32;
-    let phys_w = ((width as f32) * scale).round() as u32;
-    let phys_h = ((height as f32) * scale).round() as u32;
+    let phys_x = local_x.max(0) as u32;
+    let phys_y = local_y.max(0) as u32;
+    let phys_w = width;
+    let phys_h = height;
     
     let img_w = screenshot.width();
     let img_h = screenshot.height();
@@ -1667,18 +1805,24 @@ async fn process_ocr_vision(
                             let ymax = box_arr[2].as_f64().unwrap_or(0.0);
                             let xmax = box_arr[3].as_f64().unwrap_or(0.0);
                             
-                            // Пересчет координат [0, 1000] в пиксели оверлея
-                            let wx = ((xmin / 1000.0) * (width as f64)).round();
-                            let wy = ((ymin / 1000.0) * (height as f64)).round();
-                            let ww = (((xmax - xmin) / 1000.0) * (width as f64)).round();
-                            let wh = (((ymax - ymin) / 1000.0) * (height as f64)).round();
+                            // Пересчет координат [0, 1000] в абсолютные физические на экране
+                            let phys_crop_x = monitor_x + crop_x as i32;
+                            let phys_crop_y = monitor_y + crop_y as i32;
+
+                            let wx_rel = (xmin / 1000.0) * (crop_w as f64);
+                            let wy_rel = (ymin / 1000.0) * (crop_h as f64);
+                            let ww_rel = ((xmax - xmin) / 1000.0) * (crop_w as f64);
+                            let wh_rel = ((ymax - ymin) / 1000.0) * (crop_h as f64);
+
+                            let wx_abs = phys_crop_x as f64 + wx_rel;
+                            let wy_abs = phys_crop_y as f64 + wy_rel;
                             
                             words_out.push(serde_json::json!({
                                 "text": word_text,
-                                "x": wx as i32,
-                                "y": wy as i32,
-                                "w": ww as i32,
-                                "h": wh as i32
+                                "x": wx_abs.round() as i32,
+                                "y": wy_abs.round() as i32,
+                                "w": ww_rel.round() as i32,
+                                "h": wh_rel.round() as i32
                             }));
                         }
                     }
@@ -1695,6 +1839,1436 @@ async fn process_ocr_vision(
     Ok(serde_json::json!({
         "sentences": sentences_out
     }))
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct OcrWordInfo {
+    text: String,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+#[cfg(target_os = "windows")]
+fn recognize_bitmap(
+    ocr_engine: &windows::Media::Ocr::OcrEngine,
+    software_bitmap: &windows::Graphics::Imaging::SoftwareBitmap,
+) -> Result<Vec<OcrWordInfo>, String> {
+    let ocr_result = ocr_engine.RecognizeAsync(software_bitmap).map_err(|e| e.to_string())?.get()
+        .map_err(|e| format!("Ошибка распознавания Windows OCR: {}", e))?;
+        
+    let mut words = Vec::new();
+    let lines = ocr_result.Lines().map_err(|e| e.to_string())?;
+    for line in lines {
+        let line_words = line.Words().map_err(|e| e.to_string())?;
+        for word in line_words {
+            let text = word.Text().map_err(|e| e.to_string())?.to_string();
+            let rect = word.BoundingRect().map_err(|e| e.to_string())?;
+            words.push(OcrWordInfo {
+                text,
+                x: rect.X,
+                y: rect.Y,
+                width: rect.Width,
+                height: rect.Height,
+            });
+        }
+    }
+    Ok(words)
+}
+
+fn has_extended_chars(s: &str) -> bool {
+    s.chars().any(|c| {
+        ('\u{0400}'..='\u{04FF}').contains(&c) || // Кириллица
+        ('\u{0600}'..='\u{06FF}').contains(&c) || // Арабское письмо
+        ('\u{4E00}'..='\u{9FFF}').contains(&c) || // CJK иероглифы
+        ('\u{00C0}'..='\u{00FF}').contains(&c) || // Latin-1 Supplement (умлауты, акценты)
+        ('\u{0100}'..='\u{017F}').contains(&c)    // Latin Extended-A
+    })
+}
+
+fn select_best_word(w1: &OcrWordInfo, lang1: &str, w2: &OcrWordInfo, lang2: &str) -> OcrWordInfo {
+    let ext1 = has_extended_chars(&w1.text);
+    let ext2 = has_extended_chars(&w2.text);
+
+    // 1. Если один вариант содержит национальные спецсимволы (кириллицу, арабский, умлауты, иероглифы), а второй нет
+    if ext1 && !ext2 {
+        return w1.clone();
+    }
+    if ext2 && !ext1 {
+        return w2.clone();
+    }
+
+    // 2. Если оба содержат или оба не содержат (чистый ASCII):
+    // Отдаем приоритет английскому движку
+    let is_en1 = lang1.to_lowercase().contains("en");
+    let is_en2 = lang2.to_lowercase().contains("en");
+    if is_en1 && !is_en2 {
+        return w1.clone();
+    }
+    if is_en2 && !is_en1 {
+        return w2.clone();
+    }
+
+    // 3. Выбираем слово, которое длиннее
+    if w1.text.len() >= w2.text.len() {
+        w1.clone()
+    } else {
+        w2.clone()
+    }
+}
+
+fn merge_two_ocr_results(
+    words_a: Vec<OcrWordInfo>,
+    lang_a: &str,
+    words_b: Vec<OcrWordInfo>,
+    lang_b: &str,
+) -> Vec<OcrWordInfo> {
+    let mut merged = Vec::new();
+    let mut b_used = vec![false; words_b.len()];
+
+    for w_a in words_a {
+        let mut found_match_idx = None;
+        for (idx, w_b) in words_b.iter().enumerate() {
+            if b_used[idx] {
+                continue;
+            }
+            // Вычисляем пересечение BoundingRect
+            let ax1 = w_a.x;
+            let ay1 = w_a.y;
+            let ax2 = w_a.x + w_a.width;
+            let ay2 = w_a.y + w_a.height;
+
+            let bx1 = w_b.x;
+            let by1 = w_b.y;
+            let bx2 = w_b.x + w_b.width;
+            let by2 = w_b.y + w_b.height;
+
+            let overlap_x1 = ax1.max(bx1);
+            let overlap_y1 = ay1.max(by1);
+            let overlap_x2 = ax2.min(bx2);
+            let overlap_y2 = ay2.min(by2);
+
+            let overlap_w = overlap_x2 - overlap_x1;
+            let overlap_h = overlap_y2 - overlap_y1;
+
+            if overlap_w > 0.0 && overlap_h > 0.0 {
+                let overlap_area = overlap_w * overlap_h;
+                let area_a = w_a.width * w_a.height;
+                let area_b = w_b.width * w_b.height;
+                let min_area = area_a.min(area_b);
+                
+                if overlap_area > 0.4 * min_area {
+                    found_match_idx = Some(idx);
+                    break;
+                }
+            }
+        }
+
+        if let Some(idx) = found_match_idx {
+            b_used[idx] = true;
+            let w_b = &words_b[idx];
+            merged.push(select_best_word(&w_a, lang_a, w_b, lang_b));
+        } else {
+            merged.push(w_a);
+        }
+    }
+
+    for (idx, w_b) in words_b.into_iter().enumerate() {
+        if !b_used[idx] {
+            merged.push(w_b);
+        }
+    }
+
+    merged
+}
+
+fn sort_ocr_words(mut words: Vec<OcrWordInfo>) -> Vec<OcrWordInfo> {
+    if words.is_empty() {
+        return words;
+    }
+    // 1. Сортируем по Y центра
+    words.sort_by(|a, b| {
+        let ay = a.y + a.height / 2.0;
+        let by = b.y + b.height / 2.0;
+        ay.partial_cmp(&by).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // 2. Группируем в строки
+    let mut lines: Vec<Vec<OcrWordInfo>> = Vec::new();
+    for w in words {
+        let cy = w.y + w.height / 2.0;
+        let mut added = false;
+        for line in &mut lines {
+            let line_cy = line.iter().map(|word| word.y + word.height / 2.0).sum::<f32>() / line.len() as f32;
+            let line_h = line.iter().map(|word| word.height).sum::<f32>() / line.len() as f32;
+            if (cy - line_cy).abs() < line_h * 0.8 {
+                line.push(w.clone());
+                added = true;
+                break;
+            }
+        }
+        if !added {
+            lines.push(vec![w]);
+        }
+    }
+
+    // 3. Сортируем слова внутри каждой строки по X
+    for line in &mut lines {
+        line.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
+    }
+
+    // 4. Сортируем строки по Y
+    lines.sort_by(|a, b| {
+        let ay = a.iter().map(|w| w.y + w.height / 2.0).sum::<f32>() / a.len() as f32;
+        let by = b.iter().map(|w| w.y + w.height / 2.0).sum::<f32>() / b.len() as f32;
+        ay.partial_cmp(&by).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // 5. Собираем в плоский список
+    lines.into_iter().flatten().collect()
+}
+
+#[cfg(target_os = "windows")]
+async fn run_windows_ocr(png_bytes: &[u8]) -> Result<Vec<OcrWordInfo>, String> {
+    use windows::Storage::Streams::InMemoryRandomAccessStream;
+    use windows::Storage::Streams::DataWriter;
+    use windows::Graphics::Imaging::BitmapDecoder;
+    use windows::Media::Ocr::OcrEngine;
+
+    let stream = InMemoryRandomAccessStream::new()
+        .map_err(|e| format!("Ошибка создания WinRT Stream: {}", e))?;
+    
+    let writer = DataWriter::CreateDataWriter(&stream)
+        .map_err(|e| format!("Ошибка создания DataWriter: {}", e))?;
+    
+    writer.WriteBytes(png_bytes)
+        .map_err(|e| format!("Ошибка записи байт: {}", e))?;
+        
+    writer.StoreAsync().map_err(|e| e.to_string())?.get()
+        .map_err(|e| format!("Ошибка сохранения потока DataWriter: {}", e))?;
+        
+    writer.FlushAsync().map_err(|e| e.to_string())?.get()
+        .map_err(|e| format!("Ошибка сброса буфера DataWriter: {}", e))?;
+        
+    stream.Seek(0)
+        .map_err(|e| format!("Ошибка перемотки потока: {}", e))?;
+        
+    let decoder = BitmapDecoder::CreateAsync(&stream).map_err(|e| e.to_string())?.get()
+        .map_err(|e| format!("Ошибка создания BitmapDecoder: {}", e))?;
+        
+    let software_bitmap = decoder.GetSoftwareBitmapAsync().map_err(|e| e.to_string())?.get()
+        .map_err(|e| format!("Ошибка декодирования SoftwareBitmap: {}", e))?;
+        
+    // Опрашиваем все доступные языки OCR в системе
+    let mut lang_tags = Vec::new();
+    if let Ok(langs) = OcrEngine::AvailableRecognizerLanguages() {
+        if let Ok(size) = langs.Size() {
+            for i in 0..size {
+                if let Ok(lang) = langs.GetAt(i) {
+                    if let Ok(tag) = lang.LanguageTag() {
+                        lang_tags.push(tag.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    let mut all_words_by_lang = Vec::new();
+
+    if lang_tags.is_empty() {
+        if let Ok(default_engine) = OcrEngine::TryCreateFromUserProfileLanguages() {
+            if let Ok(w) = recognize_bitmap(&default_engine, &software_bitmap) {
+                all_words_by_lang.push(("default".to_string(), w));
+            }
+        }
+    } else {
+        // Ограничиваем первыми 3 языками для скорости
+        for tag in lang_tags.into_iter().take(3) {
+            use windows::Globalization::Language;
+            if let Ok(lang) = Language::CreateLanguage(&tag.clone().into()) {
+                if let Ok(engine) = OcrEngine::TryCreateFromLanguage(&lang) {
+                    if let Ok(w) = recognize_bitmap(&engine, &software_bitmap) {
+                        all_words_by_lang.push((tag, w));
+                    }
+                }
+            }
+        }
+    }
+
+    let mut merged_words = Vec::new();
+    if !all_words_by_lang.is_empty() {
+        let (first_lang, first_words) = all_words_by_lang.remove(0);
+        merged_words = first_words;
+        let mut current_lang = first_lang;
+
+        for (next_lang, next_words) in all_words_by_lang {
+            merged_words = merge_two_ocr_results(merged_words, &current_lang, next_words, &next_lang);
+            if next_lang.to_lowercase().contains("en") {
+                current_lang = next_lang;
+            }
+        }
+    }
+
+    Ok(sort_ocr_words(merged_words))
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn run_windows_ocr(_png_bytes: &[u8]) -> Result<Vec<OcrWordInfo>, String> {
+    Err("Windows OCR поддерживается только на ОС Windows".to_string())
+}
+
+#[tauri::command]
+async fn process_ocr_hybrid(
+    app_handle: tauri::AppHandle,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> Result<serde_json::Value, String> {
+    // 1. Поиск монитора и захват скриншота
+    let center_x = x + (width as i32) / 2;
+    let center_y = y + (height as i32) / 2;
+    
+    // Скрываем окно оверлея
+    if let Some(w) = app_handle.get_webview_window("ocr") {
+        let _ = w.hide();
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    }
+    
+    let capture_res = (|| -> Result<(image::RgbaImage, f32, i32, i32), String> {
+        let monitor = xcap::Monitor::from_point(center_x, center_y)
+            .map_err(|e| format!("Не удалось найти монитор в точке ({}, {}): {}", center_x, center_y, e))?;
+            
+        let screenshot = monitor.capture_image()
+            .map_err(|e| format!("Ошибка захвата экрана: {}", e))?;
+            
+        let scale = monitor.scale_factor().map_err(|e| e.to_string())?;
+        let monitor_x = monitor.x().map_err(|e| e.to_string())?;
+        let monitor_y = monitor.y().map_err(|e| e.to_string())?;
+        
+        Ok((screenshot, scale, monitor_x, monitor_y))
+    })();
+
+    // Показываем окно оверлея обратно
+    if let Some(w) = app_handle.get_webview_window("ocr") {
+        let _ = w.show();
+        let _ = w.set_always_on_top(true);
+    }
+
+    let (screenshot, _scale, monitor_x, monitor_y) = capture_res?;
+    
+    let local_x = x - monitor_x;
+    let local_y = y - monitor_y;
+    
+    let phys_x = local_x.max(0) as u32;
+    let phys_y = local_y.max(0) as u32;
+    let phys_w = width;
+    let phys_h = height;
+    
+    let img_w = screenshot.width();
+    let img_h = screenshot.height();
+    
+    let crop_x = phys_x.min(img_w);
+    let crop_y = phys_y.min(img_h);
+    let crop_w = phys_w.min(img_w - crop_x);
+    let crop_h = phys_h.min(img_h - crop_y);
+    
+    if crop_w == 0 || crop_h == 0 {
+        return Err("Размер области захвата равен нулю".to_string());
+    }
+    
+    // Обрезка
+    let cropped = image::imageops::crop_imm(&screenshot, crop_x, crop_y, crop_w, crop_h).to_image();
+    
+    // Кодирование в PNG
+    let mut png_bytes = Vec::new();
+    cropped.write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageFormat::Png)
+        .map_err(|e| format!("Ошибка сжатия PNG: {}", e))?;
+        
+    // Запускаем локальный Windows OCR
+    let words = run_windows_ocr(&png_bytes).await?;
+    
+    if words.is_empty() {
+        return Ok(serde_json::json!({ "sentences": [] }));
+    }
+    
+    // Формируем плоский текст для Gemini (просто склеиваем слова через пробел)
+    let mut ocr_flat_text = String::new();
+    for w in &words {
+        ocr_flat_text.push_str(&w.text);
+        ocr_flat_text.push(' ');
+    }
+    
+    // Запрос к Gemini (текстовый) для разбивки на предложения
+    let config = load_config_internal(&app_handle)?;
+    let api_key = config.api_key.trim().to_string();
+    if api_key.is_empty() {
+        return Err("API ключ Gemini пуст в конфигурации".to_string());
+    }
+    
+    let prompt = r#"Ты — помощник по сегментации текста.
+Тебе дан сырой текст, полученный в результате распознавания экрана (OCR). Раздели этот текст на правильные, грамматически и логически связные предложения.
+Игнорируй случайный мусор (например, битые символы распознавания), но объединяй слова, которые логически составляют одну фразу или предложение.
+
+Формат ответа — СТРОГО JSON без markdown (без ```json, без пояснений):
+{
+  "sentences": [
+    "Первое предложение",
+    "Второе предложение"
+  ]
+}
+
+Правила:
+1. Не придумывай новые слова, не изменяй окончания слов, используй только те, что даны в тексте.
+2. Каждое предложение должно быть грамматически полным и правильным.
+3. Сохраняй исходную пунктуацию в конце предложений (точки, знаки восклицания, вопросы)."#;
+
+    let request_payload = serde_json::json!({
+        "contents": [{
+            "parts": [
+                {"text": format!("{}\n\nТекст для разделения:\n{}", prompt, ocr_flat_text)}
+            ]
+        }],
+        "generationConfig": {
+            "temperature": 0.1,
+            "responseMimeType": "application/json"
+        }
+    });
+
+    let mut primary_model = if config.ai_model.is_empty() {
+        "gemini-2.5-flash-lite".to_string()
+    } else {
+        config.ai_model.clone()
+    };
+    if primary_model.contains("tts-preview") {
+        primary_model = "gemini-2.0-flash".to_string();
+    }
+    
+    let fallback_models = vec![
+        primary_model.clone(),
+        "gemini-3.1-flash-lite".to_string(),
+        "gemini-2.5-flash".to_string(),
+        "gemini-3.5-flash".to_string(),
+        "gemini-2.5-flash-lite".to_string(),
+        "gemini-2.0-flash".to_string(),
+        "gemini-2.0-flash-lite".to_string(),
+        "gemini-2.5-pro".to_string(),
+    ];
+    
+    let mut seen = std::collections::HashSet::new();
+    let fallback_models: Vec<String> = fallback_models
+        .into_iter()
+        .filter(|m| seen.insert(m.clone()))
+        .collect();
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+    let mut last_err = String::new();
+    let mut gemini_response_text: Option<String> = None;
+    
+    for model in &fallback_models {
+        {
+            let locks = MODEL_LOCKS.lock().unwrap();
+            if let Some(unlock_time) = locks.get(model) {
+                if std::time::Instant::now() < *unlock_time {
+                    last_err = format!("Модель {} заблокирована", model);
+                    continue;
+                }
+            }
+        }
+
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            model, api_key
+        );
+
+        match client.post(&url).json(&request_payload).send().await {
+            Err(e) => {
+                last_err = format!("Ошибка сети для {}: {}", model, e);
+                continue;
+            }
+            Ok(res) => {
+                let status = res.status();
+                if status.as_u16() == 429 {
+                    let unlock_time = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                    let mut locks = MODEL_LOCKS.lock().unwrap();
+                    locks.insert(model.clone(), unlock_time);
+                    last_err = format!("Модель {} 429", model);
+                    continue;
+                }
+                if !status.is_success() {
+                    let err_text = res.text().await.unwrap_or_default();
+                    last_err = format!("Код {} от {}: {}", status, model, err_text);
+                    continue;
+                }
+                match res.json::<GeminiResponse>().await {
+                    Err(e) => {
+                        last_err = format!("Ошибка парсинга JSON для {}: {}", model, e);
+                        continue;
+                    }
+                    Ok(gr) => {
+                        let mut found = false;
+                        if let Some(cands) = gr.candidates {
+                            for cand in cands {
+                                if let Some(content) = cand.content {
+                                    if let Some(parts) = content.parts {
+                                        for part in parts {
+                                            if let Some(text) = part.text {
+                                                if !text.trim().is_empty() {
+                                                    gemini_response_text = Some(text);
+                                                    found = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if found { break; }
+                            }
+                        }
+                        if found { break; }
+                    }
+                }
+            }
+        }
+    }
+
+    let raw_json = match gemini_response_text {
+        None => return Err(format!("Все модели ИИ недоступны. Последняя ошибка: {}", last_err)),
+        Some(txt) => txt,
+    };
+
+    let mut cleaned = raw_json.trim().to_string();
+    if cleaned.starts_with("```") {
+        if let Some(first_newline) = cleaned.find('\n') {
+            cleaned = cleaned[first_newline..].to_string();
+        }
+        if cleaned.ends_with("```") {
+            cleaned.truncate(cleaned.len() - 3);
+        }
+        cleaned = cleaned.trim().to_string();
+    }
+
+    // Парсим результат от Gemini
+    let parsed: serde_json::Value = serde_json::from_str(&cleaned)
+        .map_err(|e| format!("Ошибка парсинга JSON от Gemini: {}. Ответ: {}", e, cleaned))?;
+
+    // Получаем список предложений из ответа Gemini
+    let mut sentences_vec = Vec::new();
+    if let Some(arr) = parsed["sentences"].as_array() {
+        for val in arr {
+            if let Some(s) = val.as_str() {
+                sentences_vec.push(s.to_string());
+            }
+        }
+    }
+
+    if sentences_vec.is_empty() {
+        return Ok(serde_json::json!({ "sentences": [] }));
+    }
+
+    let phys_crop_x = monitor_x + crop_x as i32;
+    let phys_crop_y = monitor_y + crop_y as i32;
+
+    let sentences_out = format_sentences_with_words(&sentences_vec, &words, phys_crop_x, phys_crop_y);
+
+    Ok(serde_json::json!({
+        "sentences": sentences_out
+    }))
+}
+
+// ─── Asynchronous Three-Phase OCR Scan (start_ocr_scan_async) ────────────────
+
+async fn call_gemini_text_api(
+    app_handle: &tauri::AppHandle,
+    api_key: &str,
+    primary_model: &str,
+    prompt: &str,
+    text: &str,
+) -> Result<(Vec<String>, String), String> {
+    let fallback_models = vec![
+        primary_model.to_string(),
+        "gemini-2.5-flash-lite".to_string(),
+        "gemini-2.5-flash".to_string(),
+        "gemini-2.0-flash".to_string(),
+        "gemini-2.0-flash-lite".to_string(),
+    ];
+    
+    let mut seen = std::collections::HashSet::new();
+    let fallback_models: Vec<String> = fallback_models
+        .into_iter()
+        .filter(|m| seen.insert(m.clone()))
+        .collect();
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    let request_payload = serde_json::json!({
+        "contents": [{
+            "parts": [
+                {"text": format!("{}\n\nТекст для разделения:\n{}", prompt, text)}
+            ]
+        }],
+        "generationConfig": {
+            "temperature": 0.1,
+            "responseMimeType": "application/json"
+        }
+    });
+
+    let mut last_err = String::new();
+    let mut gemini_response_text = None;
+    let mut used_model_info = String::new();
+
+    for model in &fallback_models {
+        {
+            let locks = MODEL_LOCKS.lock().unwrap();
+            if let Some(unlock_time) = locks.get(model) {
+                if std::time::Instant::now() < *unlock_time {
+                    last_err = format!("Модель {} заблокирована", model);
+                    continue;
+                }
+            }
+        }
+
+        // Проверяем локальные лимиты RPM/RPD перед запросом
+        let (rpm, rpd) = match check_and_record_rate_limit(model) {
+            Ok((rpm, rpd)) => (rpm, rpd),
+            Err(err_msg) => {
+                last_err = format!("Модель {} пропущена ({})", model, err_msg);
+                let _ = app_handle.emit("ocr-status-update", format!("⚠️ Пропущена {}: {}. Переключаю...", model, err_msg));
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                continue;
+            }
+        };
+
+        let _ = app_handle.emit(
+            "ocr-status-update",
+            format!("⏳ Попытка ИИ: {} (минута {}/15, день {}/1500)...", model, rpm, rpd)
+        );
+
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            model, api_key
+        );
+
+        match client.post(&url).json(&request_payload).send().await {
+            Err(e) => {
+                last_err = format!("Ошибка сети для {}: {}", model, e);
+                let _ = app_handle.emit("ocr-status-update", format!("⚠️ Ошибка сети {}. Ожидание 1с...", model));
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                continue;
+            }
+            Ok(res) => {
+                let status = res.status();
+                if status.as_u16() == 429 {
+                    let unlock_time = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                    {
+                        let mut locks = MODEL_LOCKS.lock().unwrap();
+                        locks.insert(model.clone(), unlock_time);
+                    }
+                    last_err = format!("Модель {} 429", model);
+                    let _ = app_handle.emit("ocr-status-update", format!("⚠️ Сбой {} (429). Ожидание 1с перед следующей попыткой...", model));
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    continue;
+                }
+                if !status.is_success() {
+                    let err_text = res.text().await.unwrap_or_default();
+                    last_err = format!("Код {} от {}: {}", status, model, err_text);
+                    let _ = app_handle.emit("ocr-status-update", format!("⚠️ Сбой {} ({}). Ожидание 1с...", model, status));
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    continue;
+                }
+                match res.json::<GeminiResponse>().await {
+                    Err(e) => {
+                        last_err = format!("Ошибка парсинга JSON для {}: {}", model, e);
+                        continue;
+                    }
+                    Ok(gr) => {
+                        let mut found = false;
+                        if let Some(cands) = gr.candidates {
+                            for cand in cands {
+                                if let Some(content) = cand.content {
+                                    if let Some(parts) = content.parts {
+                                        for part in parts {
+                                            if let Some(txt) = part.text {
+                                                if !txt.trim().is_empty() {
+                                                    gemini_response_text = Some(txt);
+                                                    used_model_info = format!("{} (RPM: {}/15)", model, rpm);
+                                                    found = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if found { break; }
+                            }
+                        }
+                        if found { break; }
+                    }
+                }
+            }
+        }
+    }
+
+    let raw_json = gemini_response_text.ok_or_else(|| format!("Все модели недоступны. Последняя ошибка: {}", last_err))?;
+    let mut cleaned = raw_json.trim().to_string();
+    if cleaned.starts_with("```") {
+        if let Some(first_newline) = cleaned.find('\n') {
+            cleaned = cleaned[first_newline..].to_string();
+        }
+        if cleaned.ends_with("```") {
+            cleaned.truncate(cleaned.len() - 3);
+        }
+        cleaned = cleaned.trim().to_string();
+    }
+
+    let parsed: serde_json::Value = serde_json::from_str(&cleaned)
+        .map_err(|e| format!("Ошибка парсинга JSON от Gemini: {}. Ответ: {}", e, cleaned))?;
+
+    let mut sentences_vec = Vec::new();
+    if let Some(arr) = parsed["sentences"].as_array() {
+        for val in arr {
+            if let Some(s) = val.as_str() {
+                sentences_vec.push(s.to_string());
+            }
+        }
+    }
+
+    Ok((sentences_vec, used_model_info))
+}
+
+async fn call_gemini_vision_api(
+    api_key: &str,
+    primary_model: &str,
+    prompt: &str,
+    base64_image: &str,
+) -> Result<serde_json::Value, String> {
+    let fallback_models = vec![
+        primary_model.to_string(),
+        "gemini-2.5-flash".to_string(),
+        "gemini-2.0-flash".to_string(),
+        "gemini-1.5-flash".to_string(),
+        "gemini-3.5-flash".to_string(),
+        "gemini-2.5-pro".to_string(),
+    ];
+    
+    let mut seen = std::collections::HashSet::new();
+    let fallback_models: Vec<String> = fallback_models
+        .into_iter()
+        .filter(|m| seen.insert(m.clone()))
+        .collect();
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    let request_payload = serde_json::json!({
+        "contents": [{
+            "parts": [
+                {"text": prompt.to_string()},
+                {
+                    "inlineData": {
+                        "mimeType": "image/png",
+                        "data": base64_image.to_string()
+                    }
+                }
+            ]
+        }],
+        "generationConfig": {
+            "temperature": 0.1,
+            "responseMimeType": "application/json"
+        }
+    });
+
+    let mut last_err = String::new();
+    let mut gemini_response_text = None;
+
+    for model in &fallback_models {
+        {
+            let locks = MODEL_LOCKS.lock().unwrap();
+            if let Some(unlock_time) = locks.get(model) {
+                if std::time::Instant::now() < *unlock_time {
+                    last_err = format!("Модель {} заблокирована", model);
+                    continue;
+                }
+            }
+        }
+
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            model, api_key
+        );
+
+        match client.post(&url).json(&request_payload).send().await {
+            Err(e) => {
+                last_err = format!("Ошибка сети для {}: {}", model, e);
+                continue;
+            }
+            Ok(res) => {
+                let status = res.status();
+                if status.as_u16() == 429 {
+                    let unlock_time = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                    let mut locks = MODEL_LOCKS.lock().unwrap();
+                    locks.insert(model.clone(), unlock_time);
+                    last_err = format!("Модель {} 429", model);
+                    continue;
+                }
+                if !status.is_success() {
+                    let err_text = res.text().await.unwrap_or_default();
+                    last_err = format!("Код {} от {}: {}", status, model, err_text);
+                    continue;
+                }
+                match res.json::<GeminiResponse>().await {
+                    Err(e) => {
+                        last_err = format!("Ошибка парсинга JSON для {}: {}", model, e);
+                        continue;
+                    }
+                    Ok(gr) => {
+                        let mut found = false;
+                        if let Some(cands) = gr.candidates {
+                            for cand in cands {
+                                if let Some(content) = cand.content {
+                                    if let Some(parts) = content.parts {
+                                        for part in parts {
+                                            if let Some(txt) = part.text {
+                                                if !txt.trim().is_empty() {
+                                                    gemini_response_text = Some(txt);
+                                                    found = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if found { break; }
+                            }
+                        }
+                        if found { break; }
+                    }
+                }
+            }
+        }
+    }
+
+    let raw_json = gemini_response_text.ok_or_else(|| format!("Все модели недоступны. Последняя ошибка: {}", last_err))?;
+    let mut cleaned = raw_json.trim().to_string();
+    if cleaned.starts_with("```") {
+        if let Some(first_newline) = cleaned.find('\n') {
+            cleaned = cleaned[first_newline..].to_string();
+        }
+        if cleaned.ends_with("```") {
+            cleaned.truncate(cleaned.len() - 3);
+        }
+        cleaned = cleaned.trim().to_string();
+    }
+
+    let parsed: serde_json::Value = serde_json::from_str(&cleaned)
+        .map_err(|e| format!("Ошибка парсинга JSON от Gemini Vision: {}. Ответ: {}", e, cleaned))?;
+
+    Ok(parsed)
+}
+
+fn build_fallback_sentences_from_words(words: &[OcrWordInfo]) -> Vec<String> {
+    if words.is_empty() {
+        return Vec::new();
+    }
+    let sorted = sort_ocr_words(words.to_vec());
+    
+    // 1. Группируем слова в строки по Y
+    let mut lines: Vec<Vec<OcrWordInfo>> = Vec::new();
+    let mut current_line: Vec<OcrWordInfo> = Vec::new();
+    
+    if !sorted.is_empty() {
+        let mut last_y = sorted[0].y;
+        let mut last_h = sorted[0].height;
+        
+        for w in sorted {
+            let cy = w.y + w.height / 2.0;
+            let line_cy = last_y + last_h / 2.0;
+            
+            if (cy - line_cy).abs() > last_h * 0.8 && !current_line.is_empty() {
+                lines.push(current_line);
+                current_line = Vec::new();
+            }
+            last_y = w.y;
+            last_h = w.height;
+            current_line.push(w);
+        }
+        if !current_line.is_empty() {
+            lines.push(current_line);
+        }
+    }
+    
+    // Переводим строки в текстовый вид
+    let mut text_lines: Vec<String> = Vec::new();
+    for line in lines {
+        let line_str = line.iter().map(|w| w.text.as_str()).collect::<Vec<&str>>().join(" ");
+        let trimmed = line_str.trim().to_string();
+        if !trimmed.is_empty() {
+            text_lines.push(trimmed);
+        }
+    }
+    
+    if text_lines.is_empty() {
+        return Vec::new();
+    }
+    
+    // 2. Объединяем строки в предложения по эвристикам
+    let mut sentences = Vec::new();
+    let mut current_sentence = String::new();
+    
+    for line in text_lines {
+        if current_sentence.is_empty() {
+            current_sentence = line;
+            continue;
+        }
+        
+        let prev_trimmed = current_sentence.trim();
+        let curr_trimmed = line.trim();
+        
+        let last_char = prev_trimmed.chars().last().unwrap_or(' ');
+        let first_char = curr_trimmed.chars().next().unwrap_or(' ');
+        
+        // Определение маркера списка
+        let is_list_item = curr_trimmed.starts_with('*') 
+            || curr_trimmed.starts_with('-') 
+            || curr_trimmed.starts_with('•')
+            || (curr_trimmed.len() > 2 && curr_trimmed.chars().next().unwrap().is_ascii_digit() && curr_trimmed.contains('.'));
+            
+        // Определение технического лога
+        let is_tech_log = curr_trimmed.to_lowercase().contains("worked for") 
+            || curr_trimmed.to_lowercase().contains("seconds")
+            || curr_trimmed.to_lowercase().contains("elapsed");
+            
+        let prev_is_tech_log = prev_trimmed.to_lowercase().contains("worked for") 
+            || prev_trimmed.to_lowercase().contains("seconds");
+            
+        // Если предыдущая строка заканчивается на .!? или текущая строка - список/лог, или предыдущая была логом
+        let should_split = last_char == '.' || last_char == '!' || last_char == '?'
+            || is_list_item 
+            || is_tech_log 
+            || prev_is_tech_log
+            || (first_char.is_uppercase() && (last_char == ':' || last_char == ';' || last_char == ','));
+            
+        // Если первый символ строчный (маленький), то принудительно объединяем (если это не список и не лог)
+        let force_merge = first_char.is_lowercase() && !is_list_item && !is_tech_log;
+        
+        if should_split && !force_merge {
+            sentences.push(current_sentence.trim().to_string());
+            current_sentence = line;
+        } else {
+            if !current_sentence.ends_with(' ') {
+                current_sentence.push(' ');
+            }
+            current_sentence.push_str(&line);
+        }
+    }
+    
+    if !current_sentence.is_empty() {
+        sentences.push(current_sentence.trim().to_string());
+    }
+    
+    sentences
+}
+
+fn build_multiline_text_from_words(words: &[OcrWordInfo]) -> String {
+    if words.is_empty() {
+        return String::new();
+    }
+    let sorted = sort_ocr_words(words.to_vec());
+    let mut multiline_text = String::new();
+    
+    let mut last_y = sorted[0].y;
+    let mut last_h = sorted[0].height;
+    
+    for w in sorted {
+        let cy = w.y + w.height / 2.0;
+        let line_cy = last_y + last_h / 2.0;
+        
+        if (cy - line_cy).abs() > last_h * 0.8 && !multiline_text.is_empty() {
+            multiline_text.push('\n');
+        }
+        
+        multiline_text.push_str(&w.text);
+        multiline_text.push(' ');
+        last_y = w.y;
+        last_h = w.height;
+    }
+    
+    multiline_text.trim().to_string()
+}
+
+fn clean_word(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+fn levenshtein_distance(s1: &str, s2: &str) -> usize {
+    let v1: Vec<char> = s1.chars().collect();
+    let v2: Vec<char> = s2.chars().collect();
+    let len1 = v1.len();
+    let len2 = v2.len();
+    
+    let mut dp = vec![vec![0; len2 + 1]; len1 + 1];
+    for i in 0..=len1 { dp[i][0] = i; }
+    for j in 0..=len2 { dp[0][j] = j; }
+    
+    for i in 1..=len1 {
+        for j in 1..=len2 {
+            if v1[i-1] == v2[j-1] {
+                dp[i][j] = dp[i-1][j-1];
+            } else {
+                dp[i][j] = 1 + dp[i-1][j-1].min(dp[i-1][j].min(dp[i][j-1]));
+            }
+        }
+    }
+    dp[len1][len2]
+}
+
+fn is_fuzzy_match(w1: &str, w2: &str) -> bool {
+    let clean_w1 = clean_word(w1);
+    let clean_w2 = clean_word(w2);
+    if clean_w1.is_empty() || clean_w2.is_empty() {
+        return false;
+    }
+    if clean_w1 == clean_w2 {
+        return true;
+    }
+    if clean_w1.contains(&clean_w2) || clean_w2.contains(&clean_w1) {
+        return true;
+    }
+    let dist = levenshtein_distance(&clean_w1, &clean_w2);
+    let max_len = clean_w1.len().max(clean_w2.len());
+    if max_len > 4 {
+        dist <= 2
+    } else {
+        dist <= 1
+    }
+}
+
+fn format_sentences_with_words(
+    sentences_vec: &[String],
+    words: &[OcrWordInfo],
+    phys_crop_x: i32,
+    phys_crop_y: i32,
+) -> Vec<serde_json::Value> {
+    let clean_words: Vec<String> = words.iter().map(|w| clean_word(&w.text)).collect();
+    
+    // Фаза 1: Точное и нечеткое сопоставление слов ИИ с исходными словами OCR (помечаем индексы предложений)
+    let mut word_to_sentence = vec![None; words.len()];
+    let mut w_idx = 0;
+
+    for (s_idx, sentence_text) in sentences_vec.iter().enumerate() {
+        let query_words: Vec<&str> = sentence_text.split_whitespace().collect();
+        for qw in query_words {
+            let clean_qw = clean_word(qw);
+            if clean_qw.is_empty() {
+                continue;
+            }
+
+            let search_limit = (w_idx + 12).min(words.len());
+            let mut found_idx = None;
+
+            for i in w_idx..search_limit {
+                if clean_words[i] == clean_qw {
+                    found_idx = Some(i);
+                    break;
+                }
+            }
+
+            if found_idx.is_none() {
+                for i in w_idx..search_limit {
+                    if is_fuzzy_match(&clean_words[i], &clean_qw) {
+                        found_idx = Some(i);
+                        break;
+                    }
+                }
+            }
+
+            if let Some(match_idx) = found_idx {
+                word_to_sentence[match_idx] = Some(s_idx);
+                w_idx = match_idx + 1;
+            }
+        }
+    }
+
+    // Фаза 2: Распределение несопоставленных слов по ближайшим соседям
+    for i in 0..words.len() {
+        if word_to_sentence[i].is_none() {
+            // Ищем ближайшего левого сопоставленного соседа
+            let mut left_neighbor = None;
+            for l in (0..i).rev() {
+                if let Some(s_idx) = word_to_sentence[l] {
+                    left_neighbor = Some((l, s_idx));
+                    break;
+                }
+            }
+
+            // Ищем ближайшего правого сопоставленного соседа
+            let mut right_neighbor = None;
+            for r in (i + 1)..words.len() {
+                if let Some(s_idx) = word_to_sentence[r] {
+                    right_neighbor = Some((r, s_idx));
+                    break;
+                }
+            }
+
+            // Определяем, к какому соседу привязать слово
+            let assigned_s_idx = match (left_neighbor, right_neighbor) {
+                (Some((l, s_idx_l)), Some((r, s_idx_r))) => {
+                    if s_idx_l == s_idx_r {
+                        s_idx_l
+                    } else {
+                        // Оба соседа есть и они из разных предложений.
+                        // Проверяем, на одной ли строке слово с левым или правым соседом.
+                        let cy_i = words[i].y + words[i].height / 2.0;
+                        let cy_l = words[l].y + words[l].height / 2.0;
+                        let cy_r = words[r].y + words[r].height / 2.0;
+
+                        let diff_l = (cy_i - cy_l).abs();
+                        let diff_r = (cy_i - cy_r).abs();
+                        let threshold_l = words[i].height.max(words[l].height) * 0.8;
+                        let threshold_r = words[i].height.max(words[r].height) * 0.8;
+
+                        if diff_l < threshold_l && diff_r >= threshold_r {
+                            s_idx_l
+                        } else if diff_r < threshold_r && diff_l >= threshold_l {
+                            s_idx_r
+                        } else {
+                            // Если оба на одной строке или оба на разных — привязываем к левому (предыдущему)
+                            s_idx_l
+                        }
+                    }
+                }
+                (Some((_, s_idx_l)), None) => s_idx_l,
+                (None, Some((_, s_idx_r))) => s_idx_r,
+                (None, None) => 0, // По умолчанию первое предложение
+            };
+
+            word_to_sentence[i] = Some(assigned_s_idx);
+        }
+    }
+
+    // Собираем результаты
+    let mut sentence_word_indices = vec![Vec::new(); sentences_vec.len()];
+    for (w_idx, s_idx_opt) in word_to_sentence.iter().enumerate() {
+        if let Some(s_idx) = s_idx_opt {
+            if *s_idx < sentence_word_indices.len() {
+                sentence_word_indices[*s_idx].push(w_idx);
+            }
+        }
+    }
+
+    let mut sentences_out = Vec::new();
+    for (s_idx, sentence_text) in sentences_vec.iter().enumerate() {
+        let mut indices = sentence_word_indices[s_idx].clone();
+        if indices.is_empty() {
+            continue;
+        }
+        indices.sort_unstable();
+
+        let mut words_out = Vec::new();
+        for &idx in &indices {
+            let w = &words[idx];
+            let wx_abs = phys_crop_x as f32 + w.x;
+            let wy_abs = phys_crop_y as f32 + w.y;
+
+            words_out.push(serde_json::json!({
+                "text": w.text.clone(),
+                "x": wx_abs.round() as i32,
+                "y": wy_abs.round() as i32,
+                "w": w.width.round() as i32,
+                "h": w.height.round() as i32
+            }));
+        }
+
+        if !words_out.is_empty() {
+            sentences_out.push(serde_json::json!({
+                "text": sentence_text.clone(),
+                "words": words_out
+            }));
+        }
+    }
+    sentences_out
+}
+
+fn align_and_format_vision_data(
+    vision_data: &serde_json::Value,
+    local_words: &[OcrWordInfo],
+    phys_crop_x: i32,
+    phys_crop_y: i32,
+    crop_w: u32,
+    crop_h: u32,
+) -> Option<Vec<serde_json::Value>> {
+    let sentences = vision_data["sentences"].as_array()?;
+    if sentences.is_empty() {
+        return None;
+    }
+
+    let mut sentences_out = Vec::new();
+    let mut has_new_words = false;
+
+    for s in sentences {
+        let text = match s["text"].as_str() {
+            Some(t) => t.to_string(),
+            None => continue,
+        };
+        let words = match s["words"].as_array() {
+            Some(w) => w,
+            None => continue,
+        };
+        let mut words_out = Vec::new();
+
+        for w in words {
+            let w_text = match w["text"].as_str() {
+                Some(t) => t.to_string(),
+                None => continue,
+            };
+            let box_arr = match w["box"].as_array() {
+                Some(b) => b,
+                None => continue,
+            };
+            if box_arr.len() < 4 {
+                continue;
+            }
+
+            let ymin = match box_arr[0].as_f64() { Some(val) => val as f32, None => continue };
+            let xmin = match box_arr[1].as_f64() { Some(val) => val as f32, None => continue };
+            let ymax = match box_arr[2].as_f64() { Some(val) => val as f32, None => continue };
+            let xmax = match box_arr[3].as_f64() { Some(val) => val as f32, None => continue };
+
+            let w_x_rel = (xmin / 1000.0) * crop_w as f32;
+            let w_y_rel = (ymin / 1000.0) * crop_h as f32;
+            let w_w = ((xmax - xmin) / 1000.0) * crop_w as f32;
+            let w_h = ((ymax - ymin) / 1000.0) * crop_h as f32;
+
+            let mut final_x = phys_crop_x as f32 + w_x_rel;
+            let mut final_y = phys_crop_y as f32 + w_y_rel;
+            let mut final_w = w_w;
+            let mut final_h = w_h;
+
+            let mut matched_local = false;
+
+            for local_w in local_words {
+                let ax1 = final_x;
+                let ay1 = final_y;
+                let ax2 = final_x + final_w;
+                let ay2 = final_y + final_h;
+
+                let bx1 = phys_crop_x as f32 + local_w.x;
+                let by1 = phys_crop_y as f32 + local_w.y;
+                let bx2 = bx1 + local_w.width;
+                let by2 = by1 + local_w.height;
+
+                let overlap_x1 = ax1.max(bx1);
+                let overlap_y1 = ay1.max(by1);
+                let overlap_x2 = ax2.min(bx2);
+                let overlap_y2 = ay2.min(by2);
+
+                let overlap_w = overlap_x2 - overlap_x1;
+                let overlap_h = overlap_y2 - overlap_y1;
+
+                if overlap_w > 0.0 && overlap_h > 0.0 {
+                    let overlap_area = overlap_w * overlap_h;
+                    let area_a = final_w * final_h;
+                    let area_b = local_w.width * local_w.height;
+                    let min_area = area_a.min(area_b);
+
+                    if overlap_area > 0.4 * min_area {
+                        final_x = bx1;
+                        final_y = by1;
+                        final_w = local_w.width;
+                        final_h = local_w.height;
+                        matched_local = true;
+                        break;
+                    }
+                }
+            }
+
+            if !matched_local {
+                has_new_words = true;
+            }
+
+            words_out.push(serde_json::json!({
+                "text": w_text,
+                "x": final_x.round() as i32,
+                "y": final_y.round() as i32,
+                "w": final_w.round() as i32,
+                "h": final_h.round() as i32
+            }));
+        }
+
+        if !words_out.is_empty() {
+            sentences_out.push(serde_json::json!({
+                "text": text,
+                "words": words_out
+            }));
+        }
+    }
+
+    if has_new_words {
+        Some(sentences_out)
+    } else {
+        None
+    }
+}
+
+#[tauri::command]
+async fn start_ocr_scan_async(
+    app_handle: tauri::AppHandle,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    let center_x = x + (width as i32) / 2;
+    let center_y = y + (height as i32) / 2;
+    
+    if let Some(w) = app_handle.get_webview_window("ocr") {
+        let _ = w.hide();
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    }
+    
+    let capture_res = (|| -> Result<(image::RgbaImage, f32, i32, i32), String> {
+        let monitor = xcap::Monitor::from_point(center_x, center_y)
+            .map_err(|e| format!("Не удалось найти монитор в точке ({}, {}): {}", center_x, center_y, e))?;
+            
+        let screenshot = monitor.capture_image()
+            .map_err(|e| format!("Ошибка захвата экрана: {}", e))?;
+            
+        let scale = monitor.scale_factor().map_err(|e| e.to_string())?;
+        let monitor_x = monitor.x().map_err(|e| e.to_string())?;
+        let monitor_y = monitor.y().map_err(|e| e.to_string())?;
+        
+        Ok((screenshot, scale, monitor_x, monitor_y))
+    })();
+
+    if let Some(w) = app_handle.get_webview_window("ocr") {
+        let _ = w.show();
+        let _ = w.set_always_on_top(true);
+    }
+
+    let (screenshot, _scale, monitor_x, monitor_y) = capture_res?;
+    
+    let local_x = x - monitor_x;
+    let local_y = y - monitor_y;
+    
+    let phys_x = local_x.max(0) as u32;
+    let phys_y = local_y.max(0) as u32;
+    let phys_w = width;
+    let phys_h = height;
+    
+    let img_w = screenshot.width();
+    let img_h = screenshot.height();
+    
+    let crop_x = phys_x.min(img_w);
+    let crop_y = phys_y.min(img_h);
+    let crop_w = phys_w.min(img_w - crop_x);
+    let crop_h = phys_h.min(img_h - crop_y);
+    
+    if crop_w == 0 || crop_h == 0 {
+        return Err("Размер области захвата равен нулю".to_string());
+    }
+    
+    let cropped = image::imageops::crop_imm(&screenshot, crop_x, crop_y, crop_w, crop_h).to_image();
+    
+    let mut png_bytes = Vec::new();
+    cropped.write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageFormat::Png)
+        .map_err(|e| format!("Ошибка сжатия PNG: {}", e))?;
+        
+    let local_words = run_windows_ocr(&png_bytes).await?;
+    
+    let phys_crop_x = monitor_x + crop_x as i32;
+    let phys_crop_y = monitor_y + crop_y as i32;
+
+    let words_out: Vec<serde_json::Value> = local_words.iter().map(|w| {
+        serde_json::json!({
+            "text": w.text.clone(),
+            "x": (phys_crop_x as f32 + w.x).round() as i32,
+            "y": (phys_crop_y as f32 + w.y).round() as i32,
+            "w": w.width.round() as i32,
+            "h": w.height.round() as i32
+        })
+    }).collect();
+
+    let _ = app_handle.emit("ocr-words-ready", &words_out);
+
+    let config = load_config_internal(&app_handle)?;
+    let api_key = config.api_key.trim().to_string();
+    if api_key.is_empty() {
+        return Err("API ключ Gemini пуст в конфигурации".to_string());
+    }
+
+    let mut primary_model = if config.ai_model.is_empty() {
+        "gemini-2.5-flash-lite".to_string()
+    } else {
+        config.ai_model.clone()
+    };
+    if primary_model.contains("tts-preview") {
+        primary_model = "gemini-2.0-flash".to_string();
+    }
+
+    // Собираем структурированный многострочный текст с переносами строк
+    let multiline_text = build_multiline_text_from_words(&local_words);
+
+    let app_handle_clone = app_handle.clone();
+    let api_key_clone = api_key.clone();
+    let model_clone = primary_model.clone();
+    let local_words_clone = local_words.clone();
+
+    tokio::spawn(async move {
+        let prompt = r#"Ты — помощник по сегментации текста.
+Тебе дан сырой текст, полученный в результате распознавания экрана (OCR). Раздели этот текст на правильные, грамматически и логически связные предложения.
+Игнорируй случайный мусор (например, битые символы распознавания), но объединяй слова, которые логически составляют одну фразу или предложение.
+
+Формат ответа — СТРОГО JSON без markdown (без ```json, без пояснений):
+{
+  "sentences": [
+    "Первое предложение",
+    "Второе предложение"
+  ]
+}
+
+Правила:
+1. Не придумывай новые слова, не изменяй окончания слов, используй только те, что даны в тексте.
+2. Каждое предложение должно быть грамматически полным и правильным.
+3. Сохраняй исходную пунктуацию в конце предложений (точки, знаки восклицания, вопросы).
+4. СТРОГО ЗАПРЕЩЕНО объединять в одно предложение строки, разделенные переносом строки (\n), если они не являются непосредственным грамматическим продолжением друг друга.
+5. Технические логи (например, "Worked for 38s", "Worked for 46s"), служебные сообщения, заголовки и пункты списков ДОЛЖНЫ быть выделены в отдельные предложения. Никогда не склеивай их с основным текстом."#;
+
+        match call_gemini_text_api(&app_handle_clone, &api_key_clone, &model_clone, prompt, &multiline_text).await {
+            Ok((sentences_vec, used_model)) => {
+                let formatted = format_sentences_with_words(&sentences_vec, &local_words_clone, phys_crop_x, phys_crop_y);
+                let _ = app_handle_clone.emit("ocr-sentences-ready", serde_json::json!({
+                    "sentences": formatted,
+                    "model": format!("ИИ: {}", used_model)
+                }));
+            }
+            Err(e) => {
+                eprintln!("[OCR] Gemini Text API task failed, using local fallback: {}", e);
+                let sentences_vec = build_fallback_sentences_from_words(&local_words_clone);
+                let formatted = format_sentences_with_words(&sentences_vec, &local_words_clone, phys_crop_x, phys_crop_y);
+                let _ = app_handle_clone.emit("ocr-sentences-ready", serde_json::json!({
+                    "sentences": formatted,
+                    "model": "Локальный fallback",
+                    "error": format!("ИИ недоступен: {}", e)
+                }));
+            }
+        }
+        
+        let _ = app_handle_clone.emit("ocr-scan-finished", serde_json::json!({}));
+    });
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -1981,6 +3555,8 @@ fn resize_bottom_up_phys(
         _ => return Err("Текущее окно не является Win32 HWND".into()),
     };
 
+    println!("SINC PRO OCR: resize_bottom_up_phys -> hwnd=0x{:X}, x={}, y={}, width={}, height={}", hwnd, x, y, width, height);
+
     #[link(name = "user32")]
     extern "system" {
         fn SetWindowPos(
@@ -1992,25 +3568,35 @@ fn resize_bottom_up_phys(
             cy: i32,
             uFlags: u32,
         ) -> i32;
+        fn ShowWindow(hWnd: isize, nCmdShow: i32) -> i32;
+        fn SetForegroundWindow(hWnd: isize) -> i32;
     }
 
-    const SWP_NOZORDER: u32 = 0x0004;
+    const HWND_TOPMOST: isize = -1;
     const SWP_NOACTIVATE: u32 = 0x0010;
     const SWP_NOCOPYBITS: u32 = 0x0100;
     const SWP_NOOWNERZORDER: u32 = 0x0200;
+    const SWP_SHOWWINDOW: u32 = 0x0040;
 
     unsafe {
         let res = SetWindowPos(
             hwnd,
-            0,
+            HWND_TOPMOST,
             x,
             y,
             width,
             height,
-            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOCOPYBITS,
+            SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOCOPYBITS | SWP_SHOWWINDOW,
         );
         if res == 0 {
+            println!("SINC PRO OCR: SetWindowPos FAILED!");
             return Err("Ошибка при вызове SetWindowPos".into());
+        }
+        
+        let label = window.label();
+        if label == "ocr" {
+            ShowWindow(hwnd, 5); // SW_SHOW
+            SetForegroundWindow(hwnd);
         }
     }
     
@@ -2124,7 +3710,40 @@ fn get_cursor_monitor() -> Result<CursorMonitorInfo, String> {
     Err("get_cursor_monitor реализован только для Windows".into())
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
+#[tauri::command]
+#[cfg(target_os = "windows")]
+fn get_virtual_desktop_rect() -> Result<serde_json::Value, String> {
+    use winapi::um::winuser::{GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN};
+    unsafe {
+        let x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        let y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        let width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        let height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        
+        println!("SINC PRO OCR: get_virtual_desktop_rect -> x={}, y={}, width={}, height={}", x, y, width, height);
+        
+        if width == 0 || height == 0 {
+            use winapi::um::winuser::{SM_CXSCREEN, SM_CYSCREEN};
+            let w = GetSystemMetrics(SM_CXSCREEN);
+            let h = GetSystemMetrics(SM_CYSCREEN);
+            return Ok(serde_json::json!({ "x": 0, "y": 0, "width": w, "height": h }));
+        }
+        
+        Ok(serde_json::json!({
+            "x": x,
+            "y": y,
+            "width": width,
+            "height": height
+        }))
+    }
+}
+
+#[tauri::command]
+#[cfg(not(target_os = "windows"))]
+fn get_virtual_desktop_rect() -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({ "x": 0, "y": 0, "width": 1920, "height": 1080 }))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {}))
@@ -2136,13 +3755,30 @@ pub fn run() {
                 .with_handler(|app, shortcut, event| {
                     if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
                         if shortcut.matches(tauri_plugin_global_shortcut::Modifiers::ALT, tauri_plugin_global_shortcut::Code::KeyQ) {
+                            println!("SINC PRO OCR: Global Shortcut Alt+Q triggered.");
                             if let Some(w) = app.get_webview_window("ocr") {
-                                if w.is_visible().unwrap_or(false) {
-                                    let _ = w.hide();
+                                use tauri::Emitter;
+                                let visible = OCR_WINDOW_VISIBLE.load(std::sync::atomic::Ordering::SeqCst);
+                                println!("SINC PRO OCR: OCR_WINDOW_VISIBLE load is={}", visible);
+                                if visible {
+                                    println!("SINC PRO OCR: Global Shortcut Alt+Q calling hide_ocr_window...");
+                                    let app_clone = app.clone();
+                                    tauri::async_runtime::spawn(async move {
+                                        if let Err(e) = hide_ocr_window(app_clone).await {
+                                            println!("SINC PRO OCR: Global Shortcut hide_ocr_window failed: {}", e);
+                                        }
+                                    });
                                 } else {
-                                    let _ = w.show();
-                                    let _ = w.set_focus();
+                                    println!("SINC PRO OCR: Global Shortcut Alt+Q calling show_ocr_window...");
+                                    let app_clone = app.clone();
+                                    tauri::async_runtime::spawn(async move {
+                                        if let Err(e) = show_ocr_window(app_clone).await {
+                                            println!("SINC PRO OCR: Global Shortcut show_ocr_window failed: {}", e);
+                                        }
+                                    });
                                 }
+                            } else {
+                                println!("SINC PRO OCR: WebviewWindow 'ocr' NOT FOUND when Shortcut triggered!");
                             }
                         }
                     }
@@ -2174,6 +3810,27 @@ pub fn run() {
                         UnhookWindowsHookEx(hook);
                     }
                 });
+
+                std::thread::spawn(|| {
+                    use winapi::um::winuser::{GetAsyncKeyState, VK_MENU};
+                    let mut alt_pressed = false;
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        let state = unsafe { GetAsyncKeyState(VK_MENU) };
+                        let is_down = (state as u16 & 0x8000) != 0;
+                        if is_down != alt_pressed {
+                            alt_pressed = is_down;
+                            if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                                use tauri::Emitter;
+                                if is_down {
+                                    let _ = app.emit("alt-pressed", ());
+                                } else {
+                                    let _ = app.emit("alt-released", ());
+                                }
+                            }
+                        }
+                    }
+                });
             }
 
             Ok(())
@@ -2194,6 +3851,8 @@ pub fn run() {
             hide_capsule_window,
             show_widget_window,
             hide_widget_window,
+            show_ocr_window,
+            hide_ocr_window,
             resize_window,
             resize_bottom_up_phys,
             get_cursor_monitor,
@@ -2205,7 +3864,10 @@ pub fn run() {
             set_ignore_cursor_events,
             capture_clipboard_text,
             translate_hybrid,
-            process_ocr_vision
+            process_ocr_vision,
+            process_ocr_hybrid,
+            start_ocr_scan_async,
+            get_virtual_desktop_rect
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

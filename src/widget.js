@@ -205,10 +205,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (togglesContainer && window.WindowToggleManager) {
       togglesContainer.innerHTML = 
         WindowToggleManager.renderToggle('toggle-capsule-widget', 'mic', 'Показать/скрыть капсулу диктовки') +
-        WindowToggleManager.renderToggle('toggle-widget-widget', 'record_voice_over', 'Скрыть плавающий виджет');
+        WindowToggleManager.renderToggle('toggle-widget-widget', 'record_voice_over', 'Скрыть плавающий виджет') +
+        WindowToggleManager.renderToggle('toggle-ocr-widget', 'screenshot_region', 'Показать/скрыть оверлей переводчика OCR');
 
       WindowToggleManager.initToggle('toggle-capsule-widget', 'capsule');
       WindowToggleManager.initToggle('toggle-widget-widget', 'widget');
+      WindowToggleManager.initToggle('toggle-ocr-widget', 'ocr');
     }
   }
 });

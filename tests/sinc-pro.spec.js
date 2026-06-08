@@ -16,7 +16,7 @@ import { test, expect } from '@playwright/test';
 // ──────────────────────────────────────────────────────────────────────────────
 test.describe('DOM — критичные элементы', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(600); // ждём DOMContentLoaded + setTimeout(runSelfTest, 500)
   });
@@ -67,7 +67,7 @@ test.describe('DOM — критичные элементы', () => {
 // ──────────────────────────────────────────────────────────────────────────────
 test.describe('Навигация', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(1000); // Даем встроенному self-test завершиться
   });
@@ -149,7 +149,7 @@ test.describe('JS ошибки', () => {
       }
     });
 
-    await page.goto('/');
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(700);
 
@@ -167,7 +167,7 @@ test.describe('JS ошибки', () => {
   });
 
   test('self-test результаты: passed === total', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(800); // ждём runSelfTest()
 
@@ -190,7 +190,7 @@ test.describe('JS ошибки', () => {
 // ──────────────────────────────────────────────────────────────────────────────
 test.describe('Sidebar toggle', () => {
   test('sidebar сворачивается и разворачивается', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('domcontentloaded');
 
     const sidebar = page.locator('#sidebar');
@@ -222,7 +222,7 @@ test.describe('Sidebar toggle', () => {
 // ──────────────────────────────────────────────────────────────────────────────
 test.describe('Combo Box', () => {
   test('#dashboard-view-combo имеет минимум 1 опцию', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('domcontentloaded');
     const count = await page.locator('#dashboard-view-combo option').count();
     expect(count, 'Combo Box должен иметь хотя бы 1 опцию').toBeGreaterThanOrEqual(1);

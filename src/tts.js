@@ -208,6 +208,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Слушатель хоткеев из Rust
     if (listen && invoke) {
+        // Слушаем изменение текста снаружи (сквозной пайплайн OCR -> TTS)
+        listen('tts-state-sync', (event) => {
+            if (event.payload && event.payload.action === 'load') {
+                const newText = event.payload.text;
+                if (contentEditable && contentEditable.innerText !== newText) {
+                    contentEditable.innerText = newText;
+                    isTextChanged = false;
+                    if (window.switchTab) {
+                        window.switchTab('tab-tts');
+                    }
+                }
+            }
+        });
+
         listen('tts-action-read', async () => {
             try {
                 const text = await invoke('capture_clipboard_text', { translate: false });
