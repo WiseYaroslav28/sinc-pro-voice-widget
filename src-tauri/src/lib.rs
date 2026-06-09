@@ -201,6 +201,7 @@ async fn speak_edge_tts_internal(text: String, voice: String, rate: f32) -> Resu
 
 static APP_HANDLE: Mutex<Option<tauri::AppHandle>> = Mutex::new(None);
 static OCR_WINDOW_VISIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static CANCEL_REQUEST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static MODEL_LOCKS: std::sync::LazyLock<Mutex<HashMap<String, Instant>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 static MODEL_REQUEST_LOGS: std::sync::LazyLock<Mutex<HashMap<String, Vec<i64>>>> =
@@ -459,6 +460,12 @@ fn set_module_enabled(module: String, enabled: bool) {
     }
 }
 
+
+#[tauri::command]
+fn cancel_active_request() {
+    CANCEL_REQUEST.store(true, std::sync::atomic::Ordering::SeqCst);
+    println!("SINC PRO BACKEND: Request cancellation triggered.");
+}
 
 #[tauri::command]
 async fn show_capsule_window(app_handle: tauri::AppHandle) -> Result<(), String> {
@@ -907,6 +914,7 @@ async fn save_audio(
     is_cancelled: Option<bool>,
     hard_delete: Option<bool>,
 ) -> Result<HistoryEntry, String> {
+    CANCEL_REQUEST.store(false, std::sync::atomic::Ordering::SeqCst);
     let temp_file_path = {
         let mut lock = RECORDING_FILE.lock().unwrap();
         lock.clone()
@@ -1080,6 +1088,10 @@ async fn save_audio(
     let mut last_err = String::new();
     let mut gemini_text: Option<String> = None;
     for model in &fallback_models {
+        if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+            last_err = "Запрос отменен пользователем".to_string();
+            break;
+        }
         // Проверяем блокировку модели по времени разблокировки
         {
             let locks = MODEL_LOCKS.lock().unwrap();
@@ -1175,9 +1187,13 @@ async fn save_audio(
     // Парсим JSON-ответ от Gemini
     let (raw_transcript, ai_result_text, is_error) = match gemini_text {
         None => {
-            let err_msg = format!("[Ошибка: все модели недоступны. {}]", last_err);
-            log_tts_error("Gemini call failed entirely", &err_msg);
-            (err_msg, String::new(), true)
+            if last_err == "Запрос отменен пользователем" {
+                ("[Запрос отменен пользователем]".to_string(), String::new(), true)
+            } else {
+                let err_msg = format!("[Ошибка: все модели недоступны. {}]", last_err);
+                log_tts_error("Gemini call failed entirely", &err_msg);
+                (err_msg, String::new(), true)
+            }
         }
         Some(raw_json) => {
             // Очищаем от Markdown и мусора
@@ -4704,6 +4720,7 @@ pub fn run() {
             start_recording_session,
             append_audio_chunk,
             save_audio,
+            cancel_active_request,
             paste_text,
             set_capsule_active,
             show_capsule_window,

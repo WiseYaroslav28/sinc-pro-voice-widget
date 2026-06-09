@@ -270,7 +270,7 @@
 
       #active-pill.expanded .active-right-sec {
         opacity: 1;
-        max-width: 95px;
+        max-width: 115px;
         visibility: visible;
         border-left: 1px solid rgba(74, 68, 85, 0.4);
         padding-left: 8px;
@@ -352,6 +352,16 @@
       @keyframes cancel-pulse {
         0%, 100% { transform: scale(1); box-shadow: 0 0 15px rgba(240, 84, 84, 0.5); }
         50% { transform: scale(1.08); box-shadow: 0 0 25px rgba(240, 84, 84, 0.9); }
+      }
+
+      /* Показ аккуратной кнопки отмены при наведении во время отправки ИИ */
+      .active-pill-wrapper:hover #btn-cancel-sending.visible {
+        opacity: 0.85;
+        pointer-events: auto;
+      }
+      #btn-cancel-sending.visible:hover {
+        opacity: 1 !important;
+        transform: scale(1.1) !important;
       }
     </style>
   </head>
@@ -477,6 +487,11 @@
               </button>
             </div>
           </div>
+
+          <!-- Кнопка отмены ИИ (маленький аккуратный крестик над пилюлей) -->
+          <button class="absolute bg-[#1b1b25]/95 hover:bg-[#251b25] border border-[#f05454]/40 hover:border-[#f05454] text-[#ccc3d8] hover:text-[#f05454] rounded-full w-5 h-5 flex items-center justify-center shadow-lg transition-all duration-300 opacity-0 pointer-events-none z-50 cursor-pointer active:scale-90" id="btn-cancel-sending" title="Отменить запрос ИИ" style="left: calc(50% + 18px); top: calc(50% - 32px); pointer-events: auto;">
+            <span class="material-symbols-outlined" style="font-size: 11px; font-weight: bold;">close</span>
+          </button>
         </div>
       </div>
 
@@ -518,6 +533,7 @@
       const stateActive = document.getElementById('state-active');
       const activeCancelBanner = document.getElementById('active-cancel-banner');
       const activeErrorBanner = document.getElementById('active-error-banner');
+      const btnCancelSending = document.getElementById('btn-cancel-sending');
       const activeMiniTimer = document.getElementById('active-mini-timer');
       const cancelCountdownText = document.getElementById('cancel-countdown-text');
       const btnKeepRecording = document.getElementById('btn-keep-recording');
@@ -653,6 +669,7 @@
 
       // Флаг блокировки повторной отправки
       let isSending = false;
+      let currentRequestCancelled = false;
 
       let customPromptText = "";
 
@@ -879,6 +896,10 @@
         stateHover.classList.remove('active');
         stateActive.classList.remove('active');
 
+        if (btnCancelSending) {
+          btnCancelSending.classList.remove('visible');
+        }
+
         // Сбрасываем классы состояний и баннеры по умолчанию
         if (activePill) {
           activePill.classList.remove('state-sending', 'state-success', 'state-error', 'state-cancel-confirm');
@@ -951,6 +972,9 @@
           stateActive.classList.add('active');
           activePill.classList.remove('expanded');
           activePill.classList.add('state-sending');
+          if (btnCancelSending) {
+            btnCancelSending.classList.add('visible');
+          }
           
           activeIcon.textContent = 'progress_activity';
           activeIcon.className = 'material-symbols-outlined text-[#8e52ff] text-[18px] transition-colors spinner';
@@ -1365,6 +1389,7 @@
       }
 
       async function sendAudioData(durationSecs) {
+        currentRequestCancelled = false;
         switchState('sending');
         try {
           const promptToSend = customPromptText || "";
@@ -1374,6 +1399,8 @@
               preset: currentPreset,
               customPrompt: promptToSend.trim().length > 0 ? promptToSend : null
             });
+
+            if (currentRequestCancelled) return;
 
             // Извлекаем текст результата (поддерживаем обе структуры)
             const firstAi = entry.ai_results && entry.ai_results.length > 0 ? entry.ai_results[0] : null;
@@ -1402,6 +1429,7 @@
             }
           }
         } catch (err) {
+          if (currentRequestCancelled) return;
           console.error(err);
           const errMsg = typeof err === 'string' ? err : 'Ошибка отправки. Запись сохранена в истории.';
           handleSendError(errMsg);
@@ -1533,6 +1561,28 @@
       btnActiveSend.addEventListener('click', () => { stopAndSendRecording(); });
       
       btnKeepRecording.addEventListener('click', () => { stopCancelCountdownAndRestore(); });
+
+      btnCancelSending.addEventListener('click', async () => {
+        if (currentRequestCancelled) return;
+        currentRequestCancelled = true;
+        isSending = false;
+        
+        // Воспроизводим звук отмены
+        playAudioCue('cancel');
+        
+        // Возвращаем в idle
+        switchState('idle');
+        showToast('Запрос отменен пользователем', false);
+
+        // Посылаем сигнал отмены на бэкенд
+        try {
+          if (invoke) {
+            await invoke('cancel_active_request');
+          }
+        } catch (e) {
+          console.error('Ошибка отправки отмены на бэкенд:', e);
+        }
+      });
 
       function startTimer() {
         if (recordingInterval) clearInterval(recordingInterval);
