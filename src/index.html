@@ -373,6 +373,14 @@
                   </select>
                   <div class="hidden text-[11px] text-[#ccc3d8] bg-[#1b1b20] rounded-lg p-2 border border-[#4a4455]/20" id="model-info-box"></div>
                 </div>
+                <div class="flex flex-col gap-2">
+                  <label class="text-[11px] text-[#ccc3d8]">Режим сегментации предложений OCR</label>
+                  <select class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#d2bbff]" id="setting-ocr-mode">
+                    <option value="text">Текстовый (ИИ: Быстрый, сегментация по фразам)</option>
+                    <option value="vision">Визуальный (ИИ: Умный анализ с координатами)</option>
+                    <option value="local">Локальный (Без ИИ / Полностью оффлайн)</option>
+                  </select>
+                </div>
               </div>
             </div>
 
@@ -634,6 +642,7 @@
             document.getElementById('setting-dictation-lang').value = config.dictation_lang || 'auto';
             document.getElementById('setting-api-key').value = config.api_key || '';
             document.getElementById('setting-yandex-api-key').value = config.yandex_api_key || '';
+            document.getElementById('setting-ocr-mode').value = config.ocr_mode || 'text';
             // Сначала грузим модели, потом восстанавливаем выбор
             await fetchAndPopulateModels(config.api_key, config.ai_model);
             updateApiStatus(config.api_key);
@@ -655,7 +664,8 @@
             dictation_lang: document.getElementById('setting-dictation-lang').value,
             api_key: document.getElementById('setting-api-key').value,
             yandex_api_key: document.getElementById('setting-yandex-api-key').value,
-            ai_model: document.getElementById('setting-ai-model').value
+            ai_model: document.getElementById('setting-ai-model').value,
+            ocr_mode: document.getElementById('setting-ocr-mode').value
           };
           try {
             await invoke('save_config', { config });
@@ -813,6 +823,7 @@
       // Привязываем автосохранение настроек
       document.getElementById('setting-ui-lang').addEventListener('change', saveConfig);
       document.getElementById('setting-dictation-lang').addEventListener('change', saveConfig);
+      document.getElementById('setting-ocr-mode').addEventListener('change', saveConfig);
       document.getElementById('setting-api-key').addEventListener('input', debounce(async () => {
         const key = document.getElementById('setting-api-key').value;
         const currentModel = document.getElementById('setting-ai-model').value;

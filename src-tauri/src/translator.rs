@@ -63,7 +63,7 @@ pub async fn translate_hybrid(
     // Try Gemini First if key exists
     if !api_key.trim().is_empty() {
         let prompt = format!(
-            "Переведи все иностранные слова и предложения на русский язык, сохранив исходную структуру и контекст. Если текст уже на русском — просто верни его. Если смешанный — переведи только иностранные вставки, чтобы получился связный русский текст. Текст:\n\n{}",
+            "Переведи все иностранные слова и предложения на русский язык, сохранив исходную структуру и контекст. Если текст уже на русском — просто верни его. Если смешанный — переведи только иностранные вставки, чтобы получился связный русский текст. Сохраняй технические плейсхолдеры в фигурных скобках вида {{N0}}, {{F0}} без изменений на своих местах. Текст:\n\n{}",
             text
         );
 
@@ -90,7 +90,7 @@ pub async fn translate_hybrid(
                                 if let Some(mut parts) = content.parts {
                                     if let Some(part) = parts.pop() {
                                         if let Some(translated) = part.text {
-                                            return Ok(translated);
+                                            return Ok(post_process_translation(text, translated));
                                         }
                                     }
                                 }
@@ -104,12 +104,13 @@ pub async fn translate_hybrid(
     }
 
     // Fallback: Parse English words and use Free Google Translate Web API
-    fallback_translate(text).await
+    let translated = fallback_translate(text).await?;
+    Ok(post_process_translation(text, translated))
 }
 
 async fn fallback_translate(text: &str) -> Result<String, String> {
     // Simple logic: Extract English sentences/words, translate them, replace them back.
-    let re = Regex::new(r"[A-Za-z0-9\s.,!?'\x22\x27-]+").unwrap();
+    let re = Regex::new(r"[A-Za-z0-9\s.,!?'\x22\x27{} -]+").unwrap();
 
     let mut original_fragments = Vec::new();
 
@@ -187,4 +188,28 @@ async fn google_translate_free(text: &str) -> Result<String, String> {
     }
 
     Ok(result)
+}
+
+fn post_process_translation(original: &str, mut translated: String) -> String {
+    let original_lower = original.to_lowercase();
+    
+    // 1. Gemini -> Близнецы / близнецы / Близнец / близнец
+    if original_lower.contains("gemini") {
+        let re_gemini = Regex::new(r"(?i)близнец[а-я]*").unwrap();
+        translated = re_gemini.replace_all(&translated, "Gemini").to_string();
+    }
+    
+    // 2. Playwright -> Драматург / драматург / Плейрайт / плейрайт
+    if original_lower.contains("playwright") {
+        let re_playwright = Regex::new(r"(?i)драматург[а-я]*").unwrap();
+        translated = re_playwright.replace_all(&translated, "Playwright").to_string();
+    }
+
+    // Clean up spaces in placeholders like { N0 } or { f1 }
+    let re_clean = Regex::new(r"\{\s*([nNfF]\d+)\s*\}").unwrap();
+    translated = re_clean.replace_all(&translated, |caps: &regex::Captures| {
+        format!("{{{}}}", caps[1].to_uppercase())
+    }).to_string();
+    
+    translated
 }

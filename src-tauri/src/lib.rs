@@ -205,6 +205,7 @@ static MODEL_LOCKS: std::sync::LazyLock<Mutex<HashMap<String, Instant>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 static MODEL_REQUEST_LOGS: std::sync::LazyLock<Mutex<HashMap<String, Vec<i64>>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+static LAST_WORKING_MODEL: Mutex<Option<String>> = Mutex::new(None);
 
 fn check_and_record_rate_limit(model: &str) -> Result<(usize, usize), String> {
     let now = chrono::Utc::now().timestamp();
@@ -219,15 +220,38 @@ fn check_and_record_rate_limit(model: &str) -> Result<(usize, usize), String> {
     // Считаем RPD (за последние 24 часа)
     let rpd_count = timestamps.len();
 
-    // Безопасные пороги: 14 RPM, 1450 RPD
-    let max_rpm = 14;
-    let max_rpd = 1450;
+    // Динамические пороги в зависимости от модели
+    let (max_rpm, max_rpd) = match model {
+        "gemini-2.5-pro" => (4, 24),
+        "gemini-2.5-flash" => (4, 19),
+        "gemini-2.5-flash-lite" => (9, 19),
+        "gemini-2.0-flash" => (14, 1450),
+        "gemini-2.0-flash-lite" => (28, 1450),
+        "gemini-1.5-flash" => (14, 1450),
+        "gemini-1.5-pro" => (1, 48),
+        "gemini-3.5-flash" => (4, 19),
+        "gemini-3.1-flash-lite" => (14, 490),
+        "gemini-3-flash" => (4, 19),
+        "gemma-4-31b-it" | "gemma-4-26b-a4b-it" => (14, 1450),
+        _ => {
+            if model.contains("lite") {
+                (28, 1450)
+            } else if model.contains("pro") {
+                (2, 48)
+            } else {
+                (14, 1450)
+            }
+        }
+    };
+
+    let actual_max_rpm_label = max_rpm + 1;
+    let actual_max_rpd_label = max_rpd + 10;
 
     if rpm_count >= max_rpm {
-        return Err(format!("лимит RPM ({}/15)", rpm_count));
+        return Err(format!("лимит RPM ({}/{})", rpm_count, actual_max_rpm_label));
     }
     if rpd_count >= max_rpd {
-        return Err(format!("лимит RPD ({}/1500)", rpd_count));
+        return Err(format!("лимит RPD ({}/{})", rpd_count, actual_max_rpd_label));
     }
 
     // Записываем текущий запрос
@@ -545,6 +569,8 @@ pub struct AppConfig {
     pub yandex_api_key: String,
     #[serde(default = "default_ai_model")]
     pub ai_model: String,
+    #[serde(default = "default_ocr_mode")]
+    pub ocr_mode: String,
 }
 
 fn default_ui_lang() -> String {
@@ -555,6 +581,9 @@ fn default_dictation_lang() -> String {
 }
 fn default_ai_model() -> String {
     "gemini-2.0-flash".to_string()
+}
+fn default_ocr_mode() -> String {
+    "text".to_string()
 }
 
 // Один AI-результат (может быть несколько на одну запись)
@@ -621,6 +650,7 @@ fn load_config_internal(app_handle: &tauri::AppHandle) -> Result<AppConfig, Stri
             api_key: "".to_string(),
             yandex_api_key: "".to_string(),
             ai_model: "gemini-2.0-flash".to_string(),
+            ocr_mode: "text".to_string(),
         });
     }
     let json_str = std::fs::read_to_string(config_path).map_err(|e| e.to_string())?;
@@ -1495,6 +1525,167 @@ fn simulate_ctrl_c() {
     }
 }
 
+static TRANSLATION_CACHE: std::sync::LazyLock<Mutex<Option<HashMap<String, String>>>> =
+    std::sync::LazyLock::new(|| Mutex::new(None));
+
+fn get_translation_cache_path(app_handle: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let config_dir = app_handle
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?;
+    Ok(config_dir.join("translation_cache.json"))
+}
+
+fn load_translation_cache(app_handle: &tauri::AppHandle) -> HashMap<String, String> {
+    let mut cache_lock = TRANSLATION_CACHE.lock().unwrap();
+    if let Some(ref cache) = *cache_lock {
+        return cache.clone();
+    }
+    let mut cache = HashMap::new();
+    if let Ok(path) = get_translation_cache_path(app_handle) {
+        if path.exists() {
+            if let Ok(json_str) = std::fs::read_to_string(&path) {
+                if let Ok(parsed) = serde_json::from_str::<HashMap<String, String>>(&json_str) {
+                    let has_legacy = parsed.keys().any(|k| k.contains("__NUM") || k.contains("__FILE"))
+                        || parsed.values().any(|v| v.contains("__NUM") || v.contains("__") || v.contains("НОМЕР") || v.contains("ЧИСЛО") || v.contains("ФАЙЛ"));
+                    if has_legacy {
+                        println!("[Translation Cache] Legacy or corrupted cache detected. Clearing: {:?}", path);
+                        let _ = std::fs::remove_file(&path);
+                    } else {
+                        cache = parsed;
+                    }
+                }
+            }
+        }
+    }
+    *cache_lock = Some(cache.clone());
+    cache
+}
+
+fn save_translation_cache_item(app_handle: &tauri::AppHandle, key: String, val: String) {
+    let mut cache_lock = TRANSLATION_CACHE.lock().unwrap();
+    let cache_ref = cache_lock.get_or_insert_with(HashMap::new);
+    cache_ref.insert(key, val);
+    let cache_clone = cache_ref.clone();
+    drop(cache_lock);
+    
+    if let Ok(path) = get_translation_cache_path(app_handle) {
+        if let Ok(parent) = path.parent().ok_or("No parent") {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(json_str) = serde_json::to_string_pretty(&cache_clone) {
+            let _ = std::fs::write(path, json_str);
+        }
+    }
+}
+
+fn normalize_and_extract_variables(text: &str) -> (String, Vec<(String, String)>) {
+    let re_file = regex::Regex::new(r"[a-zA-Z0-9_-]+\.(?i)(md|json|rs|html|js|css|py|png|jpg|txt|toml|yml|yaml)").unwrap();
+    let re_num = regex::Regex::new(r"\d+").unwrap();
+
+    let mut template = text.to_string();
+    let mut variables = Vec::new();
+
+    // 1. Находим файлы
+    let file_matches: Vec<(usize, usize, String)> = re_file.find_iter(text)
+        .map(|mat| (mat.start(), mat.end(), mat.as_str().to_string()))
+        .collect();
+
+    // 2. Находим числа
+    let num_matches: Vec<(usize, usize, String)> = re_num.find_iter(text)
+        .map(|mat| (mat.start(), mat.end(), mat.as_str().to_string()))
+        .collect();
+
+    // 3. Отсекаем числа, которые лежат внутри диапазонов файлов
+    let filtered_nums: Vec<(usize, usize, String)> = num_matches.into_iter()
+        .filter(|&(n_start, n_end, _)| {
+            !file_matches.iter().any(|&(f_start, f_end, _)| {
+                n_start >= f_start && n_end <= f_end
+            })
+        })
+        .collect();
+
+    #[derive(Clone)]
+    enum VarType {
+        File,
+        Num,
+    }
+    struct MatchItem {
+        start: usize,
+        end: usize,
+        var_type: VarType,
+        val: String,
+    }
+
+    let mut all_matches = Vec::new();
+    for (start, end, val) in file_matches {
+        all_matches.push(MatchItem { start, end, var_type: VarType::File, val });
+    }
+    for (start, end, val) in filtered_nums {
+        all_matches.push(MatchItem { start, end, var_type: VarType::Num, val });
+    }
+
+    // 5. Сортируем по убыванию начального индекса (с конца к началу)
+    all_matches.sort_by_key(|m| std::cmp::Reverse(m.start));
+
+    // 6. Выполняем замену
+    let mut file_idx = 0;
+    let mut num_idx = 0;
+    for item in all_matches {
+        match item.var_type {
+            VarType::File => {
+                let placeholder = format!("{{F{}}}", file_idx);
+                variables.push((placeholder.clone(), item.val));
+                template.replace_range(item.start..item.end, &placeholder);
+                file_idx += 1;
+            }
+            VarType::Num => {
+                let placeholder = format!("{{N{}}}", num_idx);
+                variables.push((placeholder.clone(), item.val));
+                template.replace_range(item.start..item.end, &placeholder);
+                num_idx += 1;
+            }
+        }
+    }
+
+    (template, variables)
+}
+
+fn restore_variables(template: &str, variables: &[(String, String)]) -> String {
+    let mut result = template.to_string();
+    for (placeholder, val) in variables {
+        result = result.replace(placeholder, val);
+    }
+    result
+}
+
+async fn translate_with_cache(
+    app_handle: &tauri::AppHandle,
+    text: &str,
+    api_key: &str,
+    model: &str,
+) -> Result<String, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+
+    let (template_orig, variables) = normalize_and_extract_variables(trimmed);
+
+    let cache = load_translation_cache(app_handle);
+    if let Some(cached_val) = cache.get(&template_orig) {
+        println!("[Translation Cache] Hit: '{}' -> '{}'", template_orig, cached_val);
+        return Ok(restore_variables(cached_val, &variables));
+    }
+
+    println!("[Translation Cache] Miss, calling Gemini with template: '{}'", template_orig);
+    let translated = crate::translator::translate_hybrid(&template_orig, api_key, model).await?;
+
+    save_translation_cache_item(app_handle, template_orig.clone(), translated.clone());
+
+    Ok(restore_variables(&translated, &variables))
+}
+
 #[tauri::command]
 async fn capture_clipboard_text(app_handle: tauri::AppHandle, translate: bool) -> Result<String, String> {
     #[cfg(target_os = "windows")]
@@ -1505,9 +1696,6 @@ async fn capture_clipboard_text(app_handle: tauri::AppHandle, translate: bool) -
         simulate_ctrl_c();
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
         
-        // После simulate_ctrl_c ОС считает модификаторы отжатыми (мы послали key-up через SendInput).
-        // Когда пользователь физически отпустит клавиши, ОС может не сгенерировать повторный key-up,
-        // и наши атомарные флаги залипнут в true. Сбрасываем их принудительно.
         CTRL_PRESSED.store(false, Ordering::SeqCst);
         SHIFT_PRESSED.store(false, Ordering::SeqCst);
         ALT_PRESSED.store(false, Ordering::SeqCst);
@@ -1519,7 +1707,7 @@ async fn capture_clipboard_text(app_handle: tauri::AppHandle, translate: bool) -
 
         if translate {
             let config = load_config_internal(&app_handle)?;
-            let translated = crate::translator::translate_hybrid(&text, &config.api_key, &config.ai_model).await?;
+            let translated = translate_with_cache(&app_handle, &text, &config.api_key, &config.ai_model).await?;
             return Ok(translated);
         }
         Ok(text)
@@ -1535,9 +1723,10 @@ async fn translate_hybrid(
     target_lang: Option<String>,
 ) -> Result<String, String> {
     let config = load_config_internal(&app_handle)?;
-    let translated = crate::translator::translate_hybrid(&text, &config.api_key, &config.ai_model).await?;
+    let translated = translate_with_cache(&app_handle, &text, &config.api_key, &config.ai_model).await?;
     Ok(translated)
 }
+
 
 #[tauri::command]
 async fn process_ocr_vision(
@@ -2222,7 +2411,11 @@ async fn process_ocr_hybrid(
 Правила:
 1. Не придумывай новые слова, не изменяй окончания слов, используй только те, что даны в тексте.
 2. Каждое предложение должно быть грамматически полным и правильным.
-3. Сохраняй исходную пунктуацию в конце предложений (точки, знаки восклицания, вопросы)."#;
+3. Сохраняй исходную пунктуацию в конце предложений (точки, знаки восклицания, вопросы).
+4. СТРОГО ЗАПРЕЩЕНО объединять в одно предложение строки, разделенные переносом строки (\n), если они не являются непосредственным грамматическим продолжением друг друга.
+5. Технические логи (например, "Worked for 38s", "Worked for 46s"), служебные сообщения, заголовки и пункты списков ДОЛЖНЫ быть выделены в отдельные предложения. Никогда не склеивай их с основным текстом.
+6. Если в тексте встречается точка (.), восклицательный (!) или вопросительный (?) знак, за которым следует новое предложение с заглавной буквы (даже на той же строке), СТРОГО разделяй их на разные предложения.
+7. Никогда не выделяй текст в скобках в конце предложения в отдельное предложение, если завершающий знак препинания (точка/вопрос/восклицание) стоит после закрывающей скобки. Текст в скобках должен оставаться частью основного предложения."#;
 
     let request_payload = serde_json::json!({
         "contents": [{
@@ -2389,13 +2582,22 @@ async fn call_gemini_text_api(
     prompt: &str,
     text: &str,
 ) -> Result<(Vec<String>, String), String> {
-    let fallback_models = vec![
-        primary_model.to_string(),
-        "gemini-2.5-flash-lite".to_string(),
-        "gemini-2.5-flash".to_string(),
-        "gemini-2.0-flash".to_string(),
-        "gemini-2.0-flash-lite".to_string(),
-    ];
+    let mut fallback_models = Vec::new();
+    if let Ok(last_model_lock) = LAST_WORKING_MODEL.lock() {
+        if let Some(ref last_model) = *last_model_lock {
+            fallback_models.push(last_model.clone());
+        }
+    }
+    fallback_models.push(primary_model.to_string());
+    fallback_models.push("gemini-3.1-flash-lite".to_string());
+    fallback_models.push("gemini-3.5-flash".to_string());
+    fallback_models.push("gemini-3-flash".to_string());
+    fallback_models.push("gemini-2.5-flash-lite".to_string());
+    fallback_models.push("gemini-2.5-flash".to_string());
+    fallback_models.push("gemini-2.0-flash-lite".to_string());
+    fallback_models.push("gemini-2.0-flash".to_string());
+    fallback_models.push("gemma-4-31b-it".to_string());
+    fallback_models.push("gemma-4-26b-a4b-it".to_string());
     
     let mut seen = std::collections::HashSet::new();
     let fallback_models: Vec<String> = fallback_models
@@ -2441,14 +2643,33 @@ async fn call_gemini_text_api(
             Err(err_msg) => {
                 last_err = format!("Модель {} пропущена ({})", model, err_msg);
                 let _ = app_handle.emit("ocr-status-update", format!("⚠️ Пропущена {}: {}. Переключаю...", model, err_msg));
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 continue;
+            }
+        };
+
+        let (max_rpm_label, max_rpd_label) = match model.as_str() {
+            "gemini-2.5-pro" => (5, 34),
+            "gemini-2.5-flash" => (5, 20),
+            "gemini-2.5-flash-lite" => (10, 20),
+            "gemini-2.0-flash" => (15, 1500),
+            "gemini-2.0-flash-lite" => (30, 1500),
+            "gemini-1.5-flash" => (15, 1500),
+            "gemini-1.5-pro" => (2, 58),
+            "gemini-3.5-flash" => (5, 20),
+            "gemini-3.1-flash-lite" => (15, 500),
+            "gemini-3-flash" => (5, 20),
+            "gemma-4-31b-it" | "gemma-4-26b-a4b-it" => (15, 1500),
+            _ => {
+                if model.contains("lite") { (30, 1500) }
+                else if model.contains("pro") { (3, 58) }
+                else { (15, 1500) }
             }
         };
 
         let _ = app_handle.emit(
             "ocr-status-update",
-            format!("⏳ Попытка ИИ: {} (минута {}/15, день {}/1500)...", model, rpm, rpd)
+            format!("⏳ Попытка ИИ: {} (минута {}/{}, день {}/{})...", model, rpm, max_rpm_label, rpd, max_rpd_label)
         );
 
         let url = format!(
@@ -2460,6 +2681,11 @@ async fn call_gemini_text_api(
             Err(e) => {
                 last_err = format!("Ошибка сети для {}: {}", model, e);
                 let _ = app_handle.emit("ocr-status-update", format!("⚠️ Ошибка сети {}. Ожидание 1с...", model));
+                let unlock_time = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                {
+                    let mut locks = MODEL_LOCKS.lock().unwrap();
+                    locks.insert(model.clone(), unlock_time);
+                }
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 continue;
             }
@@ -2480,6 +2706,11 @@ async fn call_gemini_text_api(
                     let err_text = res.text().await.unwrap_or_default();
                     last_err = format!("Код {} от {}: {}", status, model, err_text);
                     let _ = app_handle.emit("ocr-status-update", format!("⚠️ Сбой {} ({}). Ожидание 1с...", model, status));
+                    let unlock_time = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                    {
+                        let mut locks = MODEL_LOCKS.lock().unwrap();
+                        locks.insert(model.clone(), unlock_time);
+                    }
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                     continue;
                 }
@@ -2509,7 +2740,12 @@ async fn call_gemini_text_api(
                                 if found { break; }
                             }
                         }
-                        if found { break; }
+                        if found {
+                            if let Ok(mut last_model_lock) = LAST_WORKING_MODEL.lock() {
+                                *last_model_lock = Some(model.clone());
+                            }
+                            break;
+                        }
                     }
                 }
             }
@@ -2549,14 +2785,20 @@ async fn call_gemini_vision_api(
     prompt: &str,
     base64_image: &str,
 ) -> Result<serde_json::Value, String> {
-    let fallback_models = vec![
-        primary_model.to_string(),
-        "gemini-2.5-flash".to_string(),
-        "gemini-2.0-flash".to_string(),
-        "gemini-1.5-flash".to_string(),
-        "gemini-3.5-flash".to_string(),
-        "gemini-2.5-pro".to_string(),
-    ];
+    let mut fallback_models = Vec::new();
+    if let Ok(last_model_lock) = LAST_WORKING_MODEL.lock() {
+        if let Some(ref last_model) = *last_model_lock {
+            fallback_models.push(last_model.clone());
+        }
+    }
+    fallback_models.push(primary_model.to_string());
+    fallback_models.push("gemini-3.1-flash-lite".to_string());
+    fallback_models.push("gemini-3.5-flash".to_string());
+    fallback_models.push("gemini-3-flash".to_string());
+    fallback_models.push("gemini-2.5-flash".to_string());
+    fallback_models.push("gemini-2.0-flash".to_string());
+    fallback_models.push("gemini-1.5-flash".to_string());
+    fallback_models.push("gemini-2.5-pro".to_string());
     
     let mut seen = std::collections::HashSet::new();
     let fallback_models: Vec<String> = fallback_models
@@ -2609,20 +2851,32 @@ async fn call_gemini_vision_api(
         match client.post(&url).json(&request_payload).send().await {
             Err(e) => {
                 last_err = format!("Ошибка сети для {}: {}", model, e);
+                let unlock_time = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                {
+                    let mut locks = MODEL_LOCKS.lock().unwrap();
+                    locks.insert(model.clone(), unlock_time);
+                }
                 continue;
             }
             Ok(res) => {
                 let status = res.status();
                 if status.as_u16() == 429 {
                     let unlock_time = std::time::Instant::now() + std::time::Duration::from_secs(60);
-                    let mut locks = MODEL_LOCKS.lock().unwrap();
-                    locks.insert(model.clone(), unlock_time);
+                    {
+                        let mut locks = MODEL_LOCKS.lock().unwrap();
+                        locks.insert(model.clone(), unlock_time);
+                    }
                     last_err = format!("Модель {} 429", model);
                     continue;
                 }
                 if !status.is_success() {
                     let err_text = res.text().await.unwrap_or_default();
                     last_err = format!("Код {} от {}: {}", status, model, err_text);
+                    let unlock_time = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                    {
+                        let mut locks = MODEL_LOCKS.lock().unwrap();
+                        locks.insert(model.clone(), unlock_time);
+                    }
                     continue;
                 }
                 match res.json::<GeminiResponse>().await {
@@ -2650,7 +2904,12 @@ async fn call_gemini_vision_api(
                                 if found { break; }
                             }
                         }
-                        if found { break; }
+                        if found {
+                            if let Ok(mut last_model_lock) = LAST_WORKING_MODEL.lock() {
+                                *last_model_lock = Some(model.clone());
+                            }
+                            break;
+                        }
                     }
                 }
             }
@@ -2675,30 +2934,243 @@ async fn call_gemini_vision_api(
     Ok(parsed)
 }
 
+struct OcrLineInfo {
+    text: String,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    avg_word_height: f32,
+    text_start_x: f32,
+}
+
+fn split_text_into_sentences(text: &str) -> Vec<String> {
+    if text.trim().is_empty() {
+        return Vec::new();
+    }
+    let mut sentences = Vec::new();
+    let mut current = String::new();
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    
+    while i < chars.len() {
+        let c = chars[i];
+        current.push(c);
+        
+        let is_terminal = c == '.' || c == '!' || c == '?';
+        let mut should_split = false;
+        
+        if is_terminal {
+            // Проверяем, не является ли это сокращением (например, "сокр.", "т.д.", "lib.rs")
+            let is_abbreviation = {
+                let prev_words: Vec<&str> = current.split_whitespace().collect();
+                if let Some(&last_word) = prev_words.last() {
+                    let clean = last_word.to_lowercase().trim_matches(|ch: char| !ch.is_alphabetic()).to_string();
+                    clean == "vs" || clean == "rs" || clean == "mr" || clean == "ms" || clean == "dr" || clean == "eg" || clean == "ie" || clean == "lib"
+                } else {
+                    false
+                }
+            };
+            
+            if !is_abbreviation {
+                // За точкой может следовать закрывающая скобка или кавычка
+                let mut next_idx = i + 1;
+                while next_idx < chars.len() && (chars[next_idx] == ')' || chars[next_idx] == ']' || chars[next_idx] == '"' || chars[next_idx] == '\'' || chars[next_idx] == '»') {
+                    current.push(chars[next_idx]);
+                    next_idx += 1;
+                }
+                i = next_idx - 1; // сдвигаем указатель
+                
+                // Теперь ищем следующий непробельный символ
+                let mut check_idx = next_idx;
+                while check_idx < chars.len() && chars[check_idx].is_whitespace() {
+                    check_idx += 1;
+                }
+                
+                if check_idx < chars.len() {
+                    let next_char = chars[check_idx];
+                    // Если следующий символ — заглавная буква, начинаем новое предложение
+                    if next_char.is_uppercase() || next_char.is_ascii_digit() || next_char == '-' || next_char == '*' || next_char == '•' {
+                        should_split = true;
+                    }
+                } else {
+                    // Конец текста
+                    should_split = true;
+                }
+            }
+        }
+        
+        if should_split {
+            let trimmed = current.trim().to_string();
+            if !trimmed.is_empty() {
+                sentences.push(trimmed);
+            }
+            current.clear();
+        }
+        
+        i += 1;
+    }
+    
+    let trimmed = current.trim().to_string();
+    if !trimmed.is_empty() {
+        sentences.push(trimmed);
+    }
+    
+    sentences
+}
+
+fn is_list_marker(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed == "-" || trimmed == "*" || trimmed == "•" || trimmed == "+" || trimmed == "—" {
+        return true;
+    }
+    if trimmed.ends_with('.') || trimmed.ends_with(')') {
+        let core = &trimmed[..trimmed.len() - 1];
+        if !core.is_empty() && core.chars().all(|c| c.is_ascii_digit()) {
+            return true;
+        }
+        if core.len() == 1 && core.chars().next().unwrap().is_alphabetic() {
+            return true;
+        }
+    }
+    false
+}
+
+fn starts_with_list_item_marker(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    let Some(first_char) = trimmed.chars().next() else {
+        return false;
+    };
+
+    if matches!(first_char, '*' | '-' | '+' | '•' | '—') {
+        let rest = &trimmed[first_char.len_utf8()..];
+        return rest.is_empty()
+            || rest
+                .chars()
+                .next()
+                .map(|c| c.is_whitespace())
+                .unwrap_or(false);
+    }
+
+    if !first_char.is_ascii_digit() {
+        return false;
+    }
+
+    let digit_count = trimmed
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .count();
+
+    let after_digits = &trimmed[digit_count..];
+    after_digits.starts_with('.') || after_digits.starts_with(')')
+}
+
+fn is_technical_log_line(text: &str) -> bool {
+    const LOG_PREFIXES: &[&str] = &[
+        "[TRACE]",
+        "[DEBUG]",
+        "[INFO]",
+        "[WARN]",
+        "[WARNING]",
+        "[ERROR]",
+        "[FATAL]",
+        "TRACE:",
+        "DEBUG:",
+        "INFO:",
+        "WARN:",
+        "WARNING:",
+        "ERROR:",
+        "FATAL:",
+    ];
+
+    let uppercase = text.trim_start().to_ascii_uppercase();
+    LOG_PREFIXES
+        .iter()
+        .any(|prefix| uppercase.starts_with(prefix))
+}
+
+fn ends_with_connector(text: &str) -> bool {
+    const CONNECTORS: &[&str] = &[
+        "и", "или", "а", "но", "да", "хотя", "что", "чтобы", "если", "как", "в", "на", "с",
+        "у", "к", "под", "над", "за", "из", "от", "до", "без", "для", "о", "об", "обо", "при",
+        "про", "and", "or", "but", "yet", "so", "for", "in", "on", "at", "with", "to", "of",
+        "by", "about", "under", "over", "from", "into", "through", "after", "before", "between",
+        "against", "during", "without", "because", "the", "a", "an", "is", "are", "was", "were",
+        "be", "been", "has", "have", "had",
+    ];
+
+    let Some(last_word) = text.split_whitespace().last() else {
+        return false;
+    };
+
+    let lowercase = last_word.to_lowercase();
+    let clean_last = lowercase.trim_matches(|c: char| !c.is_alphabetic());
+    CONNECTORS.contains(&clean_last)
+}
+
+fn clean_ends_with_terminal(text: &str) -> bool {
+    let cleaned = text.trim_end_matches(|c: char| c.is_whitespace() || c.is_control() || c == '\u{200b}');
+    cleaned.ends_with('.') 
+        || cleaned.ends_with('?') 
+        || cleaned.ends_with('!')
+        || cleaned.ends_with(':')
+        || cleaned.ends_with(';')
+        || cleaned.ends_with('>')
+}
+
+fn is_valid_single_word_start(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    matches!(lower.as_str(), "я" | "в" | "с" | "у" | "к" | "о" | "а" | "и" | "i" | "a")
+}
+
 fn build_fallback_sentences_from_words(words: &[OcrWordInfo]) -> Vec<String> {
     if words.is_empty() {
         return Vec::new();
     }
     let sorted = sort_ocr_words(words.to_vec());
     
-    // 1. Группируем слова в строки по Y
+    // 1. Группируем слова в строки по Y и горизонтальным зазорам
     let mut lines: Vec<Vec<OcrWordInfo>> = Vec::new();
     let mut current_line: Vec<OcrWordInfo> = Vec::new();
     
     if !sorted.is_empty() {
-        let mut last_y = sorted[0].y;
-        let mut last_h = sorted[0].height;
+        let mut last_x = sorted[0].x;
+        let mut last_w = sorted[0].width;
         
         for w in sorted {
-            let cy = w.y + w.height / 2.0;
-            let line_cy = last_y + last_h / 2.0;
+            let mut is_new_line = false;
             
-            if (cy - line_cy).abs() > last_h * 0.8 && !current_line.is_empty() {
+            if !current_line.is_empty() {
+                let ref_h = current_line.iter()
+                    .map(|word| word.height)
+                    .fold(w.height, |a, b| a.max(b));
+                
+                let line_cy = current_line.iter()
+                    .map(|word| word.y + word.height / 2.0)
+                    .sum::<f32>() / current_line.len() as f32;
+                
+                let cy = w.y + w.height / 2.0;
+                
+                is_new_line = (cy - line_cy).abs() > ref_h * 0.8;
+                
+                if !is_new_line {
+                    let gap_x = w.x - (last_x + last_w);
+                    if gap_x > ref_h * 4.0 {
+                        is_new_line = true;
+                    }
+                }
+            }
+            
+            if is_new_line && !current_line.is_empty() {
                 lines.push(current_line);
                 current_line = Vec::new();
             }
-            last_y = w.y;
-            last_h = w.height;
+            
+            last_x = w.x;
+            last_w = w.width;
             current_line.push(w);
         }
         if !current_line.is_empty() {
@@ -2706,13 +3178,38 @@ fn build_fallback_sentences_from_words(words: &[OcrWordInfo]) -> Vec<String> {
         }
     }
     
-    // Переводим строки в текстовый вид
-    let mut text_lines: Vec<String> = Vec::new();
+    // Переводим строки в структурный вид с геометрией
+    let mut text_lines: Vec<OcrLineInfo> = Vec::new();
     for line in lines {
+        if line.is_empty() { continue; }
+        
+        let min_x = line.iter().map(|w| w.x).fold(f32::INFINITY, f32::min);
+        let max_x = line.iter().map(|w| w.x + w.width).fold(f32::NEG_INFINITY, f32::max);
+        let min_y = line.iter().map(|w| w.y).fold(f32::INFINITY, f32::min);
+        let max_y = line.iter().map(|w| w.y + w.height).fold(f32::NEG_INFINITY, f32::max);
+        
+        let avg_word_height = line.iter().map(|w| w.height).sum::<f32>() / line.len() as f32;
+        
+        let mut text_start_x = min_x;
+        if line.len() > 1 {
+            if is_list_marker(&line[0].text) {
+                text_start_x = line[1].x;
+            }
+        }
+        
         let line_str = line.iter().map(|w| w.text.as_str()).collect::<Vec<&str>>().join(" ");
         let trimmed = line_str.trim().to_string();
+        
         if !trimmed.is_empty() {
-            text_lines.push(trimmed);
+            text_lines.push(OcrLineInfo {
+                text: trimmed,
+                x: min_x,
+                y: min_y,
+                width: max_x - min_x,
+                height: max_y - min_y,
+                avg_word_height,
+                text_start_x,
+            });
         }
     }
     
@@ -2720,59 +3217,166 @@ fn build_fallback_sentences_from_words(words: &[OcrWordInfo]) -> Vec<String> {
         return Vec::new();
     }
     
-    // 2. Объединяем строки в предложения по эвристикам
-    let mut sentences = Vec::new();
-    let mut current_sentence = String::new();
+    // 2. Объединяем строки в абзацы по геометрическим и грамматическим признакам
+    let max_line_width = text_lines.iter().map(|l| l.width).fold(0.0_f32, f32::max);
+    let mut paragraphs = Vec::new();
+    let mut current_paragraph = text_lines[0].text.clone();
+    let mut prev_line = &text_lines[0];
     
-    for line in text_lines {
-        if current_sentence.is_empty() {
-            current_sentence = line;
+    for i in 1..text_lines.len() {
+        let curr_line = &text_lines[i];
+        
+        let prev_trimmed = current_paragraph.trim();
+        let curr_trimmed = curr_line.text.trim();
+        
+        if curr_trimmed.is_empty() {
             continue;
         }
         
-        let prev_trimmed = current_sentence.trim();
-        let curr_trimmed = line.trim();
-        
         let last_char = prev_trimmed.chars().last().unwrap_or(' ');
-        let first_char = curr_trimmed.chars().next().unwrap_or(' ');
         
-        // Определение маркера списка
-        let is_list_item = curr_trimmed.starts_with('*') 
-            || curr_trimmed.starts_with('-') 
-            || curr_trimmed.starts_with('•')
-            || (curr_trimmed.len() > 2 && curr_trimmed.chars().next().unwrap().is_ascii_digit() && curr_trimmed.contains('.'));
+        // Используем максимальную высоту пары для всех геометрических порогов.
+        let pair_h = prev_line
+            .avg_word_height
+            .max(curr_line.avg_word_height)
+            .max(1.0);
             
-        // Определение технического лога
-        let is_tech_log = curr_trimmed.to_lowercase().contains("worked for") 
-            || curr_trimmed.to_lowercase().contains("seconds")
-            || curr_trimmed.to_lowercase().contains("elapsed");
-            
-        let prev_is_tech_log = prev_trimmed.to_lowercase().contains("worked for") 
-            || prev_trimmed.to_lowercase().contains("seconds");
-            
-        // Если предыдущая строка заканчивается на .!? или текущая строка - список/лог, или предыдущая была логом
-        let should_split = last_char == '.' || last_char == '!' || last_char == '?'
-            || is_list_item 
-            || is_tech_log 
-            || prev_is_tech_log
-            || (first_char.is_uppercase() && (last_char == ':' || last_char == ';' || last_char == ','));
-            
-        // Если первый символ строчный (маленький), то принудительно объединяем (если это не список и не лог)
-        let force_merge = first_char.is_lowercase() && !is_list_item && !is_tech_log;
+        let gap_y = curr_line.y - (prev_line.y + prev_line.height);
         
-        if should_split && !force_merge {
-            sentences.push(current_sentence.trim().to_string());
-            current_sentence = line;
+        let overlap_x = (prev_line.x + prev_line.width)
+            .min(curr_line.x + curr_line.width)
+            - prev_line.x.max(curr_line.x);
+            
+        let font_ratio = if curr_line.avg_word_height > f32::EPSILON {
+            prev_line.avg_word_height / curr_line.avg_word_height
         } else {
-            if !current_sentence.ends_with(' ') {
-                current_sentence.push(' ');
+            f32::INFINITY
+        };
+        
+        let x_shift = (curr_line.text_start_x - prev_line.text_start_x).abs();
+        
+        // Жесткие причины разделения
+        let vertical_hard_split = gap_y > pair_h * 2.2;
+        let column_hard_split = overlap_x <= 0.0;
+        let list_item_hard_split = starts_with_list_item_marker(curr_trimmed);
+        let tech_log_hard_split = is_technical_log_line(curr_trimmed);
+        
+        let hard_split = vertical_hard_split
+            || column_hard_split
+            || list_item_hard_split
+            || tech_log_hard_split;
+            
+        // Мягкие геометрические признаки
+        let font_changed = font_ratio < 0.70 || font_ratio > 1.40;
+        let x_shift_split = x_shift > pair_h * 3.0;
+        let soft_geometry_split = font_changed || x_shift_split;
+        
+        // Грамматическое продолжение
+        let words_curr: Vec<&str> = curr_trimmed.split_whitespace().collect();
+        let mut is_lowercase_start = false;
+        let mut starts_with_bracket = false;
+        
+        if !words_curr.is_empty() {
+            let mut target_word = words_curr[0];
+            
+            // Если первое слово состоит из одного символа, и оно НЕ является валидным предлогом/местоимением,
+            // и есть второе слово, то мы считаем первое слово иконкой/мусором и анализируем второе.
+            if target_word.chars().count() == 1 
+                && !is_valid_single_word_start(target_word) 
+                && words_curr.len() > 1 
+            {
+                target_word = words_curr[1];
             }
-            current_sentence.push_str(&line);
+            
+            let first_alphabetic_char = target_word.chars().find(|c| c.is_alphabetic());
+            is_lowercase_start = first_alphabetic_char
+                .map(|c| c.is_lowercase())
+                .unwrap_or(false);
+                
+            starts_with_bracket = target_word.starts_with('(')
+                || target_word.starts_with('[')
+                || target_word.starts_with('{')
+                || target_word.starts_with('«')
+                || target_word.starts_with('"')
+                || target_word.starts_with('\'');
         }
+        
+        let prev_ends_with_terminal = clean_ends_with_terminal(prev_trimmed);
+            
+        let is_prev_line_long = prev_line.width >= max_line_width * 0.75
+            && prev_line.width >= prev_line.avg_word_height * 12.0;
+            
+        // Если предыдущая строка длинная (заполнена по ширине) и не заканчивается точкой,
+        // то даже начало с заглавной буквы при идеальной геометрии считается продолжением.
+        let is_continuation_by_flow = !prev_ends_with_terminal 
+            && is_prev_line_long 
+            && !soft_geometry_split;
+            
+        let is_continuation = is_lowercase_start || starts_with_bracket || is_continuation_by_flow;
+        let connector_continuation = ends_with_connector(prev_trimmed);
+        let punctuation_continuation = matches!(
+            last_char,
+            ',' | '-' | '—' | '–' | '(' | '[' | '{'
+        );
+        let merge_by_grammar = connector_continuation || punctuation_continuation;
+        
+        let (merge, reason) = if hard_split {
+            (false, "hard_split")
+        } else if is_continuation {
+            // Грамматическое продолжение отменяет все мягкие признаки.
+            (true, "grammatical_continuation")
+        } else if soft_geometry_split {
+            (false, "soft_geometry_without_continuation")
+        } else if merge_by_grammar {
+            (true, "connector_or_punctuation")
+        } else {
+            (false, "no_merge_rule")
+        };
+        
+        eprintln!(
+            "[ocr-line-merge] merge={} reason={} prev={:?} curr={:?} gap_y={:.2} pair_h={:.2} overlap_x={:.2} font_ratio={:.2} x_shift={:.2} hard=[v:{} c:{} l:{} t:{}] soft=[f:{} x:{}] grammar=[l:{} b:{} conn:{} p:{}]",
+            merge,
+            reason,
+            prev_trimmed,
+            curr_trimmed,
+            gap_y,
+            pair_h,
+            overlap_x,
+            font_ratio,
+            x_shift,
+            vertical_hard_split,
+            column_hard_split,
+            list_item_hard_split,
+            tech_log_hard_split,
+            font_changed,
+            x_shift_split,
+            is_lowercase_start,
+            starts_with_bracket,
+            connector_continuation,
+            punctuation_continuation,
+        );
+        
+        if merge {
+            if !current_paragraph.ends_with(' ') {
+                current_paragraph.push(' ');
+            }
+            current_paragraph.push_str(curr_trimmed);
+        } else {
+            paragraphs.push(current_paragraph.trim().to_string());
+            current_paragraph = curr_line.text.clone();
+        }
+        prev_line = curr_line;
     }
     
-    if !current_sentence.is_empty() {
-        sentences.push(current_sentence.trim().to_string());
+    if !current_paragraph.is_empty() {
+        paragraphs.push(current_paragraph.trim().to_string());
+    }
+    
+    // 3. Каждую склеенную область разбиваем по точкам на предложения
+    let mut sentences = Vec::new();
+    for p in paragraphs {
+        let p_sentences = split_text_into_sentences(&p);
+        sentences.extend(p_sentences);
     }
     
     sentences
@@ -2785,21 +3389,46 @@ fn build_multiline_text_from_words(words: &[OcrWordInfo]) -> String {
     let sorted = sort_ocr_words(words.to_vec());
     let mut multiline_text = String::new();
     
-    let mut last_y = sorted[0].y;
-    let mut last_h = sorted[0].height;
+    let mut current_line_words: Vec<&OcrWordInfo> = Vec::new();
+    let mut last_x = sorted[0].x;
+    let mut last_w = sorted[0].width;
     
-    for w in sorted {
-        let cy = w.y + w.height / 2.0;
-        let line_cy = last_y + last_h / 2.0;
+    for w in &sorted {
+        let mut is_new_line = false;
+        if !current_line_words.is_empty() {
+            let ref_h = current_line_words.iter()
+                .map(|word| word.height)
+                .fold(w.height, |a, b| a.max(b));
+                
+            let line_cy = current_line_words.iter()
+                .map(|word| word.y + word.height / 2.0)
+                .sum::<f32>() / current_line_words.len() as f32;
+                
+            let cy = w.y + w.height / 2.0;
+            
+            is_new_line = (cy - line_cy).abs() > ref_h * 0.8;
+            if !is_new_line {
+                let gap_x = w.x - (last_x + last_w);
+                if gap_x > ref_h * 4.0 {
+                    is_new_line = true;
+                }
+            }
+        }
         
-        if (cy - line_cy).abs() > last_h * 0.8 && !multiline_text.is_empty() {
+        if is_new_line && !multiline_text.is_empty() {
+            if multiline_text.ends_with(' ') {
+                multiline_text.pop();
+            }
             multiline_text.push('\n');
+            current_line_words.clear();
         }
         
         multiline_text.push_str(&w.text);
         multiline_text.push(' ');
-        last_y = w.y;
-        last_h = w.height;
+        
+        last_x = w.x;
+        last_w = w.width;
+        current_line_words.push(w);
     }
     
     multiline_text.trim().to_string()
@@ -2861,10 +3490,11 @@ fn format_sentences_with_words(
     phys_crop_x: i32,
     phys_crop_y: i32,
 ) -> Vec<serde_json::Value> {
-    let clean_words: Vec<String> = words.iter().map(|w| clean_word(&w.text)).collect();
+    let sorted_words = sort_ocr_words(words.to_vec());
+    let clean_words: Vec<String> = sorted_words.iter().map(|w| clean_word(&w.text)).collect();
     
     // Фаза 1: Точное и нечеткое сопоставление слов ИИ с исходными словами OCR (помечаем индексы предложений)
-    let mut word_to_sentence = vec![None; words.len()];
+    let mut word_to_sentence = vec![None; sorted_words.len()];
     let mut w_idx = 0;
 
     for (s_idx, sentence_text) in sentences_vec.iter().enumerate() {
@@ -2875,7 +3505,7 @@ fn format_sentences_with_words(
                 continue;
             }
 
-            let search_limit = (w_idx + 12).min(words.len());
+            let search_limit = (w_idx + 12).min(sorted_words.len());
             let mut found_idx = None;
 
             for i in w_idx..search_limit {
@@ -2902,7 +3532,7 @@ fn format_sentences_with_words(
     }
 
     // Фаза 2: Распределение несопоставленных слов по ближайшим соседям
-    for i in 0..words.len() {
+    for i in 0..sorted_words.len() {
         if word_to_sentence[i].is_none() {
             // Ищем ближайшего левого сопоставленного соседа
             let mut left_neighbor = None;
@@ -2915,7 +3545,7 @@ fn format_sentences_with_words(
 
             // Ищем ближайшего правого сопоставленного соседа
             let mut right_neighbor = None;
-            for r in (i + 1)..words.len() {
+            for r in (i + 1)..sorted_words.len() {
                 if let Some(s_idx) = word_to_sentence[r] {
                     right_neighbor = Some((r, s_idx));
                     break;
@@ -2930,14 +3560,14 @@ fn format_sentences_with_words(
                     } else {
                         // Оба соседа есть и они из разных предложений.
                         // Проверяем, на одной ли строке слово с левым или правым соседом.
-                        let cy_i = words[i].y + words[i].height / 2.0;
-                        let cy_l = words[l].y + words[l].height / 2.0;
-                        let cy_r = words[r].y + words[r].height / 2.0;
+                        let cy_i = sorted_words[i].y + sorted_words[i].height / 2.0;
+                        let cy_l = sorted_words[l].y + sorted_words[l].height / 2.0;
+                        let cy_r = sorted_words[r].y + sorted_words[r].height / 2.0;
 
                         let diff_l = (cy_i - cy_l).abs();
                         let diff_r = (cy_i - cy_r).abs();
-                        let threshold_l = words[i].height.max(words[l].height) * 0.8;
-                        let threshold_r = words[i].height.max(words[r].height) * 0.8;
+                        let threshold_l = sorted_words[i].height.max(sorted_words[l].height) * 0.8;
+                        let threshold_r = sorted_words[i].height.max(sorted_words[r].height) * 0.8;
 
                         if diff_l < threshold_l && diff_r >= threshold_r {
                             s_idx_l
@@ -2978,7 +3608,7 @@ fn format_sentences_with_words(
 
         let mut words_out = Vec::new();
         for &idx in &indices {
-            let w = &words[idx];
+            let w = &sorted_words[idx];
             let wx_abs = phys_crop_x as f32 + w.x;
             let wy_abs = phys_crop_y as f32 + w.y;
 
@@ -3186,6 +3816,7 @@ async fn start_ocr_scan_async(
         .map_err(|e| format!("Ошибка сжатия PNG: {}", e))?;
         
     let local_words = run_windows_ocr(&png_bytes).await?;
+    let base64_image = STANDARD.encode(&png_bytes);
     
     let phys_crop_x = monitor_x + crop_x as i32;
     let phys_crop_y = monitor_y + crop_y as i32;
@@ -3224,9 +3855,95 @@ async fn start_ocr_scan_async(
     let api_key_clone = api_key.clone();
     let model_clone = primary_model.clone();
     let local_words_clone = local_words.clone();
+    let base64_image_clone = base64_image.clone();
+    let ocr_mode_clone = config.ocr_mode.clone();
 
     tokio::spawn(async move {
-        let prompt = r#"Ты — помощник по сегментации текста.
+        let mut vision_success = false;
+
+        if ocr_mode_clone == "vision" {
+            let ocr_prompt = r#"Распознай весь текст на изображении (OCR) и верни его СТРОГО в формате JSON без markdown, без пояснений, без ```json, только чистый JSON.
+Раздели текст на логические предложения. Каждое слово в предложении должно иметь точные координаты bounding box в виде нормализованных координат от 0 до 1000 относительно ширины и высоты изображения в формате: [ymin, xmin, ymax, xmax].
+
+Формат ответа:
+{
+  "sentences": [
+    {
+      "text": "Полный текст предложения",
+      "words": [
+        {
+          "text": "слово",
+          "box": [ymin, xmin, ymax, xmax]
+        }
+      ]
+    }
+  ]
+}
+
+Правила:
+- Координаты "box": [ymin, xmin, ymax, xmax] должны быть целыми числами от 0 до 1000.
+- Не пропускай слова и не склеивай их. Каждое отдельное слово должно быть в массиве words.
+- Ответ должен содержать ТОЛЬКО валидный JSON-объект."#;
+
+            let res = call_gemini_vision_api(&api_key_clone, &model_clone, ocr_prompt, &base64_image_clone).await;
+            match res {
+                Ok(parsed) => {
+                    let mut sentences_out = Vec::new();
+                    if let Some(sentences) = parsed["sentences"].as_array() {
+                        for sentence in sentences {
+                            let sentence_text = sentence["text"].as_str().unwrap_or("").to_string();
+                            let mut words_out = Vec::new();
+                            if let Some(words) = sentence["words"].as_array() {
+                                for word in words {
+                                    let word_text = word["text"].as_str().unwrap_or("").to_string();
+                                    if let Some(box_arr) = word["box"].as_array() {
+                                        if box_arr.len() == 4 {
+                                            let ymin = box_arr[0].as_f64().unwrap_or(0.0);
+                                            let xmin = box_arr[1].as_f64().unwrap_or(0.0);
+                                            let ymax = box_arr[2].as_f64().unwrap_or(0.0);
+                                            let xmax = box_arr[3].as_f64().unwrap_or(0.0);
+
+                                            let wx_rel = (xmin / 1000.0) * (crop_w as f64);
+                                            let wy_rel = (ymin / 1000.0) * (crop_h as f64);
+                                            let ww_rel = ((xmax - xmin) / 1000.0) * (crop_w as f64);
+                                            let wh_rel = ((ymax - ymin) / 1000.0) * (crop_h as f64);
+
+                                            let wx_abs = phys_crop_x as f64 + wx_rel;
+                                            let wy_abs = phys_crop_y as f64 + wy_rel;
+
+                                            words_out.push(serde_json::json!({
+                                                "text": word_text,
+                                                "x": wx_abs.round() as i32,
+                                                "y": wy_abs.round() as i32,
+                                                "w": ww_rel.round() as i32,
+                                                "h": wh_rel.round() as i32
+                                            }));
+                                        }
+                                    }
+                                }
+                            }
+                            sentences_out.push(serde_json::json!({
+                                "text": sentence_text,
+                                "words": words_out
+                            }));
+                        }
+                    }
+                    
+                    let _ = app_handle_clone.emit("ocr-sentences-ready", serde_json::json!({
+                        "sentences": sentences_out,
+                        "model": format!("ИИ Vision: {}", model_clone)
+                    }));
+                    vision_success = true;
+                }
+                Err(err) => {
+                    eprintln!("[OCR] Gemini Vision API task failed, falling back to text mode: {}", err);
+                    let _ = app_handle_clone.emit("ocr-status-update", format!("⚠️ Сбой Vision. Переход в текстовый режим..."));
+                }
+            }
+        }
+
+        if !vision_success {
+            let prompt = r#"Ты — помощник по сегментации текста.
 Тебе дан сырой текст, полученный в результате распознавания экрана (OCR). Раздели этот текст на правильные, грамматически и логически связные предложения.
 Игнорируй случайный мусор (например, битые символы распознавания), но объединяй слова, которые логически составляют одну фразу или предложение.
 
@@ -3243,25 +3960,37 @@ async fn start_ocr_scan_async(
 2. Каждое предложение должно быть грамматически полным и правильным.
 3. Сохраняй исходную пунктуацию в конце предложений (точки, знаки восклицания, вопросы).
 4. СТРОГО ЗАПРЕЩЕНО объединять в одно предложение строки, разделенные переносом строки (\n), если они не являются непосредственным грамматическим продолжением друг друга.
-5. Технические логи (например, "Worked for 38s", "Worked for 46s"), служебные сообщения, заголовки и пункты списков ДОЛЖНЫ быть выделены в отдельные предложения. Никогда не склеивай их с основным текстом."#;
+5. Технические логи (например, "Worked for 38s", "Worked for 46s"), служебные сообщения, заголовки и пункты списков ДОЛЖНЫ быть выделены в отдельные предложения. Никогда не склеивай их с основным текстом.
+6. Если в тексте встречается точка (.), восклицательный (!) или вопросительный (?) знак, за которым следует новое предложение с заглавной буквы (даже на той же строке), СТРОГО разделяй их на разные предложения.
+7. Никогда не выделяй текст в скобках в конце предложения в отдельное предложение, если завершающий знак препинания (точка/вопрос/восклицание) стоит после закрывающей скобки. Текст в скобках должен оставаться частью основного предложения."#;
 
-        match call_gemini_text_api(&app_handle_clone, &api_key_clone, &model_clone, prompt, &multiline_text).await {
-            Ok((sentences_vec, used_model)) => {
-                let formatted = format_sentences_with_words(&sentences_vec, &local_words_clone, phys_crop_x, phys_crop_y);
-                let _ = app_handle_clone.emit("ocr-sentences-ready", serde_json::json!({
-                    "sentences": formatted,
-                    "model": format!("ИИ: {}", used_model)
-                }));
-            }
-            Err(e) => {
-                eprintln!("[OCR] Gemini Text API task failed, using local fallback: {}", e);
+            if ocr_mode_clone == "local" {
                 let sentences_vec = build_fallback_sentences_from_words(&local_words_clone);
                 let formatted = format_sentences_with_words(&sentences_vec, &local_words_clone, phys_crop_x, phys_crop_y);
                 let _ = app_handle_clone.emit("ocr-sentences-ready", serde_json::json!({
                     "sentences": formatted,
-                    "model": "Локальный fallback",
-                    "error": format!("ИИ недоступен: {}", e)
+                    "model": "Локальный (Принудительно)"
                 }));
+            } else {
+                match call_gemini_text_api(&app_handle_clone, &api_key_clone, &model_clone, prompt, &multiline_text).await {
+                    Ok((sentences_vec, used_model)) => {
+                        let formatted = format_sentences_with_words(&sentences_vec, &local_words_clone, phys_crop_x, phys_crop_y);
+                        let _ = app_handle_clone.emit("ocr-sentences-ready", serde_json::json!({
+                            "sentences": formatted,
+                            "model": format!("ИИ Text: {}", used_model)
+                        }));
+                    }
+                    Err(e) => {
+                        eprintln!("[OCR] Gemini Text API task failed, using local fallback: {}", e);
+                        let sentences_vec = build_fallback_sentences_from_words(&local_words_clone);
+                        let formatted = format_sentences_with_words(&sentences_vec, &local_words_clone, phys_crop_x, phys_crop_y);
+                        let _ = app_handle_clone.emit("ocr-sentences-ready", serde_json::json!({
+                            "sentences": formatted,
+                            "model": "Локальный fallback",
+                            "error": format!("ИИ недоступен: {}", e)
+                        }));
+                    }
+                }
             }
         }
         

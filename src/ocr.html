@@ -144,7 +144,7 @@
       border-radius: 8px;
       font-size: 13px;
       font-weight: 500;
-      pointer-events: auto;
+      pointer-events: none; /*Clicks pass through to words below when inactive*/
       box-shadow: 0 8px 24px rgba(0,0,0,0.5);
       max-width: 300px;
       white-space: pre-wrap;
@@ -156,6 +156,7 @@
     .translation-badge.active {
       opacity: 1;
       transform: translateX(-50%) scale(1);
+      pointer-events: auto; /*Clicks allowed when active*/
     }
 
     /* Скрытие контента при зажатом Alt */
@@ -178,6 +179,8 @@
       stroke-linejoin: round;
       opacity: 0.7 !important;
       transition: all 0.2s;
+      pointer-events: stroke; /*Allow pointer events on SVG stroke*/
+      cursor: pointer;
     }
 
     /* Лазерная линия сканирования */
@@ -271,8 +274,11 @@
 
   <div id="lens-container">
     <div id="toolbar-island" class="dock-br">
-      <!-- Model/Fallback Status -->
-      <span id="model-status" style="color: #00FF66; font-size: 11px; font-family: monospace; padding-left: 6px; display: none; align-self: center;"></span>
+      <!-- Model/Fallback Status info badge -->
+      <div id="model-status-badge" style="display: none; align-items: center; justify-content: center; width: 22px; height: 22px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 50%; cursor: help; pointer-events: auto; transition: all 0.2s; align-self: center; margin-right: 8px;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="#00FF66" id="model-status-icon" style="transition: fill 0.2s; min-width: 14px; min-height: 14px;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+        <span id="model-status" style="display: none;"></span>
+      </div>
 
       <!-- Scan (AI) -->
       <button id="btn-scan" class="icon-btn highlight" title="Сканировать экран">        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z"/></svg>

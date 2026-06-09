@@ -36,6 +36,34 @@ let isMouseDown = false;
 let startX = 0, startY = 0;
 let isAltPressed = false;
 
+const lastOcrMethodInfo = {
+  model: 'Неизвестно',
+  ocrEngine: 'Неизвестно',
+  segmentation: 'Неизвестно',
+  translation: 'ИИ Gemini API (с fallback на Google Translate)'
+};
+
+// Инициализация событий детального тултипа для плашки статуса
+document.addEventListener('DOMContentLoaded', () => {
+  const modelStatusBadge = document.getElementById('model-status-badge');
+  if (modelStatusBadge) {
+    modelStatusBadge.addEventListener('mouseenter', () => {
+      const rect = modelStatusBadge.getBoundingClientRect();
+      const infoText = `🤖 Модель: ${lastOcrMethodInfo.model}\n` +
+                       `🔍 OCR: ${lastOcrMethodInfo.ocrEngine}\n` +
+                       `📐 Сегментация: ${lastOcrMethodInfo.segmentation}\n` +
+                       `🌐 Перевод: ${lastOcrMethodInfo.translation}`;
+      tooltip.innerText = infoText;
+      tooltip.style.left = Math.max(10, rect.left + rect.width / 2 - 140) + 'px';
+      tooltip.style.top = Math.max(10, rect.top - 102) + 'px';
+      tooltip.style.opacity = 1;
+    });
+    modelStatusBadge.addEventListener('mouseleave', () => {
+      tooltip.style.opacity = 0;
+    });
+  }
+});
+
 // Хранение данных монитора для выделения области
 let monitorLeft = 0;
 let monitorTop = 0;
@@ -52,7 +80,7 @@ const sentenceColors = [
 document.getElementById('btn-close').addEventListener('click', async () => {
   await appWindow.hide();
   await emit('ocr-visibility-changed', false);
-  clearCanvas();
+  clearCanvas(true);
 });
 
 // Слушаем триггер запуска оверлея
@@ -72,7 +100,7 @@ listen('ocr-visibility-changed', async (event) => {
     selectionOverlay.style.display = 'none';
     lensContainer.style.display = 'none';
     document.body.style.pointerEvents = 'none';
-    clearCanvas();
+    clearCanvas(true);
     logToBackend(`[OCR] Overlay hidden, state cleared`);
   }
 });
@@ -81,7 +109,7 @@ listen('ocr-visibility-changed', async (event) => {
 async function startSelectionMode() {
   try {
     logToBackend(`[OCR] startSelectionMode called`);
-    clearCanvas();
+    clearCanvas(true);
     isSelecting = true;
     isMouseDown = false;
     isAltPressed = false;
@@ -213,7 +241,7 @@ selectionOverlay.addEventListener('mouseup', async (e) => {
 // Сканирование области ИИ
 async function scanOcrArea(x_phys, y_phys, w_phys, h_phys) {
   logToBackend(`[OCR] scanOcrArea starting async: x=${x_phys}, y=${y_phys}, w=${w_phys}, h=${h_phys}`);
-  clearCanvas();
+  clearCanvas(true);
   startLoader();
   
   try {
@@ -304,15 +332,20 @@ Object.keys(handleMap).forEach(id => {
   }
 });
 
-function clearCanvas() {
+function clearCanvas(clearStatus = false) {
   svgCanvas.innerHTML = '';
   wordsContainer.innerHTML = '';
   translationContainer.innerHTML = '';
   tooltip.style.opacity = 0;
-  const modelStatus = document.getElementById('model-status');
-  if (modelStatus) {
-    modelStatus.style.display = 'none';
-    modelStatus.innerText = '';
+  if (clearStatus) {
+    const modelStatusBadge = document.getElementById('model-status-badge');
+    if (modelStatusBadge) {
+      modelStatusBadge.style.display = 'none';
+    }
+    const modelStatus = document.getElementById('model-status');
+    if (modelStatus) {
+      modelStatus.innerText = '';
+    }
   }
 }
 
@@ -324,6 +357,201 @@ function showTooltip(text, x, y) {
   setTimeout(() => { tooltip.style.opacity = 0; }, 2000);
 }
 
+const sentenceTranslationStates = {};
+
+async function activateSentence(sIdx) {
+  if (!currentOcrData || !currentOcrData[sIdx]) return;
+  const sentence = currentOcrData[sIdx];
+  const color = sentenceColors[sIdx % sentenceColors.length];
+  const sentenceText = sentence.text;
+  const pathId = `path-${sIdx}`;
+  
+  // 1. Подсвечиваем нить Безье
+  const p = document.getElementById(pathId);
+  if (p) {
+    p.style.opacity = '1.0';
+    p.style.strokeWidth = '3';
+    p.style.filter = `drop-shadow(0px 0px 6px ${color})`;
+  }
+
+  // 2. Подсвечиваем все слова этого предложения
+  const wordDivs = wordsContainer.querySelectorAll(`.hover-word[data-sentence-idx="${sIdx}"]`);
+  wordDivs.forEach(div => {
+    div.style.background = 'rgba(255, 255, 255, 0.2)';
+    div.style.boxShadow = `0 0 8px ${color}`;
+  });
+
+  if (wordDivs.length === 0) return;
+  
+  // Вычисляем Bounding Box предложения в логических координатах
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  wordDivs.forEach(div => {
+    const x = parseFloat(div.style.left);
+    const y = parseFloat(div.style.top);
+    const w = parseFloat(div.style.width);
+    const h = parseFloat(div.style.height);
+    if (x < minX) minX = x;
+    if (x + w > maxX) maxX = x + w;
+    if (y < minY) minY = y;
+    if (y + h > maxY) maxY = y + h;
+  });
+
+  const centerX_orig = (minX + maxX) / 2;
+  const centerY_orig = (minY + maxY) / 2;
+
+  // 3. Позиционируем плашку перевода
+  const badge = document.getElementById(`badge-${sIdx}`);
+  if (badge) {
+    const margin = 15;
+    let badgeW = badge.offsetWidth || 280;
+    let badgeH = badge.offsetHeight || 80;
+
+    // Ограничиваем по горизонтали
+    let badgeX = Math.max(badgeW / 2 + margin, Math.min(window.innerWidth - badgeW / 2 - margin, centerX_orig));
+
+    // Позиционируем по вертикали
+    let badgeY = maxY + 15; // По умолчанию снизу
+    let isTop = false;
+
+    if (badgeY + badgeH > window.innerHeight - margin) {
+      // Снизу не влезает, пробуем сверху
+      badgeY = minY - badgeH - 15;
+      isTop = true;
+
+      if (badgeY < margin) {
+        // И сверху не влезает! Выбираем сторону, где больше места
+        const spaceAbove = minY;
+        const spaceBelow = window.innerHeight - maxY;
+        if (spaceAbove > spaceBelow) {
+          badgeY = Math.max(margin, minY - badgeH - 10);
+          isTop = true;
+        } else {
+          badgeY = Math.min(window.innerHeight - badgeH - margin, maxY + 10);
+          isTop = false;
+        }
+      }
+    }
+
+    badge.style.left = `${badgeX}px`;
+    badge.style.top = `${badgeY}px`;
+    badge.classList.add('active');
+
+    // Рисуем нить-указатель
+    const oldInd = document.getElementById(`indicator-${sIdx}`);
+    if (oldInd) oldInd.remove();
+
+    const indicatorPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    indicatorPath.setAttribute('id', `indicator-${sIdx}`);
+    
+    const targetY = isTop ? (badgeY + badgeH) : badgeY;
+    const midY = (centerY_orig + targetY) / 2;
+    const d_ind = `M ${centerX_orig} ${centerY_orig} C ${centerX_orig} ${midY}, ${badgeX} ${midY}, ${badgeX} ${targetY}`;
+    
+    indicatorPath.setAttribute('d', d_ind);
+    indicatorPath.setAttribute('fill', 'none');
+    indicatorPath.setAttribute('stroke', color);
+    indicatorPath.setAttribute('stroke-width', '2');
+    indicatorPath.setAttribute('stroke-dasharray', '3, 3');
+    indicatorPath.style.transition = 'opacity 0.2s';
+    svgCanvas.appendChild(indicatorPath);
+
+    // Загружаем перевод
+    if (!sentenceTranslationStates[sIdx]) {
+      sentenceTranslationStates[sIdx] = { isTranslated: false, translatedText: '', isLoading: false, hasError: false };
+    }
+
+    const state = sentenceTranslationStates[sIdx];
+    if (state.isTranslated) {
+      badge.innerText = state.translatedText;
+    } else if (state.isLoading) {
+      badge.innerText = `⏳ Перевожу...\n${sentenceText}`;
+    } else if (state.hasError) {
+      badge.innerText = `⚠️ Ошибка перевода. Нажмите для повтора.\n${sentenceText}`;
+    } else {
+      state.isLoading = true;
+      badge.innerText = `⏳ Перевожу...\n${sentenceText}`;
+      try {
+        const res = await invoke('translate_hybrid', { text: sentenceText, targetLang: 'ru' });
+        state.translatedText = res;
+        state.isTranslated = true;
+        state.isLoading = false;
+        state.hasError = false;
+        badge.innerText = res;
+        
+        // После отрисовки реального текста пересчитаем высоту плашки
+        setTimeout(() => {
+          if (badge.classList.contains('active')) {
+            const newBadgeH = badge.offsetHeight || badgeH;
+            let newBadgeY = maxY + 15;
+            let newIsTop = false;
+            if (newBadgeY + newBadgeH > window.innerHeight - margin) {
+              newBadgeY = minY - newBadgeH - 15;
+              newIsTop = true;
+              if (newBadgeY < margin) {
+                const spaceAbove = minY;
+                const spaceBelow = window.innerHeight - maxY;
+                if (spaceAbove > spaceBelow) {
+                  newBadgeY = Math.max(margin, minY - newBadgeH - 10);
+                  newIsTop = true;
+                } else {
+                  newBadgeY = Math.min(window.innerHeight - newBadgeH - margin, maxY + 10);
+                  newIsTop = false;
+                }
+              }
+            }
+            badge.style.top = `${newBadgeY}px`;
+            
+            // Обновим нить-указатель
+            const newTargetY = newIsTop ? (newBadgeY + newBadgeH) : newBadgeY;
+            const newMidY = (centerY_orig + newTargetY) / 2;
+            const new_d_ind = `M ${centerX_orig} ${centerY_orig} C ${centerX_orig} ${newMidY}, ${badgeX} ${newMidY}, ${badgeX} ${newTargetY}`;
+            const curInd = document.getElementById(`indicator-${sIdx}`);
+            if (curInd) {
+              curInd.setAttribute('d', new_d_ind);
+            }
+          }
+        }, 30);
+      } catch (err) {
+        state.isLoading = false;
+        state.hasError = true;
+        badge.innerText = `⚠️ Ошибка перевода. Нажмите для повтора.\n${sentenceText}`;
+      }
+    }
+
+  }
+}
+
+function deactivateSentence(sIdx) {
+  const pathId = `path-${sIdx}`;
+  const badge = document.getElementById(`badge-${sIdx}`);
+
+  // 1. Убираем подсветку нити
+  const p = document.getElementById(pathId);
+  if (p) {
+    p.style.opacity = '0.7';
+    p.style.strokeWidth = '1.8';
+    p.style.filter = 'none';
+  }
+
+  // 2. Убираем подсветку слов
+  const wordDivs = wordsContainer.querySelectorAll(`.hover-word[data-sentence-idx="${sIdx}"]`);
+  wordDivs.forEach(div => {
+    div.style.background = 'rgba(255, 255, 255, 0.01)';
+    div.style.boxShadow = 'none';
+  });
+
+  // 3. Скрываем плашку перевода
+  if (badge) {
+    badge.classList.remove('active');
+  }
+
+  // 4. Удаляем нить-указатель
+  const ind = document.getElementById(`indicator-${sIdx}`);
+  if (ind) {
+    ind.remove();
+  }
+}
+
 // Отрисовка результатов сканирования
 async function renderOcrData(sentences) {
   scaleFactor = await appWindow.scaleFactor();
@@ -331,6 +559,9 @@ async function renderOcrData(sentences) {
   logToBackend(`[OCR] renderOcrData. InnerPos: x=${pos.x}, y=${pos.y}, scaleFactor=${scaleFactor}`);
   clearCanvas();
   
+  // Очистим кэш переводов при новом сканировании
+  for (let key in sentenceTranslationStates) delete sentenceTranslationStates[key];
+
   // Создаем defs для масок и стрелок, если его нет
   let defs = svgCanvas.querySelector('defs');
   if (!defs) {
@@ -539,6 +770,19 @@ async function renderOcrData(sentences) {
     path.setAttribute('stroke-width', '1.8');
     path.setAttribute('class', 'thread-path');
     path.setAttribute('mask', `url(#mask-${sIdx})`);
+    
+    // События наведения и клика на саму нить Безье
+    path.addEventListener('mouseenter', () => {
+      activateSentence(sIdx);
+    });
+    path.addEventListener('mouseleave', () => {
+      deactivateSentence(sIdx);
+    });
+    path.addEventListener('click', async () => {
+      await emit('tts-state-sync', { action: 'load', text: sentenceText });
+      await emit('tts-state-sync', { action: 'play' });
+    });
+
     svgCanvas.appendChild(path);
 
     // Рисуем стрелочку в конце предложения как отдельный path (чтобы маска её не скрывала)
@@ -556,108 +800,38 @@ async function renderOcrData(sentences) {
     arrowPath.setAttribute('stroke-linecap', 'round');
     arrowPath.setAttribute('stroke-linejoin', 'round');
     arrowPath.setAttribute('class', 'thread-arrow');
+    arrowPath.style.pointerEvents = 'none'; // Не мешает кликам
     svgCanvas.appendChild(arrowPath);
-
-    // Вычисляем Bounding Box всего предложения для плашки перевода
-    const minX = Math.min(...words.map(w => w.x));
-    const maxX = Math.max(...words.map(w => w.x + w.w));
-    const minY = Math.min(...words.map(w => w.y));
-    const maxY = Math.max(...words.map(w => w.y + w.h));
-    const centerX_orig = (minX + maxX) / 2;
-    const centerY_orig = (minY + maxY) / 2;
 
     // Создаем плавающую плашку перевода
     const badge = document.createElement('div');
     badge.id = `badge-${sIdx}`;
     badge.className = 'translation-badge';
+    badge.addEventListener('click', async () => {
+      const state = sentenceTranslationStates[sIdx];
+      if (state && state.hasError && !state.isLoading) {
+        state.hasError = false;
+        await activateSentence(sIdx);
+      }
+    });
     translationContainer.appendChild(badge);
-
-    let isTranslated = false;
-    let translatedText = '';
 
     // Интерактивные слова (бусины)
     words.forEach((word) => {
       const div = document.createElement('div');
       div.className = 'hover-word';
+      div.setAttribute('data-sentence-idx', sIdx);
       div.style.left = word.x + 'px';
       div.style.top = word.y + 'px';
       div.style.width = word.w + 'px';
       div.style.height = word.h + 'px';
       
-      div.addEventListener('mouseenter', async () => {
-        // Подсвечиваем нить Безье
-        const p = document.getElementById(pathId);
-        if (p) {
-          p.style.opacity = '1.0';
-          p.style.strokeWidth = '3';
-          p.style.filter = `drop-shadow(0px 0px 6px ${color})`;
-        }
-
-        // Позиционируем плашку перевода
-        let badgeY = maxY + 20; // по умолчанию снизу
-        let isTop = false;
-        
-        // Замеряем высоту плашки (оценочно)
-        const estBadgeHeight = 60; 
-        if (badgeY + estBadgeHeight > window.innerHeight) {
-          badgeY = minY - 50; // если снизу нет места, кидаем наверх
-          isTop = true;
-        }
-
-        // Центрируем плашку по горизонтали с ограничением краев экрана
-        let badgeX = Math.max(160, Math.min(window.innerWidth - 160, centerX_orig));
-        
-        badge.style.left = `${badgeX}px`;
-        badge.style.top = `${badgeY}px`;
-        badge.classList.add('active');
-
-        // Рисуем нить-указатель от предложения к плашке
-        const indicatorPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        indicatorPath.setAttribute('id', `indicator-${sIdx}`);
-        
-        const targetY = isTop ? (badgeY + 32) : badgeY; // стыкуем с краем плашки
-        const midY = (centerY_orig + targetY) / 2;
-        const d_ind = `M ${centerX_orig} ${centerY_orig} C ${centerX_orig} ${midY}, ${badgeX} ${midY}, ${badgeX} ${targetY}`;
-        
-        indicatorPath.setAttribute('d', d_ind);
-        indicatorPath.setAttribute('fill', 'none');
-        indicatorPath.setAttribute('stroke', color);
-        indicatorPath.setAttribute('stroke-width', '2');
-        indicatorPath.setAttribute('stroke-dasharray', '3, 3');
-        indicatorPath.style.transition = 'opacity 0.2s';
-        svgCanvas.appendChild(indicatorPath);
-
-        if (!isTranslated) {
-          badge.innerText = `⏳ Перевожу...\n${sentenceText}`;
-          try {
-            const res = await invoke('translate_hybrid', { text: sentenceText, targetLang: 'ru' });
-            translatedText = res;
-            badge.innerText = res;
-            isTranslated = true;
-          } catch (err) {
-            badge.innerText = "Ошибка перевода";
-          }
-        } else {
-          badge.innerText = translatedText;
-        }
+      div.addEventListener('mouseenter', () => {
+        activateSentence(sIdx);
       });
 
       div.addEventListener('mouseleave', () => {
-        badge.classList.remove('active');
-        
-        // Убираем подсветку нити
-        const p = document.getElementById(pathId);
-        if (p) {
-          p.style.opacity = '0.7';
-          p.style.strokeWidth = '1.8';
-          p.style.filter = 'none';
-        }
-
-        // Удаляем нить-указатель
-        const ind = document.getElementById(`indicator-${sIdx}`);
-        if (ind) {
-          ind.remove();
-        }
+        deactivateSentence(sIdx);
       });
 
       div.addEventListener('click', async () => {
@@ -775,18 +949,33 @@ listen('ocr-sentences-ready', (event) => {
   currentOcrData = sentences;
   renderOcrData(currentOcrData);
   
+  const modelStatusBadge = document.getElementById('model-status-badge');
   const modelStatus = document.getElementById('model-status');
-  if (modelStatus) {
+  const modelStatusIcon = document.getElementById('model-status-icon');
+  
+  if (modelStatusBadge && modelStatus) {
     if (event.payload.model) {
       modelStatus.innerText = event.payload.model;
-      modelStatus.style.display = 'inline-block';
-      if (event.payload.model.toLowerCase().includes('fallback') || event.payload.model.toLowerCase().includes('локальный')) {
-        modelStatus.style.color = '#FFAA00'; // оранжевый для fallback
+      lastOcrMethodInfo.model = event.payload.model;
+      modelStatusBadge.style.display = 'flex';
+      
+      const isFallback = event.payload.model.toLowerCase().includes('fallback') || event.payload.model.toLowerCase().includes('локальный');
+      const color = isFallback ? '#FFAA00' : '#00FF66';
+      
+      modelStatusBadge.style.borderColor = color;
+      if (modelStatusIcon) {
+        modelStatusIcon.setAttribute('fill', color);
+      }
+      
+      if (isFallback) {
+        lastOcrMethodInfo.ocrEngine = 'Локальный OCR (Windows API)';
+        lastOcrMethodInfo.segmentation = 'Локальная геометрическая эвристика';
       } else {
-        modelStatus.style.color = '#00FF66'; // зеленый для успешного ИИ
+        lastOcrMethodInfo.ocrEngine = 'ИИ Gemini Vision';
+        lastOcrMethodInfo.segmentation = 'Нейросетевая сегментация (ИИ)';
       }
     } else {
-      modelStatus.style.display = 'none';
+      modelStatusBadge.style.display = 'none';
     }
   }
 
