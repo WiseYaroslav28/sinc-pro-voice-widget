@@ -31,7 +31,8 @@
         "transparent": true,
         "alwaysOnTop": true,
         "visible": true,
-        "shadow": false
+        "shadow": false,
+        "skipTaskbar": true
       },
       {
         "label": "widget",
@@ -44,7 +45,8 @@
         "transparent": true,
         "alwaysOnTop": true,
         "visible": true,
-        "shadow": false
+        "shadow": false,
+        "skipTaskbar": true
       },
       {
         "label": "ocr",
@@ -57,7 +59,8 @@
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,
-        "visible": false
+        "visible": false,
+        "skipTaskbar": true
       },
       {
         "label": "mic",
@@ -69,7 +72,8 @@
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,
-        "visible": false
+        "visible": false,
+        "skipTaskbar": true
       },
       {
         "label": "result",
@@ -82,7 +86,8 @@
         "transparent": true,
         "alwaysOnTop": true,
         "visible": false,
-        "shadow": true
+        "shadow": true,
+        "skipTaskbar": true
       },
       {
         "label": "prompt",
@@ -95,7 +100,8 @@
         "transparent": true,
         "alwaysOnTop": true,
         "visible": false,
-        "shadow": true
+        "shadow": true,
+        "skipTaskbar": true
       }
     ],
     "security": {
