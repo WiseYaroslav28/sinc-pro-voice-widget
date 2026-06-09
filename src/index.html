@@ -6,8 +6,7 @@
     <title>SINC PRO - Панель управления</title>
     <!-- Подключаем Tailwind CSS скомпилированный локально -->
     <link rel="stylesheet" href="styles.css" />
-    <!-- Подключаем Google Material Symbols -->
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+
     <!-- Подключаем JS скрипты ядра и виджета -->
     <script src="voice-core.js"></script>
     <script src="tts-widget.js"></script>
@@ -112,7 +111,7 @@
       <!-- 2. Правая контентная область -->
       <main class="flex-1 flex flex-col h-full overflow-hidden relative bg-[#131318]">
         <!-- Кнопки управления окном Tauri -->
-        <div style="position: absolute; top: 12px; right: 16px; display: flex; gap: 2px; z-index: 200;">
+        <div style="position: absolute; top: 12px; right: 16px; display: flex; gap: 2px; z-index: 10000;">
           <button id="win-minimize" style="background: transparent; border: none; cursor: pointer; padding: 6px; border-radius: 6px;" class="text-[#ccc3d8] hover:text-white hover:bg-[#2a292f] transition-all focus:outline-none" title="Свернуть">
             <span class="material-symbols-outlined text-[16px]">minimize</span>
           </button>
@@ -188,8 +187,7 @@
 
                 <!-- ComboBox переключения вида -->
                 <select class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#ccc3d8] rounded-lg px-2 py-1 text-[11px] focus:outline-none focus:border-[#d2bbff] max-w-[180px]"
-                        id="dashboard-view-combo"
-                        onchange="onDashboardViewChange()">
+                        id="dashboard-view-combo">
                   <option value="transcript">📝 Транскрипция</option>
                 </select>
 
@@ -203,7 +201,6 @@
 
                 <!-- Кнопка: Новый запрос -->
                 <button id="btn-new-request"
-                        onclick="if(window.__TAURI__){window.__TAURI__.core.invoke('show_capsule_window').catch(()=>{})}"
                         class="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-[#8e52ff] border border-[#8e52ff]/30 bg-[#8e52ff]/5 hover:bg-[#8e52ff]/15 hover:border-[#8e52ff]/60 transition-all flex-shrink-0"
                         title="Начать новую запись (Ctrl+Win)">
                   <span class="material-symbols-outlined text-[14px]">add_circle</span>
@@ -414,7 +411,6 @@
                   </div>
                   <!-- Кастомный toggle — не зависит от Tailwind JIT -->
                   <div id="magnet-toggle-track"
-                       onclick="document.getElementById('setting-capsule-magnet').click()"
                        style="width:40px; height:22px; border-radius:11px; background:#8e52ff; position:relative; cursor:pointer; transition:background 0.2s; flex-shrink:0;">
                     <div id="magnet-toggle-thumb"
                          style="width:18px; height:18px; border-radius:50%; background:white; position:absolute; top:2px; left:20px; transition:left 0.2s; box-shadow:0 1px 3px rgba(0,0,0,0.4);"></div>
@@ -641,6 +637,7 @@
             document.getElementById('setting-ui-lang').value = config.ui_lang || 'ru';
             document.getElementById('setting-dictation-lang').value = config.dictation_lang || 'auto';
             document.getElementById('setting-api-key').value = config.api_key || '';
+            localStorage.setItem('apiKey', config.api_key || '');
             document.getElementById('setting-yandex-api-key').value = config.yandex_api_key || '';
             document.getElementById('setting-ocr-mode').value = config.ocr_mode || 'text';
             // Сначала грузим модели, потом восстанавливаем выбор
@@ -653,6 +650,7 @@
           // Dev/mock режим — пробуем реальный ключ если есть
           const mockKey = '';
           document.getElementById('setting-api-key').value = mockKey;
+          localStorage.setItem('apiKey', mockKey);
           updateApiStatus(mockKey);
         }
       }
@@ -670,6 +668,7 @@
           try {
             await invoke('save_config', { config });
             updateApiStatus(config.api_key);
+            localStorage.setItem('apiKey', config.api_key || '');
             console.log("Настройки сохранены:", config);
           } catch (err) {
             console.error("Ошибка сохранения настроек:", err);
@@ -725,11 +724,16 @@
         select.disabled = true;
 
         try {
-          const resp = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.trim()}&pageSize=100`
-          );
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-          const data = await resp.json();
+          let data;
+          if (invoke) {
+            data = await invoke('fetch_gemini_models', { apiKey: apiKey.trim() });
+          } else {
+            const resp = await fetch(
+              `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.trim()}&pageSize=100`
+            );
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            data = await resp.json();
+          }
 
           // Фильтруем только generateContent модели
           const models = (data.models || []).filter(m =>
@@ -826,6 +830,7 @@
       document.getElementById('setting-ocr-mode').addEventListener('change', saveConfig);
       document.getElementById('setting-api-key').addEventListener('input', debounce(async () => {
         const key = document.getElementById('setting-api-key').value;
+        localStorage.setItem('apiKey', key);
         const currentModel = document.getElementById('setting-ai-model').value;
         await fetchAndPopulateModels(key, currentModel);
         saveConfig();
@@ -1069,7 +1074,7 @@
                  style="background: ${isError ? 'rgba(240,84,84,0.05)' : isExpanded ? '#1a1a22' : '#141419'};
                         border-color: ${isExpanded ? getPresetColor(entryPreset) + '40' : 'rgba(74,68,85,0.25)'};"
                  id="hcard-${entry.id}">
-              <div class="flex items-start gap-3 p-3 cursor-pointer" onclick="toggleHistoryCard('${entry.id}')">
+              <div class="flex items-start gap-3 p-3 cursor-pointer hcard-header-clickable" data-id="${entry.id}">
                 <div class="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center mt-0.5"
                      style="background: ${getPresetColor(entryPreset)}18;">
                   <span class="material-symbols-outlined text-[16px]" style="color: ${getPresetColor(entryPreset)}; font-variation-settings: 'FILL' 1;">${getPresetIcon(entryPreset)}</span>
@@ -1082,12 +1087,12 @@
                   <p class="text-[12px] text-[#ccc3d8] leading-[1.4] ${isExpanded ? 'hidden' : ''}">${textPreview}</p>
                 </div>
                 <div class="flex items-center gap-1 flex-shrink-0">
-                  <button class="p-1.5 rounded text-[#ccc3d8] hover:text-[#d2bbff] hover:bg-[#2a292f] transition-all"
-                          onclick="event.stopPropagation(); openFolder('${entry.audio_path.replace(/\\/g, '\\\\')}')">
+                  <button class="p-1.5 rounded text-[#ccc3d8] hover:text-[#d2bbff] hover:bg-[#2a292f] transition-all hbtn-folder"
+                          data-path="${entry.audio_path.replace(/\\/g, '\\\\')}">
                     <span class="material-symbols-outlined text-[15px]">folder_open</span>
                   </button>
-                  <button class="p-1.5 rounded text-[#ccc3d8] hover:text-[#ffb4ab] hover:bg-[#2a292f] transition-all"
-                          onclick="event.stopPropagation(); deleteEntry('${entry.id}')">
+                  <button class="p-1.5 rounded text-[#ccc3d8] hover:text-[#ffb4ab] hover:bg-[#2a292f] transition-all hbtn-delete"
+                          data-id="${entry.id}">
                     <span class="material-symbols-outlined text-[15px]">delete</span>
                   </button>
                 </div>
@@ -1095,9 +1100,9 @@
 
               <div class="${isExpanded ? '' : 'hidden'}" id="hcard-body-${entry.id}">
                 <div class="px-3 pb-3">
-                  <select class="bg-[#0e0e13] border border-[#4a4455]/30 text-[#e4e1e9] rounded-lg px-2 py-1 text-[11px] mb-2 w-full focus:outline-none"
+                  <select class="bg-[#0e0e13] border border-[#4a4455]/30 text-[#e4e1e9] rounded-lg px-2 py-1 text-[11px] mb-2 w-full focus:outline-none hcard-view-select"
                           id="hcard-view-${entry.id}"
-                          onchange="switchHistoryView('${entry.id}')">
+                          data-id="${entry.id}">
                     <option value="transcript">📝 Транскрипция</option>
                     ${(entry.ai_results || []).map((r, i) =>
                       `<option value="ai_${i}">✨ Результат ${i+1} (${r.preset_label})</option>`
@@ -1108,8 +1113,9 @@
                     ${(firstAi ? firstAi.text : entry.raw_transcript) || '—'}
                   </div>
                   <div class="flex items-center gap-2 bg-[#1f1f24] rounded-lg px-3 py-2">
-                    <button class="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all"
-                            onclick="toggleHistoryPlay('${entry.id}', '${entry.audio_path.replace(/\\/g, '\\\\')}')" 
+                    <button class="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all hbtn-play"
+                            data-id="${entry.id}"
+                            data-path="${entry.audio_path.replace(/\\/g, '\\\\')}"
                             id="hplay-btn-${entry.id}">
                       <span class="material-symbols-outlined text-[16px]" style="color: ${getPresetColor(entryPreset)};" id="hplay-icon-${entry.id}">${historyPlayingId === entry.id ? 'pause' : 'play_arrow'}</span>
                     </button>
@@ -1117,10 +1123,10 @@
                       <div class="h-full rounded-full transition-all" style="width: 0%; background: ${getPresetColor(entryPreset)};" id="hprogress-${entry.id}"></div>
                     </div>
                     <span class="text-[10px] text-[#888] font-mono w-12 text-right" id="htime-${entry.id}">0:00</span>
-                    <button class="p-1 rounded text-[#ccc3d8] hover:text-[#d2bbff]" onclick="copyHistoryText('${entry.id}')" title="Копировать">
+                    <button class="p-1 rounded text-[#ccc3d8] hover:text-[#d2bbff] hbtn-copy" data-id="${entry.id}" title="Копировать">
                       <span class="material-symbols-outlined text-[14px]">content_copy</span>
                     </button>
-                    <button class="p-1 rounded text-[#ccc3d8] hover:text-[#7bd6d1]" onclick="editHistoryCard('${entry.id}')" title="Редактировать" id="hbtn-edit-${entry.id}">
+                    <button class="p-1 rounded text-[#ccc3d8] hover:text-[#7bd6d1] hbtn-edit" data-id="${entry.id}" title="Редактировать" id="hbtn-edit-${entry.id}">
                       <span class="material-symbols-outlined text-[14px]">edit</span>
                     </button>
                   </div>
@@ -1160,17 +1166,18 @@
         textEl.replaceWith(ta);
         ta.focus();
 
+        window.__originalHistoryTexts = window.__originalHistoryTexts || {};
+        window.__originalHistoryTexts[entryId] = originalText;
+
         // Добавляем кнопки Сохранить / Отмена
         const btnRow = document.createElement('div');
         btnRow.id = `hcard-edit-btns-${entryId}`;
         btnRow.className = 'flex gap-2 mb-2';
         btnRow.innerHTML = `
-          <button onclick="saveHistoryEdit('${entryId}')"
-                  class="flex-1 bg-[#7bd6d1]/20 border border-[#7bd6d1]/40 text-[#7bd6d1] rounded-lg px-3 py-1.5 text-[11px] font-semibold hover:bg-[#7bd6d1]/30 transition-all">
+          <button class="flex-1 bg-[#7bd6d1]/20 border border-[#7bd6d1]/40 text-[#7bd6d1] rounded-lg px-3 py-1.5 text-[11px] font-semibold hover:bg-[#7bd6d1]/30 transition-all hbtn-save-edit" data-id="${entryId}">
             ✓ Сохранить
           </button>
-          <button onclick="cancelHistoryEdit('${entryId}', ${JSON.stringify(originalText)})"
-                  class="bg-[#2a292f] border border-[#4a4455]/40 text-[#ccc3d8] rounded-lg px-3 py-1.5 text-[11px] font-semibold hover:bg-[#35343a] transition-all">
+          <button class="bg-[#2a292f] border border-[#4a4455]/40 text-[#ccc3d8] rounded-lg px-3 py-1.5 text-[11px] font-semibold hover:bg-[#35343a] transition-all hbtn-cancel-edit" data-id="${entryId}">
             Отмена
           </button>
         `;
@@ -1582,9 +1589,141 @@
         }, 4000);
       }
 
+      function setupDashboardEvents() {
+        const dashboardViewCombo = document.getElementById('dashboard-view-combo');
+        if (dashboardViewCombo) {
+          dashboardViewCombo.addEventListener('change', onDashboardViewChange);
+        }
+
+        const btnNewRequest = document.getElementById('btn-new-request');
+        if (btnNewRequest) {
+          btnNewRequest.addEventListener('click', () => {
+            if (window.__TAURI__) {
+              window.__TAURI__.core.invoke('show_capsule_window').catch(() => {});
+            } else {
+              console.log('[Tauri Mock] Открытие капсулы');
+            }
+          });
+        }
+
+        const btnNewRecording = document.getElementById('btn-new-recording');
+        if (btnNewRecording) {
+          btnNewRecording.addEventListener('click', () => {
+            if (window.__TAURI__) {
+              window.__TAURI__.core.invoke('show_capsule_window').catch(() => {});
+            } else {
+              console.log('[Tauri Mock] Открытие капсулы через сайдбар');
+            }
+          });
+        }
+
+        const magnetTrack = document.getElementById('magnet-toggle-track');
+        const magnetToggle = document.getElementById('setting-capsule-magnet');
+        if (magnetTrack && magnetToggle) {
+          magnetTrack.addEventListener('click', () => {
+            magnetToggle.click();
+          });
+        }
+
+        // Делегирование событий для Журнала
+        const historyList = document.getElementById('history-list');
+        if (historyList) {
+          historyList.addEventListener('click', (e) => {
+            // 1. Кнопка открытия папки
+            const folderBtn = e.target.closest('.hbtn-folder');
+            if (folderBtn) {
+              e.stopPropagation();
+              const path = folderBtn.getAttribute('data-path');
+              openFolder(path);
+              return;
+            }
+
+            // 2. Кнопка удаления записи
+            const deleteBtn = e.target.closest('.hbtn-delete');
+            if (deleteBtn) {
+              e.stopPropagation();
+              const id = deleteBtn.getAttribute('data-id');
+              deleteEntry(id);
+              return;
+            }
+
+            // 3. Кнопка проигрывания
+            const playBtn = e.target.closest('.hbtn-play');
+            if (playBtn) {
+              e.stopPropagation();
+              const id = playBtn.getAttribute('data-id');
+              const path = playBtn.getAttribute('data-path');
+              toggleHistoryPlay(id, path);
+              return;
+            }
+
+            // 4. Кнопка копирования текста
+            const copyBtn = e.target.closest('.hbtn-copy');
+            if (copyBtn) {
+              e.stopPropagation();
+              const id = copyBtn.getAttribute('data-id');
+              copyHistoryText(id);
+              return;
+            }
+
+            // 5. Кнопка редактирования
+            const editBtn = e.target.closest('.hbtn-edit');
+            if (editBtn) {
+              e.stopPropagation();
+              const id = editBtn.getAttribute('data-id');
+              const textEl = document.getElementById(`hcard-text-${id}`);
+              if (textEl && textEl.tagName === 'TEXTAREA') {
+                const orig = window.__originalHistoryTexts && window.__originalHistoryTexts[id];
+                cancelHistoryEdit(id, orig !== undefined ? orig : textEl.value);
+              } else {
+                editHistoryCard(id);
+              }
+              return;
+            }
+
+            // 6. Кнопка Сохранить редактирование
+            const saveEditBtn = e.target.closest('.hbtn-save-edit');
+            if (saveEditBtn) {
+              e.stopPropagation();
+              const id = saveEditBtn.getAttribute('data-id');
+              saveHistoryEdit(id);
+              return;
+            }
+
+            // 7. Кнопка Отмена редактирования
+            const cancelEditBtn = e.target.closest('.hbtn-cancel-edit');
+            if (cancelEditBtn) {
+              e.stopPropagation();
+              const id = cancelEditBtn.getAttribute('data-id');
+              const orig = window.__originalHistoryTexts && window.__originalHistoryTexts[id];
+              cancelHistoryEdit(id, orig !== undefined ? orig : '');
+              return;
+            }
+
+            // 8. Клик по заголовку карточки (развернуть/свернуть)
+            const headerClickable = e.target.closest('.hcard-header-clickable');
+            if (headerClickable) {
+              const id = headerClickable.getAttribute('data-id');
+              toggleHistoryCard(id);
+              return;
+            }
+          });
+
+          // Событие change для селекта в истории
+          historyList.addEventListener('change', (e) => {
+            const viewSelect = e.target.closest('.hcard-view-select');
+            if (viewSelect) {
+              const id = viewSelect.getAttribute('data-id');
+              switchHistoryView(id);
+            }
+          });
+        }
+      }
+
       // Инициализация при загрузке
       document.addEventListener('DOMContentLoaded', async () => {
         setupAudioPlayer();
+        setupDashboardEvents();
         switchTab('tab-home');
         await loadConfig();
         await refreshHistory();
@@ -1718,6 +1857,22 @@
           appWindow.show();
           appWindow.setFocus();
           switchTab('tab-settings');
+        });
+
+        window.__TAURI__.event.listen('open-settings-api-key', () => {
+          appWindow.show();
+          appWindow.setFocus();
+          switchTab('tab-settings');
+          const apiKeyInput = document.getElementById('setting-api-key');
+          if (apiKeyInput) {
+            apiKeyInput.focus();
+            apiKeyInput.style.outline = '2px solid #8e52ff';
+            apiKeyInput.style.boxShadow = '0 0 15px rgba(142, 82, 255, 0.6)';
+            setTimeout(() => {
+              apiKeyInput.style.outline = '';
+              apiKeyInput.style.boxShadow = '';
+            }, 3000);
+          }
         });
 
         window.__TAURI__.event.listen('open-history', () => {

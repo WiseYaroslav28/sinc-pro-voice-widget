@@ -5,7 +5,7 @@
     <link rel="stylesheet" href="styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SINC PRO - Смарт-микрофон</title>
-    <script src="https://unpkg.com/lucide@latest"></script>
+
     <style>
       body {
         background: transparent;
@@ -76,28 +76,13 @@
     <div style="display: flex; align-items: center; position: relative;" id="mic-container">
       <!-- Пульсирующее кольцо -->
       <div class="mic-glow-ring">
-        <i data-lucide-name="mic" style="width: 16px; height: 16px; color: var(--color-purple); fill: rgba(142, 82, 255, 0.2);"></i>
+        <span class="material-symbols-outlined text-[16px]" style="color: #8e52ff; display: flex; align-items: center; justify-content: center;">mic</span>
       </div>
 
       <!-- Всплывающая подсказка "Слушаю..." -->
       <div class="mic-tooltip" id="mic-tooltip">Слушаю...</div>
     </div>
-
     <script>
-      // Функция безопасного вызова Lucide
-      function updateIcons() {
-        if (typeof lucide !== 'undefined') {
-          try {
-            lucide.createIcons();
-          } catch (e) {
-            console.error('Ошибка Lucide:', e);
-          }
-        }
-      }
-
-      // Инициализация Lucide иконок
-      updateIcons();
-
       // Автоматическое скрытие виджета через 2.5 секунды для имитации реального смарт-микрофона
       // (В реальном Tauri-приложении окно будет закрыто системным вызовом)
       setTimeout(() => {

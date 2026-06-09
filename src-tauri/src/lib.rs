@@ -266,6 +266,10 @@ static SHIFT_PRESSED: AtomicBool = AtomicBool::new(false);
 static SHORTCUT_ACTIVE: AtomicBool = AtomicBool::new(false);
 static FORCE_SEND_ACTIVE: AtomicBool = AtomicBool::new(false);
 static RECORDING_OR_PAUSED: AtomicBool = AtomicBool::new(false);
+static CAPSULE_ENABLED: AtomicBool = AtomicBool::new(true);
+static WIDGET_ENABLED: AtomicBool = AtomicBool::new(true);
+static OCR_ENABLED: AtomicBool = AtomicBool::new(false); // Выключен по умолчанию при старте
+
 
 #[repr(C)]
 struct POINT {
@@ -366,7 +370,7 @@ unsafe extern "system" fn low_level_keyboard_proc(
                 state_changed = true;
             }
         } else if vk == VK_ESCAPE && is_key_down {
-            if RECORDING_OR_PAUSED.load(Ordering::SeqCst) {
+            if CAPSULE_ENABLED.load(Ordering::SeqCst) && RECORDING_OR_PAUSED.load(Ordering::SeqCst) {
                 if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
                     let _ = app.emit("global-escape", ());
                 }
@@ -380,44 +384,54 @@ unsafe extern "system" fn low_level_keyboard_proc(
             let shift = SHIFT_PRESSED.load(Ordering::SeqCst);
 
             if ctrl && shift && !alt && !win {
-                let was_active = SHORTCUT_ACTIVE.swap(true, Ordering::SeqCst);
-                println!("SINC PRO HOTKEY: Ctrl+Shift detected, was_active={}", was_active);
-                if !was_active {
-                    if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
-                        println!("SINC PRO HOTKEY: Emitting tts-action-read");
-                        let _ = app.emit("tts-action-read", ());
+                if WIDGET_ENABLED.load(Ordering::SeqCst) {
+                    let was_active = SHORTCUT_ACTIVE.swap(true, Ordering::SeqCst);
+                    println!("SINC PRO HOTKEY: Ctrl+Shift detected, was_active={}", was_active);
+                    if !was_active {
+                        if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                            println!("SINC PRO HOTKEY: Emitting tts-action-read");
+                            let _ = app.emit("tts-action-read", ());
+                        }
+                        // TTS-чтение — одноразовое действие, сбрасываем флаг сразу,
+                        // чтобы следующее нажатие Ctrl+Shift снова сработало
+                        SHORTCUT_ACTIVE.store(false, Ordering::SeqCst);
                     }
-                    // TTS-чтение — одноразовое действие, сбрасываем флаг сразу,
-                    // чтобы следующее нажатие Ctrl+Shift снова сработало
-                    SHORTCUT_ACTIVE.store(false, Ordering::SeqCst);
                 }
             } else if ctrl && alt && !shift && !win {
-                if !SHORTCUT_ACTIVE.swap(true, Ordering::SeqCst) {
-                    if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
-                        let _ = app.emit("tts-action-translate", ());
+                if WIDGET_ENABLED.load(Ordering::SeqCst) {
+                    if !SHORTCUT_ACTIVE.swap(true, Ordering::SeqCst) {
+                        if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                            let _ = app.emit("tts-action-translate", ());
+                        }
+                        // TTS-перевод — одноразовое действие, аналогично
+                        SHORTCUT_ACTIVE.store(false, Ordering::SeqCst);
                     }
-                    // TTS-перевод — одноразовое действие, аналогично
-                    SHORTCUT_ACTIVE.store(false, Ordering::SeqCst);
                 }
             } else if win && alt && !ctrl && !shift {
-                if !FORCE_SEND_ACTIVE.swap(true, Ordering::SeqCst) {
-                    if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
-                        println!("SINC PRO HOTKEY: Win+Alt (Send) detected");
-                        let _ = app.emit("global-force-send", ());
+                if CAPSULE_ENABLED.load(Ordering::SeqCst) {
+                    if !FORCE_SEND_ACTIVE.swap(true, Ordering::SeqCst) {
+                        if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                            println!("SINC PRO HOTKEY: Win+Alt (Send) detected");
+                            let _ = app.emit("global-force-send", ());
+                        }
                     }
                 }
             } else if ctrl && win && !alt && !shift {
-                if !SHORTCUT_ACTIVE.swap(true, Ordering::SeqCst) {
-                    if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
-                        println!("SINC PRO HOTKEY: Ctrl+Win (Record) pressed");
-                        let _ = app.emit("global-shortcut-pressed", ());
+                if CAPSULE_ENABLED.load(Ordering::SeqCst) {
+                    if !SHORTCUT_ACTIVE.swap(true, Ordering::SeqCst) {
+                        if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                            println!("SINC PRO HOTKEY: Ctrl+Win (Record) pressed");
+                            let _ = app.emit("global-shortcut-pressed", ());
+                        }
                     }
                 }
             } else {
                 if SHORTCUT_ACTIVE.swap(false, Ordering::SeqCst) {
-                    if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
-                        println!("SINC PRO HOTKEY: Ctrl+Win released");
-                        let _ = app.emit("global-shortcut-released", ());
+                    if CAPSULE_ENABLED.load(Ordering::SeqCst) {
+                        if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                            println!("SINC PRO HOTKEY: Ctrl+Win released");
+                            let _ = app.emit("global-shortcut-released", ());
+                        }
                     }
                 }
                 if FORCE_SEND_ACTIVE.swap(false, Ordering::SeqCst) {
@@ -433,6 +447,18 @@ unsafe extern "system" fn low_level_keyboard_proc(
 fn set_capsule_active(active: bool) {
     RECORDING_OR_PAUSED.store(active, Ordering::SeqCst);
 }
+
+#[tauri::command]
+fn set_module_enabled(module: String, enabled: bool) {
+    println!("SINC PRO MODULE ENABLE: {} -> {}", module, enabled);
+    match module.as_str() {
+        "capsule" => CAPSULE_ENABLED.store(enabled, Ordering::SeqCst),
+        "widget" => WIDGET_ENABLED.store(enabled, Ordering::SeqCst),
+        "ocr" => OCR_ENABLED.store(enabled, Ordering::SeqCst),
+        _ => {}
+    }
+}
+
 
 #[tauri::command]
 async fn show_capsule_window(app_handle: tauri::AppHandle) -> Result<(), String> {
@@ -675,6 +701,37 @@ async fn save_config(app_handle: tauri::AppHandle, config: AppConfig) -> Result<
     std::fs::write(config_path, json_str).map_err(|e| e.to_string())?;
     Ok(())
 }
+
+#[tauri::command]
+async fn fetch_gemini_models(api_key: String) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models?key={}&pageSize=100",
+        api_key.trim()
+    );
+
+    let resp = client.get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Сетевая ошибка при запросе моделей: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let err_body = resp.text().await.unwrap_or_default();
+        return Err(format!("Google AI вернул ошибку {}: {}", status, err_body));
+    }
+
+    let data: serde_json::Value = resp.json()
+        .await
+        .map_err(|e| format!("Ошибка парсинга JSON: {}", e))?;
+
+    Ok(data)
+}
+
 
 fn load_history_internal(app_handle: &tauri::AppHandle) -> Result<Vec<HistoryEntry>, String> {
     let config_dir = app_handle
@@ -4484,6 +4541,10 @@ pub fn run() {
                 .with_handler(|app, shortcut, event| {
                     if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
                         if shortcut.matches(tauri_plugin_global_shortcut::Modifiers::ALT, tauri_plugin_global_shortcut::Code::KeyQ) {
+                            if !OCR_ENABLED.load(std::sync::atomic::Ordering::SeqCst) {
+                                println!("SINC PRO OCR: OCR_ENABLED is false, skipping shortcut Alt+Q");
+                                return;
+                            }
                             println!("SINC PRO OCR: Global Shortcut Alt+Q triggered.");
                             if let Some(w) = app.get_webview_window("ocr") {
                                 use tauri::Emitter;
@@ -4517,6 +4578,73 @@ pub fn run() {
         .setup(|app| {
             // Сохраняем handle для отправки событий
             *APP_HANDLE.lock().unwrap() = Some(app.handle().clone());
+
+            // Инициализация системного трея
+            use tauri::menu::{MenuBuilder, MenuItem};
+            use tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState};
+
+            let quit_i = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
+            let show_main_i = MenuItem::with_id(app, "show_main", "Показать главное окно", true, None::<&str>)?;
+            let show_widget_i = MenuItem::with_id(app, "show_widget", "Показать виджет озвучки", true, None::<&str>)?;
+            let show_ocr_i = MenuItem::with_id(app, "show_ocr", "Показать оверлей переводчика", true, None::<&str>)?;
+
+            let menu = MenuBuilder::new(app)
+                .item(&show_main_i)
+                .item(&show_widget_i)
+                .item(&show_ocr_i)
+                .separator()
+                .item(&quit_i)
+                .build()?;
+
+            let tray_icon = app.default_window_icon().cloned();
+            let mut tray_builder = TrayIconBuilder::new()
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| {
+                    match event.id().as_ref() {
+                        "quit" => {
+                            app.exit(0);
+                        }
+                        "show_main" => {
+                            if let Some(w) = app.get_webview_window("main") {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
+                        "show_widget" => {
+                            if let Some(w) = app.get_webview_window("widget") {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
+                        "show_ocr" => {
+                            if let Some(w) = app.get_webview_window("ocr") {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event {
+                        let app = tray.app_handle();
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    }
+                });
+
+            if let Some(icon) = tray_icon {
+                tray_builder = tray_builder.icon(icon);
+            }
+
+            let _tray = tray_builder.build(app)?;
 
             // Запускаем глобальный низкоуровневый хук клавиатуры на Windows
             #[cfg(target_os = "windows")]
@@ -4568,6 +4696,8 @@ pub fn run() {
             write_js_log,
             load_config,
             save_config,
+            fetch_gemini_models,
+            set_module_enabled,
             load_history,
             delete_history_entry,
             open_audio_folder,
@@ -4598,6 +4728,12 @@ pub fn run() {
             start_ocr_scan_async,
             get_virtual_desktop_rect
         ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -49,6 +49,33 @@ document.addEventListener('DOMContentLoaded', () => {
   // Рендерим общий UI
   if (window.renderTtsWidget) {
     window.renderTtsWidget(root, false);
+    
+    // Навешиваем обработчик перетаскивания на drag handle
+    const dragHandle = root.querySelector('#tts-widget-drag');
+    if (dragHandle && window.__TAURI__ && appWindow) {
+      dragHandle.addEventListener('mousedown', (e) => {
+        if (e.buttons === 1) {
+          appWindow.startDragging();
+        }
+      });
+    }
+  }
+
+  // Централизованное перетаскивание виджета за фон и элементы с data-tauri-drag-region
+  const widgetContainer = document.getElementById('widget-container');
+  if (widgetContainer && window.__TAURI__ && appWindow) {
+    widgetContainer.addEventListener('mousedown', (e) => {
+      const isDragTarget = e.target.hasAttribute('data-tauri-drag-region') || 
+                           e.target === widgetContainer || 
+                           e.target.closest('[data-tauri-drag-region]');
+      if (isDragTarget) {
+        if (!e.target.closest('button, select, input, a, .voice-item, .speed-item')) {
+          if (e.buttons === 1) {
+            appWindow.startDragging();
+          }
+        }
+      }
+    });
   }
 
   // Декорации отключены в tauri.conf.json статически для стабильности DWM

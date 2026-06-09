@@ -85,7 +85,7 @@ window.renderTtsWidget = function(container, isMain = false) {
       
       <!-- Drag Handle -->
       ${isMain ? '' : `
-      <div class="flex items-center justify-center w-7 h-7 cursor-move opacity-30 hover:opacity-100 text-[#ccc3d8]" title="Перетащить виджет" data-tauri-drag-region>
+      <div class="flex items-center justify-center w-7 h-7 cursor-move opacity-30 hover:opacity-100 text-[#ccc3d8]" id="tts-widget-drag" title="Перетащить виджет" data-tauri-drag-region>
         <span class="material-symbols-outlined text-[18px]" style="pointer-events: none;">drag_indicator</span>
       </div>
       <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
@@ -138,7 +138,7 @@ window.renderTtsWidget = function(container, isMain = false) {
           </button>
         </div>
 
-        <div class="stop-btn-container flex items-center justify-center">
+        <div class="stop-btn-container flex items-center justify-center" style="opacity: 0; pointer-events: none; position: absolute; left: 40px; top: 50%; transform: translateY(-50%) translateX(-10px); width: 28px; height: 28px; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); z-index: 10;">
           <button class="flex items-center justify-center w-7 h-7 bg-[#2a292f] text-[#ccc3d8] rounded-md shadow-lg border border-[#4a4455]/30 hover:bg-[#3a3545] hover:border-[#ff5c5c]/50 hover:text-[#ff5c5c] cursor-pointer transition-all z-50 p-0 outline-none" id="tts-widget-stop" title="Остановить (сброс в начало)">
             <span class="material-symbols-outlined text-[16px]">stop</span>
           </button>
@@ -398,4 +398,22 @@ function initTtsWidgetLogic(container, isMain) {
       btnTranslate.style.color = currentTranslate ? '#7bd6d1' : '';
     }
   };
+
+  // JS обработка плавного появления кнопки Стоп при наведении (защита от сбоев CSS/CSP)
+  const playStopWrapper = container.querySelector('#tts-play-stop-wrapper');
+  const stopBtnContainer = container.querySelector('.stop-btn-container');
+  if (playStopWrapper && stopBtnContainer) {
+    playStopWrapper.addEventListener('mouseenter', () => {
+      if (playStopWrapper.classList.contains('can-stop')) {
+        stopBtnContainer.style.opacity = '1';
+        stopBtnContainer.style.transform = 'translateY(-50%) translateX(0)';
+        stopBtnContainer.style.pointerEvents = 'auto';
+      }
+    });
+    playStopWrapper.addEventListener('mouseleave', () => {
+      stopBtnContainer.style.opacity = '0';
+      stopBtnContainer.style.transform = 'translateY(-50%) translateX(-10px)';
+      stopBtnContainer.style.pointerEvents = 'none';
+    });
+  }
 }

@@ -6,8 +6,7 @@
     <title>SINC Orb</title>
     <!-- Локальный CSS от Tailwind -->
     <link rel="stylesheet" href="styles.css" />
-    <!-- Google Material Symbols -->
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+
     <style>
       * {
         outline: none !important;
@@ -584,12 +583,16 @@
       const magnetSaved = localStorage.getItem('capsuleMagnet');
       let isMagnetEnabled = magnetSaved === null ? true : magnetSaved === 'true';
 
+      // Модуль Капсулы включен/выключен в настройках
+      const capsuleSaved = localStorage.getItem('capsuleEnabled');
+      let isCapsuleEnabled = capsuleSaved === null ? true : capsuleSaved === 'true';
+
       // ======================================================================
       // ОБЩАЯ ЛОГИКА ПОЗИЦИОНИРОВАНИЯ (Окно зафиксировано 340x260)
       // ======================================================================
 
       async function resizeToState(state) {
-        if (!invoke) return;
+        if (!invoke || !isCapsuleEnabled) return;
 
         const w_phys = Math.round(340 * cachedScaleFactor);
         const h_phys = Math.round(260 * cachedScaleFactor);
@@ -1143,27 +1146,47 @@
         }
       });
 
-      async function showToast(message, isError = true) {
+      async function showToast(message, isError = true, isApiKeyError = false) {
         const toast = document.getElementById('capsule-toast');
         if (!toast) return;
-        toast.textContent = message;
-        if (isError) {
-          toast.style.backgroundColor = 'rgba(240, 84, 84, 0.95)';
-          toast.style.borderColor = 'rgba(240, 84, 84, 0.6)';
-          toast.style.color = 'white';
+        
+        // Сбросим предыдущие обработчики клика, заменив элемент клоном
+        const newToast = toast.cloneNode(true);
+        toast.parentNode.replaceChild(newToast, toast);
+        
+        newToast.textContent = message;
+        if (isApiKeyError) {
+          newToast.style.backgroundColor = 'rgba(142, 82, 255, 0.95)';
+          newToast.style.borderColor = 'rgba(142, 82, 255, 0.8)';
+          newToast.style.color = 'white';
+          newToast.classList.add('cursor-pointer');
+          newToast.title = 'Нажмите, чтобы ввести API-ключ';
+          newToast.addEventListener('click', () => {
+            if (window.__TAURI__) {
+              window.__TAURI__.event.emit('open-settings-api-key');
+            }
+          });
+        } else if (isError) {
+          newToast.style.backgroundColor = 'rgba(240, 84, 84, 0.95)';
+          newToast.style.borderColor = 'rgba(240, 84, 84, 0.6)';
+          newToast.style.color = 'white';
+          newToast.classList.remove('cursor-pointer');
+          newToast.title = '';
         } else {
-          toast.style.backgroundColor = 'rgba(27, 27, 37, 0.97)';
-          toast.style.borderColor = 'rgba(142, 82, 255, 0.5)';
-          toast.style.color = '#e4e1e9';
+          newToast.style.backgroundColor = 'rgba(27, 27, 37, 0.97)';
+          newToast.style.borderColor = 'rgba(142, 82, 255, 0.5)';
+          newToast.style.color = '#e4e1e9';
+          newToast.classList.remove('cursor-pointer');
+          newToast.title = '';
         }
         toastActive = true;
-        toast.classList.remove('opacity-0', 'pointer-events-none');
-        toast.classList.add('opacity-100');
+        newToast.classList.remove('opacity-0', 'pointer-events-none');
+        newToast.classList.add('opacity-100');
         setTimeout(() => {
-          toast.classList.remove('opacity-100');
-          toast.classList.add('opacity-0', 'pointer-events-none');
+          newToast.classList.remove('opacity-100');
+          newToast.classList.add('opacity-0', 'pointer-events-none');
           toastActive = false;
-        }, 5000);
+        }, 6000);
       }
 
       // ==========================================================================
@@ -1171,6 +1194,14 @@
       // ==========================================================================
 
       async function startRecordingProcess() {
+        // Проверяем наличие API-ключа перед записью
+        const apiKey = localStorage.getItem('apiKey');
+        if (!apiKey || apiKey.trim().length === 0) {
+          playAudioCue('error');
+          showToast('Требуется настроить API-ключ Gemini. Нажмите здесь, чтобы открыть Настройки.', true, true);
+          return;
+        }
+
         if (mediaRecorder && mediaRecorder.state !== 'inactive') return;
         
         // Мгновенный запуск звукового сигнала старта записи
@@ -1412,11 +1443,17 @@
         switchState('send-error');
         isSending = false;
 
+        const isApiKeyError = errorMsg.includes('API-ключ') || errorMsg.includes('API ключ') || errorMsg.includes('API_KEY') || errorMsg.includes('API key');
+
         const shortText = errorMsg.length > 80 ? errorMsg.substring(0, 80) + '...' : errorMsg;
         const shortEl = document.getElementById('error-short-text');
         const tooltipEl = document.getElementById('error-full-tooltip');
         if (shortEl) shortEl.textContent = shortText;
         if (tooltipEl) tooltipEl.textContent = errorMsg;
+
+        if (isApiKeyError) {
+          showToast('Требуется настроить API-ключ Gemini. Нажмите здесь, чтобы открыть Настройки.', true, true);
+        }
       }
 
       async function stopAndSendRecording() {
@@ -1521,7 +1558,11 @@
       // ======================================================================
 
       if (window.__TAURI__) {
-        initPosition();
+        if (!isCapsuleEnabled && appWindow) {
+          appWindow.hide().catch(() => {});
+        } else {
+          initPosition();
+        }
 
         // Обновляем якорь ТОЛЬКО при ручном перетаскивании
         if (appWindow) {
@@ -1540,7 +1581,7 @@
         // Если монитор сменился — перемещаем капсулу туда
         let _lastMonitorKey = null;
         setInterval(async () => {
-          if (!isMagnetEnabled || !invoke) return;
+          if (!isCapsuleEnabled || !isMagnetEnabled || !invoke) return;
           try {
             const mon = await invoke('get_cursor_monitor');
             const key = `${mon.work_left},${mon.work_top},${mon.work_right},${mon.work_bottom}`;
@@ -1675,6 +1716,22 @@
         window.__TAURI__.event.listen('capsule-magnet-changed', (event) => {
           isMagnetEnabled = !!event.payload;
           localStorage.setItem('capsuleMagnet', isMagnetEnabled);
+        });
+
+        // Настройка Включения капсулы — переключение из дашборда
+        window.__TAURI__.event.listen('capsule-visibility-changed', (event) => {
+          isCapsuleEnabled = !!event.payload;
+          localStorage.setItem('capsuleEnabled', isCapsuleEnabled);
+          if (!isCapsuleEnabled) {
+            if (appWindow) {
+              appWindow.hide().catch(() => {});
+            }
+          } else {
+            if (appWindow) {
+              appWindow.show().catch(() => {});
+              initPosition();
+            }
+          }
         });
       }
 

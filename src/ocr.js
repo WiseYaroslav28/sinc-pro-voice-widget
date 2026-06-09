@@ -342,10 +342,6 @@ function clearCanvas(clearStatus = false) {
     if (modelStatusBadge) {
       modelStatusBadge.style.display = 'none';
     }
-    const modelStatus = document.getElementById('model-status');
-    if (modelStatus) {
-      modelStatus.innerText = '';
-    }
   }
 }
 
@@ -468,6 +464,27 @@ async function activateSentence(sIdx) {
     } else if (state.hasError) {
       badge.innerText = `⚠️ Ошибка перевода. Нажмите для повтора.\n${sentenceText}`;
     } else {
+      // Проверяем наличие API-ключа перед переводом
+      const apiKey = localStorage.getItem('apiKey');
+      if (!apiKey || apiKey.trim().length === 0) {
+        state.isLoading = false;
+        state.hasError = true;
+        badge.innerText = `⚠️ Настройте API-ключ Gemini.\nНажмите здесь для ввода.\n${sentenceText}`;
+        badge.style.cursor = 'pointer';
+        badge.title = 'Нажмите, чтобы ввести API-ключ';
+        
+        badge.onclick = null;
+        badge.onclick = () => {
+          if (window.__TAURI__) {
+            window.__TAURI__.event.emit('open-settings-api-key');
+          }
+        };
+        return;
+      }
+      
+      badge.style.cursor = '';
+      badge.onclick = null;
+
       state.isLoading = true;
       badge.innerText = `⏳ Перевожу...\n${sentenceText}`;
       try {
@@ -950,12 +967,10 @@ listen('ocr-sentences-ready', (event) => {
   renderOcrData(currentOcrData);
   
   const modelStatusBadge = document.getElementById('model-status-badge');
-  const modelStatus = document.getElementById('model-status');
   const modelStatusIcon = document.getElementById('model-status-icon');
   
-  if (modelStatusBadge && modelStatus) {
+  if (modelStatusBadge) {
     if (event.payload.model) {
-      modelStatus.innerText = event.payload.model;
       lastOcrMethodInfo.model = event.payload.model;
       modelStatusBadge.style.display = 'flex';
       

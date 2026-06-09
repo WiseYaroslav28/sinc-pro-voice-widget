@@ -256,7 +256,8 @@ class VoiceCore {
             if (!this.audioBuffers[i]) {
                 try {
                     // 1. Проверяем IndexedDB кэш
-                    const cachedAudio = await this.cache.get(this.settings.voice, this.sentences[i]);
+                    const voiceKey = this.settings.voice || 'ru-RU-SvetlanaNeural';
+                    const cachedAudio = await this.cache.get(voiceKey, this.sentences[i]);
                     if (cachedAudio) {
                         if (this.audioBuffers === currentBuffersRef) {
                             console.log(`[VoiceCore] Cache HIT for sentence ${i}`);
@@ -323,12 +324,12 @@ class VoiceCore {
                         await new Promise(r => setTimeout(r, 50));
                     }
 
-                    // 4. Скачиваем аудио через бэкенд
                     if (window.__TAURI__) {
                         console.log(`[VoiceCore] Fetching sentence ${i} (delay=${delay}ms, distance=${distance})`);
+                        const voiceKey = this.settings.voice || 'ru-RU-SvetlanaNeural';
                         const base64Audio = await window.__TAURI__.core.invoke('speak_edge_tts', {
                             text: this.sentences[i],
-                            voice: this.settings.voice,
+                            voice: voiceKey,
                             rate: 1.0
                         });
                         
@@ -338,7 +339,7 @@ class VoiceCore {
                             this.updateProgress();
                             
                             // Сохраняем в локальный кэш
-                            await this.cache.set(this.settings.voice, this.sentences[i], dataUrl);
+                            await this.cache.set(voiceKey, this.sentences[i], dataUrl);
                             
                             if (this.isPlaying && this.currentSentenceIndex === i && this.audioElement.paused) {
                                 console.log('[VoiceCore] prefetch -> triggering playCurrentSentence()');
@@ -451,12 +452,14 @@ class VoiceCore {
         const bufferState = this.audioBuffers[this.currentSentenceIndex] ? (this.audioBuffers[this.currentSentenceIndex] === 'ERROR' ? 'ERROR' : 'READY') : 'NULL';
         console.log('[VoiceCore] playCurrentSentence() buffer=' + bufferState);
         if (this.audioBuffers[this.currentSentenceIndex]) {
-            if (this.audioBuffers[this.currentSentenceIndex] === "ERROR") {
+            const srcVal = this.audioBuffers[this.currentSentenceIndex];
+            if (srcVal === "ERROR" || !srcVal.startsWith("data:")) {
+                console.warn('[VoiceCore] Invalid or error audio buffer at index ' + this.currentSentenceIndex);
                 this.currentSentenceIndex++;
                 this.playCurrentSentence();
                 return;
             }
-            this.audioElement.src = this.audioBuffers[this.currentSentenceIndex];
+            this.audioElement.src = srcVal;
             this.audioElement.playbackRate = this.settings.speed;
             console.log('[VoiceCore] playCurrentSentence() calling audioElement.play()');
             this.audioElement.play().catch(e => {
@@ -596,25 +599,39 @@ class WindowToggleManager {
             checkbox.checked = (savedState !== 'false');
         } else if (targetWindowLabel === 'ocr') {
             checkbox.checked = false; // Оверлей по умолчанию выключен при старте
+        } else if (targetWindowLabel === 'capsule') {
+            const savedState = localStorage.getItem('capsuleEnabled');
+            checkbox.checked = (savedState !== 'false');
         } else {
-            checkbox.checked = true; // Капсула по умолчанию включена при старте
+            checkbox.checked = true; // По умолчанию включено при старте
         }
 
         if (window.__TAURI__) {
             const { invoke } = window.__TAURI__.core;
             const { listen, emit } = window.__TAURI__.event;
 
+            // Синхронизируем начальное состояние с Rust
+            invoke('set_module_enabled', { module: targetWindowLabel, enabled: checkbox.checked }).catch(()=>{});
+
             // 2. Обработчик клика пользователя (change)
             checkbox.addEventListener('change', async () => {
                 try {
                     if (targetWindowLabel === 'widget') {
                         localStorage.setItem('ttsWidgetEnabled', checkbox.checked ? 'true' : 'false');
+                    } else if (targetWindowLabel === 'capsule') {
+                        localStorage.setItem('capsuleEnabled', checkbox.checked ? 'true' : 'false');
                     }
                     if (checkbox.checked) {
-                        await invoke(showCommand).catch(() => {});
+                        // Только widget показывается сразу при включении тумблера.
+                        // Capsule и ocr активируют хоткеи, но не показываются сразу на экране.
+                        if (targetWindowLabel === 'widget') {
+                            await invoke(showCommand).catch(() => {});
+                        }
                     } else {
+                        // При отключении скрываем окна
                         await invoke(hideCommand).catch(() => {});
                     }
+                    await invoke('set_module_enabled', { module: targetWindowLabel, enabled: checkbox.checked }).catch(()=>{});
                     await emit(eventName, checkbox.checked);
                 } catch (err) {
                     console.error(`[WindowToggleManager] Error toggling ${targetWindowLabel}:`, err);
@@ -624,6 +641,7 @@ class WindowToggleManager {
             // 3. Синхронизация при внешних изменениях (из других окон или хоткеев)
             listen(eventName, (event) => {
                 checkbox.checked = !!event.payload;
+                invoke('set_module_enabled', { module: targetWindowLabel, enabled: checkbox.checked }).catch(()=>{});
             });
         }
     }
