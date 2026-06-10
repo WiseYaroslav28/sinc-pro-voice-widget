@@ -3,7 +3,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
@@ -200,6 +200,7 @@ async fn speak_edge_tts_internal(text: String, voice: String, rate: f32) -> Resu
 }
 
 static APP_HANDLE: Mutex<Option<tauri::AppHandle>> = Mutex::new(None);
+static MINIMIZED_STARTUP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static OCR_WINDOW_VISIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static CANCEL_REQUEST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static MODEL_LOCKS: std::sync::LazyLock<Mutex<HashMap<String, Instant>>> =
@@ -267,9 +268,9 @@ static SHIFT_PRESSED: AtomicBool = AtomicBool::new(false);
 static SHORTCUT_ACTIVE: AtomicBool = AtomicBool::new(false);
 static FORCE_SEND_ACTIVE: AtomicBool = AtomicBool::new(false);
 static RECORDING_OR_PAUSED: AtomicBool = AtomicBool::new(false);
-static CAPSULE_ENABLED: AtomicBool = AtomicBool::new(true);
-static WIDGET_ENABLED: AtomicBool = AtomicBool::new(true);
-static OCR_ENABLED: AtomicBool = AtomicBool::new(false); // Выключен по умолчанию при старте
+static CAPSULE_ENABLED: AtomicU8 = AtomicU8::new(2);
+static WIDGET_ENABLED: AtomicU8 = AtomicU8::new(2);
+static OCR_ENABLED: AtomicU8 = AtomicU8::new(0); // Выключен по умолчанию при старте
 
 
 #[repr(C)]
@@ -371,7 +372,7 @@ unsafe extern "system" fn low_level_keyboard_proc(
                 state_changed = true;
             }
         } else if vk == VK_ESCAPE && is_key_down {
-            if CAPSULE_ENABLED.load(Ordering::SeqCst) && RECORDING_OR_PAUSED.load(Ordering::SeqCst) {
+            if CAPSULE_ENABLED.load(Ordering::SeqCst) > 0 && RECORDING_OR_PAUSED.load(Ordering::SeqCst) {
                 if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
                     let _ = app.emit("global-escape", ());
                 }
@@ -385,7 +386,7 @@ unsafe extern "system" fn low_level_keyboard_proc(
             let shift = SHIFT_PRESSED.load(Ordering::SeqCst);
 
             if ctrl && shift && !alt && !win {
-                if WIDGET_ENABLED.load(Ordering::SeqCst) {
+                if WIDGET_ENABLED.load(Ordering::SeqCst) > 0 {
                     let was_active = SHORTCUT_ACTIVE.swap(true, Ordering::SeqCst);
                     println!("SINC PRO HOTKEY: Ctrl+Shift detected, was_active={}", was_active);
                     if !was_active {
@@ -399,7 +400,7 @@ unsafe extern "system" fn low_level_keyboard_proc(
                     }
                 }
             } else if ctrl && alt && !shift && !win {
-                if WIDGET_ENABLED.load(Ordering::SeqCst) {
+                if WIDGET_ENABLED.load(Ordering::SeqCst) > 0 {
                     if !SHORTCUT_ACTIVE.swap(true, Ordering::SeqCst) {
                         if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
                             let _ = app.emit("tts-action-translate", ());
@@ -409,7 +410,7 @@ unsafe extern "system" fn low_level_keyboard_proc(
                     }
                 }
             } else if win && alt && !ctrl && !shift {
-                if CAPSULE_ENABLED.load(Ordering::SeqCst) {
+                if CAPSULE_ENABLED.load(Ordering::SeqCst) > 0 {
                     if !FORCE_SEND_ACTIVE.swap(true, Ordering::SeqCst) {
                         if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
                             println!("SINC PRO HOTKEY: Win+Alt (Send) detected");
@@ -418,7 +419,7 @@ unsafe extern "system" fn low_level_keyboard_proc(
                     }
                 }
             } else if ctrl && win && !alt && !shift {
-                if CAPSULE_ENABLED.load(Ordering::SeqCst) {
+                if CAPSULE_ENABLED.load(Ordering::SeqCst) > 0 {
                     if !SHORTCUT_ACTIVE.swap(true, Ordering::SeqCst) {
                         if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
                             println!("SINC PRO HOTKEY: Ctrl+Win (Record) pressed");
@@ -428,7 +429,7 @@ unsafe extern "system" fn low_level_keyboard_proc(
                 }
             } else {
                 if SHORTCUT_ACTIVE.swap(false, Ordering::SeqCst) {
-                    if CAPSULE_ENABLED.load(Ordering::SeqCst) {
+                    if CAPSULE_ENABLED.load(Ordering::SeqCst) > 0 {
                         if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
                             println!("SINC PRO HOTKEY: Ctrl+Win released");
                             let _ = app.emit("global-shortcut-released", ());
@@ -450,12 +451,12 @@ fn set_capsule_active(active: bool) {
 }
 
 #[tauri::command]
-fn set_module_enabled(module: String, enabled: bool) {
-    println!("SINC PRO MODULE ENABLE: {} -> {}", module, enabled);
+fn set_module_mode(module: String, mode: u8) {
+    println!("SINC PRO MODULE MODE: {} -> {}", module, mode);
     match module.as_str() {
-        "capsule" => CAPSULE_ENABLED.store(enabled, Ordering::SeqCst),
-        "widget" => WIDGET_ENABLED.store(enabled, Ordering::SeqCst),
-        "ocr" => OCR_ENABLED.store(enabled, Ordering::SeqCst),
+        "capsule" => CAPSULE_ENABLED.store(mode, Ordering::SeqCst),
+        "widget" => WIDGET_ENABLED.store(mode, Ordering::SeqCst),
+        "ocr" => OCR_ENABLED.store(mode, Ordering::SeqCst),
         _ => {}
     }
 }
@@ -465,6 +466,65 @@ fn set_module_enabled(module: String, enabled: bool) {
 fn cancel_active_request() {
     CANCEL_REQUEST.store(true, std::sync::atomic::Ordering::SeqCst);
     println!("SINC PRO BACKEND: Request cancellation triggered.");
+}
+
+#[tauri::command]
+fn is_minimized_startup() -> bool {
+    MINIMIZED_STARTUP.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+#[tauri::command]
+fn set_autostart_enabled(enabled: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let current_exe = std::env::current_exe()
+            .map_err(|e| format!("Не удалось получить путь к исполняемому файлу: {}", e))?;
+        let exe_str = current_exe.to_string_lossy();
+        
+        let run_key_path = r#"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"#;
+        let val_name = "SincPro";
+        
+        if enabled {
+            let val_data = format!("\"{}\" --minimized", exe_str);
+            let status = std::process::Command::new("reg")
+                .args(&["add", run_key_path, "/v", val_name, "/t", "REG_SZ", "/d", &val_data, "/f"])
+                .status()
+                .map_err(|e| format!("Не удалось выполнить reg add: {}", e))?;
+            
+            if !status.success() {
+                return Err("Ошибка reg add при записи автозапуска".to_string());
+            }
+        } else {
+            let _ = std::process::Command::new("reg")
+                .args(&["delete", run_key_path, "/v", val_name, "/f"])
+                .status();
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("Поддерживается только Windows".to_string())
+    }
+}
+
+#[tauri::command]
+fn is_autostart_enabled() -> Result<bool, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let run_key_path = r#"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"#;
+        let val_name = "SincPro";
+        
+        let output = std::process::Command::new("reg")
+            .args(&["query", run_key_path, "/v", val_name])
+            .output()
+            .map_err(|e| format!("Не удалось выполнить reg query: {}", e))?;
+        
+        Ok(output.status.success())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(false)
+    }
 }
 
 #[tauri::command]
@@ -4547,6 +4607,9 @@ fn get_virtual_desktop_rect() -> Result<serde_json::Value, String> {
 }
 
 pub fn run() {
+    let minimize_startup = std::env::args().any(|arg| arg == "--minimized");
+    MINIMIZED_STARTUP.store(minimize_startup, std::sync::atomic::Ordering::SeqCst);
+
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {}))
         .plugin(tauri_plugin_opener::init())
@@ -4557,8 +4620,8 @@ pub fn run() {
                 .with_handler(|app, shortcut, event| {
                     if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
                         if shortcut.matches(tauri_plugin_global_shortcut::Modifiers::ALT, tauri_plugin_global_shortcut::Code::KeyQ) {
-                            if !OCR_ENABLED.load(std::sync::atomic::Ordering::SeqCst) {
-                                println!("SINC PRO OCR: OCR_ENABLED is false, skipping shortcut Alt+Q");
+                            if OCR_ENABLED.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                                println!("SINC PRO OCR: OCR mode is disabled, skipping shortcut Alt+Q");
                                 return;
                             }
                             println!("SINC PRO OCR: Global Shortcut Alt+Q triggered.");
@@ -4595,6 +4658,13 @@ pub fn run() {
             // Сохраняем handle для отправки событий
             *APP_HANDLE.lock().unwrap() = Some(app.handle().clone());
 
+            let minimize = MINIMIZED_STARTUP.load(std::sync::atomic::Ordering::SeqCst);
+            if !minimize {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                }
+            }
+
             // Инициализация системного трея
             use tauri::menu::{MenuBuilder, MenuItem};
             use tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState};
@@ -4625,6 +4695,8 @@ pub fn run() {
                             if let Some(w) = app.get_webview_window("main") {
                                 let _ = w.show();
                                 let _ = w.set_focus();
+                                use tauri::Emitter;
+                                let _ = w.emit("main-shown", ());
                             }
                         }
                         "show_widget" => {
@@ -4652,6 +4724,8 @@ pub fn run() {
                         if let Some(w) = app.get_webview_window("main") {
                             let _ = w.show();
                             let _ = w.set_focus();
+                            use tauri::Emitter;
+                            let _ = w.emit("main-shown", ());
                         }
                     }
                 });
@@ -4713,7 +4787,7 @@ pub fn run() {
             load_config,
             save_config,
             fetch_gemini_models,
-            set_module_enabled,
+            set_module_mode,
             load_history,
             delete_history_entry,
             open_audio_folder,
@@ -4721,6 +4795,9 @@ pub fn run() {
             append_audio_chunk,
             save_audio,
             cancel_active_request,
+            is_minimized_startup,
+            set_autostart_enabled,
+            is_autostart_enabled,
             paste_text,
             set_capsule_active,
             show_capsule_window,

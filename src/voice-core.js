@@ -140,9 +140,46 @@ class VoiceCore {
         }, 500);
     }
 
+    removeMarkdown(text) {
+        if (!text) return "";
+        let str = text;
+
+        // 1. Убираем блоки кода ```lang ... ```
+        str = str.replace(/```[a-z]*\n([\s\S]*?)\n```/g, '$1');
+        
+        // 2. Убираем inline-код `code`
+        str = str.replace(/`([^`]+)`/g, '$1');
+        
+        // 3. Убираем изображения ![alt](url) -> оставляем alt-текст
+        str = str.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1');
+        
+        // 4. Убираем ссылки [text](url) -> оставляем текст ссылки
+        str = str.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+        
+        // 5. Убираем заголовки #, ##, ### в начале строки
+        str = str.replace(/^(#{1,6})\s+/gm, '');
+        
+        // 6. Убираем жирный и курсив (**текст**, *текст*, __текст__, _текст_)
+        str = str.replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, '$2');
+        str = str.replace(/(\*|_)(?=\S)([\s\S]*?\S)\1/g, '$2');
+        
+        // 7. Убираем горизонтальные линии ---, ***, ___
+        str = str.replace(/^\s*([-*_])\1{2,}\s*$/gm, '');
+
+        // 8. Убираем маркеры списков с чекбоксами (например: "- [ ] Задача" -> "Задача")
+        str = str.replace(/^\s*([-*+])\s+\[[ xX]\]\s+/gm, '');
+        
+        // 9. Убираем обычные маркеры списков в начале строки (например: "- Элемент" -> "Элемент")
+        str = str.replace(/^\s*([-*+])\s+/gm, '');
+
+        return str;
+    }
+
     cleanText(text) {
         if (!text) return "";
         let cleaned = text.trim();
+        // Санитаризация Markdown-разметки
+        cleaned = this.removeMarkdown(cleaned);
         // Убираем кавычки, если нейросеть вернула текст в них
         if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
             cleaned = cleaned.substring(1, cleaned.length - 1).trim();
@@ -571,77 +608,90 @@ class VoiceCore {
 
 window.VoiceCore = VoiceCore;
 
-// WindowToggleManager для чистого переиспользования логики и верстки тумблеров окон (капсулы и виджета)
+// WindowToggleManager для чистого переиспользования логики и верстки 3-позиционных переключателей
 class WindowToggleManager {
     static renderToggle(id, icon, title) {
+        // Рендерим 3-позиционный слайдер на базе input range
         return `
-            <div class="flex items-center gap-1.5 cursor-pointer" title="${title}">
-                <span class="material-symbols-outlined text-[15px] text-[#ccc3d8] select-none">${icon}</span>
-                <label class="switch" style="transform: scale(0.65); transform-origin: left center; width: 32px; height: 18px; display: inline-block; position: relative;">
-                    <input type="checkbox" id="${id}">
-                    <span class="slider"></span>
-                </label>
+            <div class="tri-switch-wrapper" id="${id}-wrapper" title="${title}" data-state="2">
+                <span class="material-symbols-outlined tri-switch-icon">${icon}</span>
+                <div class="tri-switch-container">
+                    <input type="range" class="tri-slider" min="0" max="2" value="2" id="${id}">
+                </div>
             </div>
         `;
     }
 
-    static initToggle(checkboxId, targetWindowLabel) {
-        const checkbox = document.getElementById(checkboxId);
-        if (!checkbox) return;
+    static initToggle(sliderId, targetWindowLabel) {
+        const slider = document.getElementById(sliderId);
+        const wrapper = document.getElementById(sliderId + '-wrapper');
+        if (!slider || !wrapper) return;
 
-        const eventName = `${targetWindowLabel}-visibility-changed`;
+        const eventName = `${targetWindowLabel}-mode-changed`;
         const showCommand = `show_${targetWindowLabel}_window`;
         const hideCommand = `hide_${targetWindowLabel}_window`;
 
         // 1. Инициализация начального состояния при старте
-        if (targetWindowLabel === 'widget') {
-            const savedState = localStorage.getItem('ttsWidgetEnabled');
-            checkbox.checked = (savedState !== 'false');
-        } else if (targetWindowLabel === 'ocr') {
-            checkbox.checked = false; // Оверлей по умолчанию выключен при старте
-        } else if (targetWindowLabel === 'capsule') {
-            const savedState = localStorage.getItem('capsuleEnabled');
-            checkbox.checked = (savedState !== 'false');
-        } else {
-            checkbox.checked = true; // По умолчанию включено при старте
+        let defaultVal = "2";
+        if (targetWindowLabel === 'ocr') {
+            defaultVal = "0"; // Оверлей OCR выключен по умолчанию при старте
         }
+
+        const savedMode = localStorage.getItem(`${targetWindowLabel}Mode`) || defaultVal;
+        slider.value = savedMode;
+        wrapper.setAttribute('data-state', savedMode);
 
         if (window.__TAURI__) {
             const { invoke } = window.__TAURI__.core;
             const { listen, emit } = window.__TAURI__.event;
 
-            // Синхронизируем начальное состояние с Rust
-            invoke('set_module_enabled', { module: targetWindowLabel, enabled: checkbox.checked }).catch(()=>{});
+            const modeNum = parseInt(savedMode, 10);
+            // Синхронизируем начальный режим с Rust
+            invoke('set_module_mode', { module: targetWindowLabel, mode: modeNum }).catch(()=>{});
 
-            // 2. Обработчик клика пользователя (change)
-            checkbox.addEventListener('change', async () => {
+            // Для виджета: если режим "Все включено" (2) при старте, показываем его
+            if (targetWindowLabel === 'widget' && modeNum === 2) {
+                invoke(showCommand).catch(() => {});
+            }
+
+            // 2. Обработчик изменения ползунка
+            slider.addEventListener('input', async () => {
+                const val = slider.value;
+                wrapper.setAttribute('data-state', val);
+                localStorage.setItem(`${targetWindowLabel}Mode`, val);
+
+                const currentModeNum = parseInt(val, 10);
+
                 try {
-                    if (targetWindowLabel === 'widget') {
-                        localStorage.setItem('ttsWidgetEnabled', checkbox.checked ? 'true' : 'false');
-                    } else if (targetWindowLabel === 'capsule') {
-                        localStorage.setItem('capsuleEnabled', checkbox.checked ? 'true' : 'false');
-                    }
-                    if (checkbox.checked) {
-                        // Только widget показывается сразу при включении тумблера.
-                        // Capsule и ocr активируют хоткеи, но не показываются сразу на экране.
+                    // Отправляем режим на бэкенд в Rust
+                    await invoke('set_module_mode', { module: targetWindowLabel, mode: currentModeNum }).catch(()=>{});
+
+                    if (currentModeNum === 2) {
+                        // Только widget показывается сразу при включении режима 2 (Все включено)
                         if (targetWindowLabel === 'widget') {
                             await invoke(showCommand).catch(() => {});
                         }
                     } else {
-                        // При отключении скрываем окна
+                        // При режимах 1 (Только хоткеи) и 0 (Выключено) скрываем окна
                         await invoke(hideCommand).catch(() => {});
                     }
-                    await invoke('set_module_enabled', { module: targetWindowLabel, enabled: checkbox.checked }).catch(()=>{});
-                    await emit(eventName, checkbox.checked);
+
+                    // Оповещаем другие окна об изменении режима
+                    await emit(eventName, currentModeNum);
                 } catch (err) {
-                    console.error(`[WindowToggleManager] Error toggling ${targetWindowLabel}:`, err);
+                    console.error(`[WindowToggleManager] Error toggling mode for ${targetWindowLabel}:`, err);
                 }
             });
 
-            // 3. Синхронизация при внешних изменениях (из других окон или хоткеев)
+            // 3. Синхронизация при внешних изменениях (из других окон)
             listen(eventName, (event) => {
-                checkbox.checked = !!event.payload;
-                invoke('set_module_enabled', { module: targetWindowLabel, enabled: checkbox.checked }).catch(()=>{});
+                const val = event.payload;
+                slider.value = val;
+                wrapper.setAttribute('data-state', val);
+                localStorage.setItem(`${targetWindowLabel}Mode`, val);
+                
+                const currentModeNum = parseInt(val, 10);
+                invoke('set_module_mode', { module: targetWindowLabel, mode: currentModeNum }).catch(()=>{});
             });
         }
     }

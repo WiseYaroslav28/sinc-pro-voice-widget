@@ -88,6 +88,62 @@
       if (window.__TAURI__) {
         appWindow = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
         
+        // Восстановление позиции и размера окна результата с проверкой доступности мониторов
+        (async () => {
+          try {
+            const savedState = localStorage.getItem('result_window_state');
+            if (savedState) {
+              const state = JSON.parse(savedState);
+              if (state && typeof state.x === 'number' && typeof state.y === 'number') {
+                const monitors = await appWindow.availableMonitors();
+                let isInsideAnyMonitor = false;
+                for (const mon of monitors) {
+                  const mx = mon.position.x;
+                  const my = mon.position.y;
+                  const mw = mon.size.width;
+                  const mh = mon.size.height;
+                  if (state.x >= mx && state.x < mx + mw && state.y >= my && state.y < my + mh) {
+                    isInsideAnyMonitor = true;
+                    break;
+                  }
+                }
+                if (isInsideAnyMonitor) {
+                  const { PhysicalPosition, PhysicalSize } = window.__TAURI__.dpi;
+                  await appWindow.setPosition(new PhysicalPosition(state.x, state.y));
+                  if (typeof state.width === 'number' && typeof state.height === 'number') {
+                    await appWindow.setSize(new PhysicalSize(state.width, state.height));
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            console.error(e);
+          }
+        })();
+
+        // Отслеживание перемещения/изменения размеров
+        const saveResultState = async () => {
+          try {
+            const pos = await appWindow.outerPosition();
+            const size = await appWindow.outerSize();
+            localStorage.setItem('result_window_state', JSON.stringify({
+              x: pos.x,
+              y: pos.y,
+              width: size.width,
+              height: size.height
+            }));
+          } catch (_) {}
+        };
+
+        let resultStateTimeout = null;
+        const debouncedSaveResultState = () => {
+          clearTimeout(resultStateTimeout);
+          resultStateTimeout = setTimeout(saveResultState, 300);
+        };
+
+        appWindow.onMoved(debouncedSaveResultState);
+        appWindow.onResized(debouncedSaveResultState);
+        
         // Позволяем перетаскивать модалку за заголовок
         document.querySelector('.drag-region').addEventListener('mousedown', (e) => {
           if (e.buttons === 1 && !e.target.closest('button')) {

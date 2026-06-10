@@ -220,11 +220,37 @@ test.describe('Sidebar toggle', () => {
 // ──────────────────────────────────────────────────────────────────────────────
 // 5. Combo Box переключения вида
 // ──────────────────────────────────────────────────────────────────────────────
-test.describe('Combo Box', () => {
-  test('#dashboard-view-combo имеет минимум 1 опцию', async ({ page }) => {
+// ──────────────────────────────────────────────────────────────────────────────
+// 6. Санитаризация Markdown в VoiceCore
+// ──────────────────────────────────────────────────────────────────────────────
+test.describe('Санитаризация Markdown', () => {
+  test('removeMarkdown корректно очищает спецсимволы', async ({ page }) => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('domcontentloaded');
-    const count = await page.locator('#dashboard-view-combo option').count();
-    expect(count, 'Combo Box должен иметь хотя бы 1 опцию').toBeGreaterThanOrEqual(1);
+    
+    const result = await page.evaluate(() => {
+      const core = new window.VoiceCore();
+      const testCases = [
+        { input: '### Заголовок', expected: 'Заголовок' },
+        { input: '**Жирный текст** и *курсив*', expected: 'Жирный текст и курсив' },
+        { input: '`inline code` и ```\nblock code\n```', expected: 'inline code и block code' },
+        { input: '[Ссылка](http://example.com) и ![Изображение](http://example.com/img.png)', expected: 'Ссылка и Изображение' },
+        { input: '- [ ] Задача 1\n* Задача 2\n+ Задача 3', expected: 'Задача 1\nЗадача 2\nЗадача 3' },
+        { input: 'Математика: 2 * 2 = 4 и 3 * 3 = 9', expected: 'Математика: 2 * 2 = 4 и 3 * 3 = 9' },
+        { input: '---', expected: '' }
+      ];
+      
+      return testCases.map(tc => ({
+        input: tc.input,
+        actual: core.removeMarkdown(tc.input),
+        expected: tc.expected,
+        passed: core.removeMarkdown(tc.input).trim() === tc.expected.trim()
+      }));
+    });
+
+    for (const tc of result) {
+      expect(tc.actual.trim(), `Вход: "${tc.input}"`).toBe(tc.expected.trim());
+    }
   });
 });
+

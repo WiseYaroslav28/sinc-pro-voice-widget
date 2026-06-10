@@ -100,6 +100,64 @@
       }
     }
 
+    if (window.__TAURI__ && appWindow) {
+      // Восстановление геометрии
+      (async () => {
+        try {
+          const savedState = localStorage.getItem('prompt_window_state');
+          if (savedState) {
+            const state = JSON.parse(savedState);
+            if (state && typeof state.x === 'number' && typeof state.y === 'number') {
+              const monitors = await appWindow.availableMonitors();
+              let isInsideAnyMonitor = false;
+              for (const mon of monitors) {
+                const mx = mon.position.x;
+                const my = mon.position.y;
+                const mw = mon.size.width;
+                const mh = mon.size.height;
+                if (state.x >= mx && state.x < mx + mw && state.y >= my && state.y < my + mh) {
+                  isInsideAnyMonitor = true;
+                  break;
+                }
+              }
+              if (isInsideAnyMonitor) {
+                const { PhysicalPosition, PhysicalSize } = window.__TAURI__.dpi;
+                await appWindow.setPosition(new PhysicalPosition(state.x, state.y));
+                if (typeof state.width === 'number' && typeof state.height === 'number') {
+                  await appWindow.setSize(new PhysicalSize(state.width, state.height));
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      })();
+
+      // Отслеживание перемещения/изменения размеров
+      const savePromptState = async () => {
+        try {
+          const pos = await appWindow.outerPosition();
+          const size = await appWindow.outerSize();
+          localStorage.setItem('prompt_window_state', JSON.stringify({
+            x: pos.x,
+            y: pos.y,
+            width: size.width,
+            height: size.height
+          }));
+        } catch (_) {}
+      };
+
+      let promptStateTimeout = null;
+      const debouncedSavePromptState = () => {
+        clearTimeout(promptStateTimeout);
+        promptStateTimeout = setTimeout(savePromptState, 300);
+      };
+
+      appWindow.onMoved(debouncedSavePromptState);
+      appWindow.onResized(debouncedSavePromptState);
+    }
+
     const promptInput = document.getElementById('prompt-input');
     const btnClose = document.getElementById('btn-close');
     const btnCancel = document.getElementById('btn-cancel');

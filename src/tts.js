@@ -226,8 +226,8 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 const text = await invoke('capture_clipboard_text', { translate: false });
                 handleNewText(text);
-                const isWidgetEnabled = localStorage.getItem('ttsWidgetEnabled') !== 'false';
-                if (isWidgetEnabled) {
+                const widgetMode = parseInt(localStorage.getItem('widgetMode') || '2', 10);
+                if (widgetMode === 2) {
                     await invoke('show_widget_window');
                 }
             } catch (e) {
@@ -239,8 +239,8 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 const text = await invoke('capture_clipboard_text', { translate: true });
                 handleNewText(text);
-                const isWidgetEnabled = localStorage.getItem('ttsWidgetEnabled') !== 'false';
-                if (isWidgetEnabled) {
+                const widgetMode = parseInt(localStorage.getItem('widgetMode') || '2', 10);
+                if (widgetMode === 2) {
                     await invoke('show_widget_window');
                 }
             } catch (e) {

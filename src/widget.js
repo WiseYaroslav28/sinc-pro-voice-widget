@@ -12,11 +12,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Скрываем виджет при старте, если он отключен в настройках
+  // Скрываем/показываем виджет при старте в зависимости от режима
   if (window.__TAURI__ && appWindow) {
-    const isWidgetEnabled = localStorage.getItem('ttsWidgetEnabled') !== 'false';
-    if (!isWidgetEnabled) {
+    const widgetMode = parseInt(localStorage.getItem('widgetMode') || '2', 10);
+    if (widgetMode === 0 || widgetMode === 1) {
       appWindow.hide().catch(console.error);
+    } else {
+      appWindow.show().catch(console.error);
+      initPosition();
     }
   }
 
@@ -27,7 +30,38 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       await new Promise(r => setTimeout(r, 100)); // Задержка для DWM
       const size = await appWindow.innerSize();
-      const pos = await appWindow.outerPosition();
+      let pos = await appWindow.outerPosition();
+
+      // Пробуем восстановить сохраненные координаты с проверкой мониторов
+      const savedPos = localStorage.getItem('widget_pos');
+      if (savedPos) {
+        try {
+          const parsed = JSON.parse(savedPos);
+          if (parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number') {
+            const monitors = await appWindow.availableMonitors();
+            let isInsideAnyMonitor = false;
+            for (const mon of monitors) {
+              const mx = mon.position.x;
+              const my = mon.position.y;
+              const mw = mon.size.width;
+              const mh = mon.size.height;
+              if (parsed.x >= mx && parsed.x < mx + mw && parsed.y >= my && parsed.y < my + mh) {
+                isInsideAnyMonitor = true;
+                break;
+              }
+            }
+            if (isInsideAnyMonitor) {
+              pos = { x: parsed.x, y: parsed.y };
+              const { PhysicalPosition } = window.__TAURI__.dpi;
+              await appWindow.setPosition(new PhysicalPosition(pos.x, pos.y));
+              console.log(`[Widget] Position restored: x=${pos.x}, y=${pos.y}`);
+            }
+          }
+        } catch (e) {
+          console.error('[Widget] Restore position failed:', e);
+        }
+      }
+      
       console.log(`[Widget] WinAPI init: size=${size.width}x${size.height}, pos=${pos.x},${pos.y}`);
       await invoke('resize_bottom_up_phys', {
         width: size.width,
@@ -40,8 +74,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  if (window.__TAURI__) {
-    initPosition();
+  // Следим за перемещением виджета и сохраняем его позицию с дебаунсом
+  if (window.__TAURI__ && appWindow) {
+    let widgetTimeout = null;
+    appWindow.onMoved(() => {
+      clearTimeout(widgetTimeout);
+      widgetTimeout = setTimeout(async () => {
+        try {
+          const pos = await appWindow.outerPosition();
+          localStorage.setItem('widget_pos', JSON.stringify({ x: pos.x, y: pos.y }));
+        } catch (_) {}
+      }, 300);
+    });
   }
 
   const root = document.getElementById('tts-widget-root');
@@ -181,7 +225,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // При показе окна принудительно переприменяем регион кликов после завершения анимаций DWM
     listen('widget-shown', () => {
-      emit('widget-visibility-changed', true);
+      emit('widget-mode-changed', 2);
       setTimeout(() => {
         const isRowVisible = expandedRow && !expandedRow.classList.contains('hidden');
         updateClickRegion(isRowVisible ? 'expanded' : 'collapsed');
@@ -231,9 +275,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const togglesContainer = document.getElementById('widget-toggles-container');
     if (togglesContainer && window.WindowToggleManager) {
       togglesContainer.innerHTML = 
-        WindowToggleManager.renderToggle('toggle-capsule-widget', 'mic', 'Показать/скрыть капсулу диктовки') +
-        WindowToggleManager.renderToggle('toggle-widget-widget', 'record_voice_over', 'Скрыть плавающий виджет') +
-        WindowToggleManager.renderToggle('toggle-ocr-widget', 'screenshot_region', 'Показать/скрыть оверлей переводчика OCR');
+        WindowToggleManager.renderToggle('toggle-capsule-widget', 'mic', 'Капсула (ИИ-ввод):\n0: Выключено\n1: Только хоткеи\n2: Все включено') +
+        WindowToggleManager.renderToggle('toggle-widget-widget', 'record_voice_over', 'Виджет озвучки:\n0: Выключено\n1: Только хоткеи\n2: Все включено') +
+        WindowToggleManager.renderToggle('toggle-ocr-widget', 'screenshot_region', 'Перевод экрана OCR:\n0: Выключено\n1: Только хоткеи\n2: Все включено');
 
       WindowToggleManager.initToggle('toggle-capsule-widget', 'capsule');
       WindowToggleManager.initToggle('toggle-widget-widget', 'widget');

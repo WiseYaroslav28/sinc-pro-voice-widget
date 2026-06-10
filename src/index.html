@@ -400,6 +400,26 @@
               </div>
             </div>
 
+            <!-- Блок 5: Система -->
+            <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-5 mb-4">
+              <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-4">Системные параметры</h3>
+              <div class="flex flex-col gap-4">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="text-[13px] text-[#e4e1e9] font-medium">Запуск при старте Windows</div>
+                    <div class="text-[11px] text-[#ccc3d8] mt-0.5">Автоматический запуск приложения при входе в систему (в трей)</div>
+                  </div>
+                  <!-- Кастомный toggle -->
+                  <div id="autostart-toggle-track"
+                       style="width:40px; height:22px; border-radius:11px; background:#1b1b20; position:relative; cursor:pointer; transition:background 0.2s; flex-shrink:0;">
+                    <div id="autostart-toggle-thumb"
+                          style="width:18px; height:18px; border-radius:50%; background:white; position:absolute; top:2px; left:2px; transition:left 0.2s; box-shadow:0 1px 3px rgba(0,0,0,0.4);"></div>
+                  </div>
+                  <input type="checkbox" id="setting-autostart" style="display:none;" />
+                </div>
+              </div>
+            </div>
+
             <!-- Блок 4: Капсула ИИ -->
             <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-5">
               <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-4">Капсула ИИ</h3>
@@ -1462,6 +1482,48 @@
         });
       }
 
+      // Настройка Автозапуска
+      const autostartToggle = document.getElementById('setting-autostart');
+      const autostartTrack  = document.getElementById('autostart-toggle-track');
+      const autostartThumb  = document.getElementById('autostart-toggle-thumb');
+
+      function syncAutostartToggleUI(isChecked) {
+        if (!autostartTrack || !autostartThumb) return;
+        autostartTrack.style.background = isChecked ? '#8e52ff' : '#1b1b20';
+        autostartThumb.style.left = isChecked ? '20px' : '2px';
+      }
+
+      if (autostartToggle) {
+        if (window.__TAURI__ && invoke) {
+          invoke('is_autostart_enabled')
+            .then((enabled) => {
+              autostartToggle.checked = enabled;
+              syncAutostartToggleUI(enabled);
+            })
+            .catch((err) => {
+              console.error('Ошибка проверки статуса автозапуска:', err);
+            });
+        }
+
+        autostartToggle.addEventListener('change', async () => {
+          const isChecked = autostartToggle.checked;
+          syncAutostartToggleUI(isChecked);
+          if (window.__TAURI__ && invoke) {
+            try {
+              await invoke('set_autostart_enabled', { enabled: isChecked });
+              showToast(isChecked ? 'Автозапуск включен' : 'Автозапуск выключен', false);
+            } catch (err) {
+              console.error(err);
+              showToast('Ошибка изменения автозапуска: ' + err, true);
+              autostartToggle.checked = !isChecked;
+              syncAutostartToggleUI(!isChecked);
+            }
+          } else {
+            showToast(isChecked ? 'Автозапуск включен (Mock)' : 'Автозапуск выключен (Mock)', false);
+          }
+        });
+      }
+
       window.selectHistoryEntry = function(id) {
         const entry = currentHistory.find(e => e.id === id);
         if (entry) {
@@ -1622,6 +1684,14 @@
         if (magnetTrack && magnetToggle) {
           magnetTrack.addEventListener('click', () => {
             magnetToggle.click();
+          });
+        }
+
+        const autostartTrack = document.getElementById('autostart-toggle-track');
+        const autostartToggle = document.getElementById('setting-autostart');
+        if (autostartTrack && autostartToggle) {
+          autostartTrack.addEventListener('click', () => {
+            autostartToggle.click();
           });
         }
 
@@ -1833,6 +1903,81 @@
         const appWindow = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
         const WebviewWindow = window.__TAURI__.webviewWindow.WebviewWindow;
         
+        // Восстановление позиции и размера главного окна с проверкой доступности мониторов
+        (async () => {
+          try {
+            const savedState = localStorage.getItem('main_window_state');
+            if (savedState) {
+              const state = JSON.parse(savedState);
+              if (state && typeof state.x === 'number' && typeof state.y === 'number') {
+                const monitors = await appWindow.availableMonitors();
+                let isInsideAnyMonitor = false;
+                for (const mon of monitors) {
+                  const mx = mon.position.x;
+                  const my = mon.position.y;
+                  const mw = mon.size.width;
+                  const mh = mon.size.height;
+                  if (state.x >= mx && state.x < mx + mw && state.y >= my && state.y < my + mh) {
+                    isInsideAnyMonitor = true;
+                    break;
+                  }
+                }
+                if (isInsideAnyMonitor) {
+                  const { PhysicalPosition, PhysicalSize } = window.__TAURI__.dpi;
+                  await appWindow.setPosition(new PhysicalPosition(state.x, state.y));
+                  if (typeof state.width === 'number' && typeof state.height === 'number') {
+                    await appWindow.setSize(new PhysicalSize(state.width, state.height));
+                  }
+                }
+              }
+            }
+          } catch (err) {
+            console.error('Ошибка восстановления геометрии главного окна:', err);
+          }
+
+          // Умный запуск (свернутый в трей или видимый)
+          try {
+            const isMin = await window.__TAURI__.core.invoke('is_minimized_startup');
+            const mainSavedVisible = localStorage.getItem('main_window_visible');
+            const shouldShow = !isMin || (mainSavedVisible === null || mainSavedVisible === 'true');
+            if (shouldShow) {
+              await appWindow.show();
+              await appWindow.setFocus();
+            } else {
+              await appWindow.hide();
+            }
+          } catch (e) {
+            console.error('Ошибка при определении видимости при старте:', e);
+            await appWindow.show();
+          }
+        })();
+
+        // Отслеживание перемещения/изменения размеров главного окна
+        const saveMainWindowState = async () => {
+          try {
+            if (await appWindow.isMaximized() || await appWindow.isMinimized()) return;
+            const pos = await appWindow.outerPosition();
+            const size = await appWindow.outerSize();
+            localStorage.setItem('main_window_state', JSON.stringify({
+              x: pos.x,
+              y: pos.y,
+              width: size.width,
+              height: size.height
+            }));
+          } catch (err) {
+            console.error('Ошибка сохранения геометрии главного окна:', err);
+          }
+        };
+
+        let mainStateTimeout = null;
+        const debouncedSaveState = () => {
+          clearTimeout(mainStateTimeout);
+          mainStateTimeout = setTimeout(saveMainWindowState, 300);
+        };
+
+        appWindow.onMoved(debouncedSaveState);
+        appWindow.onResized(debouncedSaveState);
+        
         const dragRegion = document.getElementById('drag-region');
         if (dragRegion) {
           dragRegion.addEventListener('mousedown', (e) => {
@@ -1850,16 +1995,25 @@
             appWindow.maximize();
           }
         });
-        document.getElementById('win-close').addEventListener('click', () => appWindow.close());
+        document.getElementById('win-close').addEventListener('click', () => {
+          localStorage.setItem('main_window_visible', 'false');
+          appWindow.close();
+        });
 
         // Слушаем события
+        window.__TAURI__.event.listen('main-shown', () => {
+          localStorage.setItem('main_window_visible', 'true');
+        });
+
         window.__TAURI__.event.listen('open-settings', () => {
+          localStorage.setItem('main_window_visible', 'true');
           appWindow.show();
           appWindow.setFocus();
           switchTab('tab-settings');
         });
 
         window.__TAURI__.event.listen('open-settings-api-key', () => {
+          localStorage.setItem('main_window_visible', 'true');
           appWindow.show();
           appWindow.setFocus();
           switchTab('tab-settings');
@@ -1876,6 +2030,7 @@
         });
 
         window.__TAURI__.event.listen('open-history', () => {
+          localStorage.setItem('main_window_visible', 'true');
           appWindow.show();
           appWindow.setFocus();
           switchTab('tab-history');

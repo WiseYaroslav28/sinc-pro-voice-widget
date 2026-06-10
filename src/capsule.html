@@ -599,9 +599,9 @@
       const magnetSaved = localStorage.getItem('capsuleMagnet');
       let isMagnetEnabled = magnetSaved === null ? true : magnetSaved === 'true';
 
-      // Модуль Капсулы включен/выключен в настройках
-      const capsuleSaved = localStorage.getItem('capsuleEnabled');
-      let isCapsuleEnabled = capsuleSaved === null ? true : capsuleSaved === 'true';
+      // Модуль Капсулы и его режим работы
+      let capsuleMode = parseInt(localStorage.getItem('capsuleMode') || '2', 10);
+      let isCapsuleEnabled = (capsuleMode > 0);
 
       // ======================================================================
       // ОБЩАЯ ЛОГИКА ПОЗИЦИОНИРОВАНИЯ (Окно зафиксировано 340x260)
@@ -845,6 +845,54 @@
       async function initPosition() {
         if (!appWindow) return;
         
+        // Получаем scaleFactor
+        try {
+          const monitor = await appWindow.currentMonitor();
+          if (monitor) {
+            cachedScaleFactor = monitor.scaleFactor;
+          }
+        } catch (_) {}
+
+        // Если Магнит ВЫКЛЮЧЕН — пробуем восстановить сохранённую позицию
+        if (!isMagnetEnabled) {
+          const savedPos = localStorage.getItem('capsule_pos');
+          if (savedPos) {
+            try {
+              const parsed = JSON.parse(savedPos);
+              if (parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number') {
+                const monitors = await appWindow.availableMonitors();
+                let isInsideAnyMonitor = false;
+                for (const mon of monitors) {
+                  const mx = mon.position.x;
+                  const my = mon.position.y;
+                  const mw = mon.size.width;
+                  const mh = mon.size.height;
+                  if (parsed.x >= mx && parsed.x < mx + mw && parsed.y >= my && parsed.y < my + mh) {
+                    isInsideAnyMonitor = true;
+                    break;
+                  }
+                }
+                if (isInsideAnyMonitor) {
+                  const size = await appWindow.outerSize();
+                  lastBottomCenterX_phys = parsed.x + size.width / 2;
+                  lastBottomY_phys       = parsed.y + size.height;
+                  
+                  // Сначала переместим окно на сохраненные физические координаты
+                  const { PhysicalPosition } = window.__TAURI__.dpi;
+                  await appWindow.setPosition(new PhysicalPosition(parsed.x, parsed.y));
+                  
+                  console.log(`[Capsule] Восстановлена сохранённая позиция: x=${parsed.x}, y=${parsed.y}`);
+                  await resizeToState(currentState);
+                  return;
+                }
+              }
+            } catch (e) {
+              console.error('[Capsule] Ошибка восстановления геометрии:', e);
+            }
+          }
+        }
+
+        // Поведение по умолчанию (Магнит включён или нет сохранённой/доступной позиции)
         for (let i = 0; i < 10; i++) {
           try {
             const monitor = await appWindow.currentMonitor();
@@ -916,6 +964,13 @@
 
         if (state === 'idle') {
           stateIdle.classList.add('active');
+          if (capsuleMode === 1 && appWindow) {
+            setTimeout(() => {
+              if (currentState === 'idle') {
+                appWindow.hide().catch(() => {});
+              }
+            }, 200);
+          }
         } else if (state === 'hover') {
           stateHover.classList.add('active');
         } else if (state === 'recording' || state === 'pause') {
@@ -1608,21 +1663,26 @@
       // ======================================================================
 
       if (window.__TAURI__) {
-        if (!isCapsuleEnabled && appWindow) {
+        if ((capsuleMode === 0 || capsuleMode === 1) && appWindow) {
           appWindow.hide().catch(() => {});
-        } else {
+        } else if (appWindow) {
+          appWindow.show().catch(() => {});
           initPosition();
         }
 
         // Обновляем якорь ТОЛЬКО при ручном перетаскивании
         if (appWindow) {
-        appWindow.onMoved(async (event) => {
+          appWindow.onMoved(async (event) => {
             if (!maybeDragging) return;
             const { x, y } = event.payload;
             try {
               const size = await appWindow.outerSize();
               lastBottomCenterX_phys = x + size.width / 2;
               lastBottomY_phys       = y + size.height;
+              
+              if (!isMagnetEnabled) {
+                localStorage.setItem('capsule_pos', JSON.stringify({ x, y }));
+              }
             } catch (_) {}
           });
         }
@@ -1668,6 +1728,13 @@
         window.__TAURI__.event.listen('global-shortcut-pressed', () => {
           if (isHeld) return; // Защита от спама автоповтора ОС
           isHeld = true;
+
+          // В фоновом режиме (1) временно показываем окно при активации записи
+          if (capsuleMode === 1 && appWindow) {
+            appWindow.show().catch(() => {});
+            initPosition();
+          }
+
           const now = Date.now();
           if (currentState === 'cancel-confirm') { stopCancelCountdownAndRestore(); isHeld = false; return; }
           
@@ -1768,18 +1835,19 @@
           localStorage.setItem('capsuleMagnet', isMagnetEnabled);
         });
 
-        // Настройка Включения капсулы — переключение из дашборда
-        window.__TAURI__.event.listen('capsule-visibility-changed', (event) => {
-          isCapsuleEnabled = !!event.payload;
-          localStorage.setItem('capsuleEnabled', isCapsuleEnabled);
-          if (!isCapsuleEnabled) {
-            if (appWindow) {
-              appWindow.hide().catch(() => {});
-            }
-          } else {
+        // Настройка Режима работы капсулы — переключение из дашборда
+        window.__TAURI__.event.listen('capsule-mode-changed', (event) => {
+          capsuleMode = parseInt(event.payload, 10);
+          isCapsuleEnabled = (capsuleMode > 0);
+          localStorage.setItem('capsuleMode', capsuleMode);
+          if (capsuleMode === 2) {
             if (appWindow) {
               appWindow.show().catch(() => {});
               initPosition();
+            }
+          } else {
+            if (appWindow) {
+              appWindow.hide().catch(() => {});
             }
           }
         });
