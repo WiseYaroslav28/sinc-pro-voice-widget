@@ -1363,6 +1363,244 @@ async fn save_audio(
     Ok(entry)
 }
 
+#[tauri::command]
+async fn process_ai_request(
+    app_handle: tauri::AppHandle,
+    entry_id: String,
+    source_type: String,     // "audio", "text"
+    source_text: String,     // Исходный текст для обработки (если source_type != "audio")
+    preset: String,          // "tasks", "transcript", "email", "essence", "custom"
+    custom_prompt: Option<String>,
+    result_label: String,    // Название для результата ИИ, например "Суть (Транскрипция)"
+) -> Result<Vec<HistoryEntry>, String> {
+    CANCEL_REQUEST.store(false, std::sync::atomic::Ordering::SeqCst);
+
+    // 1. Загружаем историю
+    let mut history = load_history_internal(&app_handle)?;
+    let entry_idx = history.iter().position(|e| e.id == entry_id)
+        .ok_or_else(|| "Запись не найдена в истории".to_string())?;
+
+    // 2. Получаем конфиг
+    let config = load_config_internal(&app_handle)?;
+    if config.api_key.trim().is_empty() {
+        return Err("API ключ Gemini не настроен. Укажите его в Настройках.".to_string());
+    }
+
+    // 3. Формируем промпт
+    let prompt_essence = if preset == "custom" {
+        custom_prompt.clone().unwrap_or_default()
+    } else {
+        get_preset_prompt_and_label(&preset).0.to_string()
+    };
+
+    if prompt_essence.trim().is_empty() {
+        return Err("Промпт не может быть пустым".to_string());
+    }
+
+    let request_payload = if source_type == "audio" {
+        // Читаем аудиофайл
+        let audio_path = &history[entry_idx].audio_path;
+        if audio_path.is_empty() {
+            return Err("Аудиофайл не найден для этой записи".to_string());
+        }
+        let bytes = std::fs::read(audio_path)
+            .map_err(|e| format!("Не удалось прочитать аудиофайл: {}", e))?;
+        let base64_audio = STANDARD.encode(&bytes);
+
+        let combined_prompt = format!(
+            r#"Прослушай аудиозапись и выполни следующую задачу:
+            {}
+            Ответь на русском языке."#,
+            prompt_essence
+        );
+
+        serde_json::json!({
+            "contents": [{
+                "parts": [
+                    {"inlineData": {"mimeType": "audio/webm", "data": base64_audio}},
+                    {"text": combined_prompt}
+                ]
+            }],
+            "generationConfig": {
+                "temperature": 0.3
+            }
+        })
+    } else {
+        let combined_prompt = format!(
+            r#"Вот исходный текст:
+            ---
+            {}
+            ---
+            Выполни следующую задачу с этим текстом:
+            {}
+            Ответь на русском языке."#,
+            source_text,
+            prompt_essence
+        );
+
+        serde_json::json!({
+            "contents": [{
+                "parts": [
+                    {"text": combined_prompt}
+                ]
+            }],
+            "generationConfig": {
+                "temperature": 0.3
+            }
+        })
+    };
+
+    // 4. Подготавливаем цепочку моделей
+    let mut primary_model = if config.ai_model.is_empty() {
+        "gemini-2.5-flash-lite".to_string()
+    } else {
+        config.ai_model.clone()
+    };
+    if primary_model.contains("tts-preview") {
+        primary_model = "gemini-2.0-flash".to_string();
+    }
+    let fallback_models = vec![
+        primary_model.clone(),
+        "gemini-3.1-flash-lite".to_string(),
+        "gemini-2.5-flash".to_string(),
+        "gemini-3.5-flash".to_string(),
+        "gemini-2.5-flash-lite".to_string(),
+        "gemini-2.0-flash".to_string(),
+        "gemini-2.0-flash-lite".to_string(),
+        "gemini-2.5-pro".to_string(),
+    ];
+    let mut seen = std::collections::HashSet::new();
+    let fallback_models: Vec<String> = fallback_models
+        .into_iter()
+        .filter(|m| seen.insert(m.clone()))
+        .collect();
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+    let api_key = config.api_key.trim().to_string();
+
+    let mut last_err = String::new();
+    let mut gemini_text: Option<String> = None;
+
+    for model in &fallback_models {
+        if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+            last_err = "Запрос отменен пользователем".to_string();
+            break;
+        }
+
+        // Проверяем блокировку модели
+        {
+            let locks = MODEL_LOCKS.lock().unwrap();
+            if let Some(unlock_time) = locks.get(model) {
+                if Instant::now() < *unlock_time {
+                    last_err = format!("Модель {} временно заблокирована из-за 429", model);
+                    continue;
+                }
+            }
+        }
+
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            model, api_key
+        );
+
+        match client.post(&url).json(&request_payload).send().await {
+            Err(e) => {
+                last_err = format!("Сетевая ошибка ({}): {}", model, e);
+                log_tts_error("Gemini network error", &last_err);
+                continue;
+            }
+            Ok(res) => {
+                let status = res.status();
+                if status.as_u16() == 429 {
+                    let err_text = res.text().await.unwrap_or_default();
+                    let delay = parse_retry_delay(&err_text).unwrap_or(Duration::from_secs(60));
+                    let unlock_time = Instant::now() + delay;
+                    {
+                        let mut locks = MODEL_LOCKS.lock().unwrap();
+                        locks.insert(model.clone(), unlock_time);
+                    }
+                    last_err = format!("Модель {} заблокирована (429) на {:?}", model, delay);
+                    log_tts_error("Gemini rate limit 429", &last_err);
+                    continue;
+                }
+                if status.as_u16() == 503 {
+                    last_err = format!("Сервис недоступен (503) для {}", model);
+                    log_tts_error("Gemini service unavailable 503", &last_err);
+                    continue;
+                }
+                if !status.is_success() {
+                    let err_text = res.text().await.unwrap_or_default();
+                    last_err = format!("Ошибка {} ({}): {}", status, model, err_text);
+                    log_tts_error("Gemini API error status", &last_err);
+                    if err_text.contains("RESOURCE_EXHAUSTED") || err_text.contains("quota") {
+                        let unlock_time = Instant::now() + Duration::from_secs(3600);
+                        let mut locks = MODEL_LOCKS.lock().unwrap();
+                        locks.insert(model.clone(), unlock_time);
+                    }
+                    continue;
+                }
+
+                match res.json::<GeminiResponse>().await {
+                    Err(e) => {
+                        last_err = format!("Парсинг ответа ({}): {}", model, e);
+                        log_tts_error("Gemini JSON deserialize error", &last_err);
+                        continue;
+                    }
+                    Ok(gr) => {
+                        if let Some(text) = gr
+                            .candidates
+                            .and_then(|c| c.into_iter().next())
+                            .and_then(|c| c.content)
+                            .and_then(|c| c.parts)
+                            .and_then(|p| p.into_iter().next())
+                            .and_then(|p| p.text)
+                        {
+                            gemini_text = Some(text);
+                            break;
+                        } else {
+                            last_err = format!("Пустой ответ от {}", model);
+                            log_tts_error("Gemini empty candidates", &last_err);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let ai_result_text = match gemini_text {
+        None => {
+            return Err(format!("Ошибка обработки Gemini: {}", last_err));
+        }
+        Some(t) => {
+            // Если ответ содержит JSON разметку ```json ... ```, очистим его
+            let mut cleaned = t.trim();
+            if cleaned.starts_with("```json") && cleaned.ends_with("```") {
+                cleaned = &cleaned[7..cleaned.len() - 3].trim();
+            } else if cleaned.starts_with("```") && cleaned.ends_with("```") {
+                cleaned = &cleaned[3..cleaned.len() - 3].trim();
+            }
+            cleaned.to_string()
+        }
+    };
+
+    // 5. Создаем новый AiResult и сохраняем
+    let new_result = AiResult {
+        preset: preset.clone(),
+        preset_label: result_label.clone(),
+        text: ai_result_text,
+        timestamp: Local::now().format("%d.%m.%Y • %H:%M").to_string(),
+    };
+
+    history[entry_idx].ai_results.push(new_result);
+    save_history_internal(&app_handle, &history)?;
+
+    let _ = app_handle.emit("history-updated", ());
+    Ok(history)
+}
+
 #[cfg(target_os = "windows")]
 fn set_clipboard_text(text: &str) -> Result<(), String> {
     use std::ffi::OsStr;
@@ -4820,7 +5058,8 @@ pub fn run() {
             process_ocr_vision,
             process_ocr_hybrid,
             start_ocr_scan_async,
-            get_virtual_desktop_rect
+            get_virtual_desktop_rect,
+            process_ai_request
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

@@ -215,7 +215,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (contentEditable && contentEditable.innerText !== newText) {
                     contentEditable.innerText = newText;
                     isTextChanged = false;
-                    if (window.switchTab) {
+                    if (event.payload.source !== 'dashboard' && window.switchTab) {
                         window.switchTab('tab-tts');
                     }
                 }

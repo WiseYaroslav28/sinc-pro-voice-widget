@@ -19,6 +19,68 @@
         100% { box-shadow: 0 0 0 0 rgba(142,82,255,0); }
       }
       .play-pulse { animation: play-pulse-anim 2s infinite; }
+      
+      /* Анимации бирюзового (воспроизведение) и жёлтого (пауза) мерцания для кнопки озвучки */
+      @keyframes dash-play-pulse-glow {
+        0%, 100% { box-shadow: 0 0 4px rgba(123,214,209,0.4); border-color: rgba(123,214,209,0.4); }
+        50%       { box-shadow: 0 0 12px rgba(123,214,209,0.8); border-color: rgba(123,214,209,0.8); }
+      }
+      .dash-play-pulse {
+        animation: dash-play-pulse-glow 1.5s infinite;
+      }
+      
+      @keyframes dash-pause-pulse-glow {
+        0%, 100% { box-shadow: 0 0 4px rgba(255,209,102,0.4); border-color: rgba(255,209,102,0.4); }
+        50%       { box-shadow: 0 0 12px rgba(255,209,102,0.8); border-color: rgba(255,209,102,0.8); }
+      }
+      .dash-pause-pulse {
+        animation: dash-pause-pulse-glow 1.5s infinite;
+      }
+
+      /* Стили для выезжающей кнопки Стоп в дашборде */
+      #dash-speak-wrapper {
+        transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        width: 32px;
+      }
+      #dash-speak-wrapper.can-stop:hover {
+        width: 64px;
+      }
+      #dash-speak-wrapper.can-stop::after {
+        content: '';
+        position: absolute;
+        left: 32px;
+        top: 0;
+        width: 12px;
+        height: 100%;
+        background: transparent;
+        z-index: 5;
+      }
+      .dash-stop-container {
+        position: absolute;
+        left: 36px;
+        top: 50%;
+        transform: translateY(-50%) translateX(-8px);
+        width: 24px;
+        height: 24px;
+        opacity: 0;
+        pointer-events: none;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #dash-speak-wrapper.can-stop:hover .dash-stop-container {
+        opacity: 1;
+        transform: translateY(-50%) translateX(0);
+        pointer-events: auto;
+      }
+      #btn-stop-speak:hover {
+        background: #3a3545 !important;
+        border-color: #ff5c5c !important;
+        color: #ff5c5c !important;
+        box-shadow: 0 0 8px rgba(255, 92, 92, 0.5) !important;
+      }
 
       /* Стили для свернутого сайдбара */
       .sidebar.collapsed {
@@ -182,6 +244,23 @@
                   </div>
                 </div>
 
+                <!-- Блок озвучки с выезжающей кнопкой Стоп -->
+                <div class="relative flex items-center flex-shrink-0 ml-3" id="dash-speak-wrapper">
+                  <!-- Сама кнопка озвучки -->
+                  <button id="btn-speak-text"
+                          class="w-8 h-8 rounded-full flex items-center justify-center text-[#ccc3d8] border border-[#4a4455]/30 bg-[#1b1b20] hover:text-[#d2bbff] hover:border-[#d2bbff]/40 hover:bg-[#2a292f] transition-all cursor-pointer outline-none focus:outline-none flex-shrink-0"
+                          title="Озвучить текст">
+                    <span class="material-symbols-outlined text-[16px]" id="dash-speak-icon">record_voice_over</span>
+                  </button>
+
+                  <!-- Выезжающая кнопка Стоп -->
+                  <div class="dash-stop-container">
+                    <button class="flex items-center justify-center w-6 h-6 bg-[#2a292f] text-[#ccc3d8] rounded-md shadow-lg border border-[#4a4455]/30 hover:bg-[#3a3545] hover:border-[#ff5c5c]/50 hover:text-[#ff5c5c] cursor-pointer transition-all outline-none p-0" id="btn-stop-speak" title="Остановить воспроизведение">
+                      <span class="material-symbols-outlined text-[14px]">stop</span>
+                    </button>
+                  </div>
+                </div>
+
                 <!-- Разделитель -->
                 <div class="flex-1"></div>
 
@@ -190,14 +269,6 @@
                         id="dashboard-view-combo">
                   <option value="transcript">📝 Транскрипция</option>
                 </select>
-
-                <!-- Кнопка: Озвучить -->
-                <button id="btn-speak-text"
-                        class="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-[#ccc3d8] border border-[#4a4455]/30 bg-[#1b1b20] hover:text-[#d2bbff] hover:border-[#d2bbff]/40 hover:bg-[#2a292f] transition-all flex-shrink-0"
-                        title="Озвучить текст">
-                  <span class="material-symbols-outlined text-[14px]">record_voice_over</span>
-                  <span class="hidden sm:inline">Озвучить</span>
-                </button>
 
                 <!-- Кнопка: Новый запрос -->
                 <button id="btn-new-request"
@@ -1325,51 +1396,151 @@
 
       // Озвучить — отправляем текст в локальный VoiceCore через tts-state-sync
       const btnSpeakText = document.getElementById('btn-speak-text');
+      const btnStopSpeak = document.getElementById('btn-stop-speak');
+      const dashSpeakWrapper = document.getElementById('dash-speak-wrapper');
+      const dashSpeakIcon = document.getElementById('dash-speak-icon');
       let dashboardTtsPlaying = false;
+      let dashboardTtsPaused = false;
+
+      function isDashboardTextActive() {
+        if (!currentActiveEntry) return false;
+        const text = getDisplayText(currentActiveEntry, dashboardViewMode);
+        if (!text) return false;
+        if (!window.ttsEngine) return false;
+        
+        const engineText = window.ttsEngine.currentText || "";
+        const dashTextCleaned = window.ttsEngine.cleanText(text);
+        
+        return engineText.trim() === dashTextCleaned.trim();
+      }
+
+      function updateDashboardTtsUI(action) {
+        if (!btnSpeakText || !dashSpeakIcon || !dashSpeakWrapper) return;
+
+        // Если пришло действие play/pause, но озвучивается другой текст, сбрасываем UI в stop
+        if ((action === 'play' || action === 'pause') && !isDashboardTextActive()) {
+          action = 'stop';
+        }
+
+        // Сбрасываем старые классы
+        btnSpeakText.className = "w-8 h-8 rounded-full flex items-center justify-center transition-all cursor-pointer outline-none focus:outline-none flex-shrink-0";
+        dashSpeakWrapper.classList.remove('can-stop');
+
+        if (action === 'play') {
+          dashboardTtsPlaying = true;
+          dashboardTtsPaused = false;
+          dashSpeakIcon.textContent = 'pause';
+          btnSpeakText.title = 'Пауза';
+          btnSpeakText.classList.add('text-[#7bd6d1]', 'border', 'border-[#7bd6d1]/50', 'bg-[#7bd6d1]/10', 'dash-play-pulse');
+          dashSpeakWrapper.classList.add('can-stop');
+        } else if (action === 'pause') {
+          dashboardTtsPlaying = false;
+          dashboardTtsPaused = true;
+          dashSpeakIcon.textContent = 'play_arrow';
+          btnSpeakText.title = 'Продолжить озвучку';
+          btnSpeakText.classList.add('text-[#ffd162]', 'border', 'border-[#ffd162]/50', 'bg-[#ffd162]/10', 'dash-pause-pulse');
+          dashSpeakWrapper.classList.add('can-stop');
+        } else { // stop или неактивно
+          dashboardTtsPlaying = false;
+          dashboardTtsPaused = false;
+          dashSpeakIcon.textContent = 'record_voice_over';
+          btnSpeakText.title = 'Озвучить текст';
+          btnSpeakText.classList.add('text-[#ccc3d8]', 'border', 'border-[#4a4455]/30', 'bg-[#1b1b20]', 'hover:text-[#d2bbff]', 'hover:border-[#d2bbff]/40', 'hover:bg-[#2a292f]');
+        }
+      }
 
       if (btnSpeakText) {
         btnSpeakText.addEventListener('click', async () => {
-          if (dashboardTtsPlaying) {
-            // Если играет, отправляем паузу
-            if (window.__TAURI__) {
-              await window.__TAURI__.event.emit('tts-state-sync', { action: 'pause' });
+          const text = getDisplayText(currentActiveEntry, dashboardViewMode);
+          if (!text) return;
+
+          // Проверяем, играет ли именно НАШ текст на дашборде
+          const isActive = isDashboardTextActive();
+
+          if (isActive) {
+            // Наш текст активен, переключаем play/pause
+            if (dashboardTtsPlaying) {
+              if (window.__TAURI__) {
+                await window.__TAURI__.event.emit('tts-state-sync', { action: 'pause' });
+              } else {
+                if ('speechSynthesis' in window) window.speechSynthesis.pause();
+                updateDashboardTtsUI('pause');
+              }
+            } else {
+              if (window.__TAURI__) {
+                await window.__TAURI__.event.emit('tts-state-sync', { action: 'play' });
+              } else {
+                if ('speechSynthesis' in window) window.speechSynthesis.resume();
+                updateDashboardTtsUI('play');
+              }
             }
           } else {
-            // Если на паузе или остановлено, загружаем и играем
-            if (!currentActiveEntry) return;
-            const text = getDisplayText(currentActiveEntry, dashboardViewMode);
-            if (!text) return;
-
+            // Текст не наш (или ничего не играет) -> загружаем НАШ текст и запускаем заново
             if (window.__TAURI__) {
-              await window.__TAURI__.event.emit('tts-state-sync', { action: 'load', text });
+              await window.__TAURI__.event.emit('tts-state-sync', { action: 'load', text, source: 'dashboard' });
               await window.__TAURI__.event.emit('tts-state-sync', { action: 'play' });
             } else {
-              // Фоллбэк
               if ('speechSynthesis' in window) {
                 window.speechSynthesis.cancel();
                 const utt = new SpeechSynthesisUtterance(text);
                 utt.lang = 'ru-RU';
                 window.speechSynthesis.speak(utt);
               }
+              updateDashboardTtsUI('play');
               showToast('Озвучивание...', false);
             }
           }
         });
+
+        if (btnStopSpeak) {
+          btnStopSpeak.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            if (window.__TAURI__) {
+              await window.__TAURI__.event.emit('tts-state-sync', { action: 'stop' });
+            } else {
+              if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+              }
+              updateDashboardTtsUI('stop');
+            }
+          });
+        }
+
+        // JS обработка плавного появления кнопки Стоп при наведении (защита от сбоев CSS/CSP)
+        const dashStopContainer = dashSpeakWrapper.querySelector('.dash-stop-container');
+        if (dashSpeakWrapper && dashStopContainer) {
+          dashSpeakWrapper.addEventListener('mouseenter', () => {
+            if (dashSpeakWrapper.classList.contains('can-stop')) {
+              dashStopContainer.style.opacity = '1';
+              dashStopContainer.style.transform = 'translateY(-50%) translateX(0)';
+              dashStopContainer.style.pointerEvents = 'auto';
+            }
+          });
+          dashSpeakWrapper.addEventListener('mouseleave', () => {
+            dashStopContainer.style.opacity = '0';
+            dashStopContainer.style.transform = 'translateY(-50%) translateX(-8px)';
+            dashStopContainer.style.pointerEvents = 'none';
+          });
+        }
 
         // Слушаем tts-state-sync для синхронизации иконки
         if (window.__TAURI__) {
           window.__TAURI__.event.listen('tts-state-sync', (event) => {
             const payload = event.payload;
             if (!payload) return;
-            if (payload.action === 'play') {
-              dashboardTtsPlaying = true;
-              btnSpeakText.innerHTML = `<span class="material-symbols-outlined text-[14px]">pause</span><span class="hidden sm:inline">Пауза</span>`;
-              btnSpeakText.classList.add('text-[#d2bbff]', 'border-[#d2bbff]/40', 'bg-[#2a292f]');
-            } else if (payload.action === 'pause' || payload.action === 'stop') {
-              dashboardTtsPlaying = false;
-              btnSpeakText.innerHTML = `<span class="material-symbols-outlined text-[14px]">record_voice_over</span><span class="hidden sm:inline">Озвучить</span>`;
-              btnSpeakText.classList.remove('text-[#d2bbff]', 'border-[#d2bbff]/40', 'bg-[#2a292f]');
-            }
+            
+            // Задержка 50мс, чтобы ttsEngine успел обновить свое внутреннее состояние
+            setTimeout(() => {
+              if (payload.action === 'play') {
+                updateDashboardTtsUI('play');
+              } else if (payload.action === 'pause') {
+                updateDashboardTtsUI('pause');
+              } else if (payload.action === 'stop') {
+                updateDashboardTtsUI('stop');
+              } else if (payload.action === 'load') {
+                updateDashboardTtsUI(isDashboardTextActive() ? 'play' : 'stop');
+              }
+            }, 50);
           });
         }
       }
@@ -1441,6 +1612,17 @@
         // Скрываем плеер при смене записи
         const playerPanel = document.getElementById('player-panel');
         if (playerPanel) { playerPanel.classList.add('hidden'); playerPanel.classList.remove('flex'); }
+
+        // Синхронизируем UI кнопки озвучки при смене активной карточки
+        if (window.updateDashboardTtsUI) {
+          if (window.ttsEngine && window.ttsEngine.isPlaying && isDashboardTextActive()) {
+            updateDashboardTtsUI('play');
+          } else if (window.ttsEngine && window.ttsEngine.isPaused && isDashboardTextActive()) {
+            updateDashboardTtsUI('pause');
+          } else {
+            updateDashboardTtsUI('stop');
+          }
+        }
       }
 
       // Тогол плеера — клик на иконку записи
@@ -1660,11 +1842,7 @@
         const btnNewRequest = document.getElementById('btn-new-request');
         if (btnNewRequest) {
           btnNewRequest.addEventListener('click', () => {
-            if (window.__TAURI__) {
-              window.__TAURI__.core.invoke('show_capsule_window').catch(() => {});
-            } else {
-              console.log('[Tauri Mock] Открытие капсулы');
-            }
+            openNewRequestModal();
           });
         }
 
@@ -1678,6 +1856,9 @@
             }
           });
         }
+
+        // Инициализируем события модального окна нового запроса
+        setupNewRequestModalEvents();
 
         const magnetTrack = document.getElementById('magnet-toggle-track');
         const magnetToggle = document.getElementById('setting-capsule-magnet');
@@ -1786,6 +1967,354 @@
               const id = viewSelect.getAttribute('data-id');
               switchHistoryView(id);
             }
+          });
+        }
+      }
+
+      // ==========================================================================
+      // ЛОГИКА МОДАЛЬНОГО ОКНА "НОВЫЙ ЗАПРОС ИИ"
+      // ==========================================================================
+      let isResultLabelEditedManually = false;
+
+      function openNewRequestModal() {
+        if (!currentActiveEntry) {
+          showToast('Сначала выберите или запишите аудио', true);
+          return;
+        }
+
+        const modal = document.getElementById('new-request-modal');
+        const modalContent = document.getElementById('new-request-modal-content');
+        const sourceSelect = document.getElementById('modal-source-select');
+        const presetSelect = document.getElementById('modal-preset-select');
+        const customPromptContainer = document.getElementById('modal-custom-prompt-container');
+        const customPromptInput = document.getElementById('modal-custom-prompt-input');
+        const resultLabelInput = document.getElementById('modal-result-label-input');
+        const errorBlock = document.getElementById('modal-error-block');
+
+        if (!modal || !sourceSelect || !presetSelect || !resultLabelInput) return;
+
+        // Заполняем источники
+        sourceSelect.innerHTML = '';
+        
+        // 1. Аудиозапись (всегда есть)
+        const optAudio = document.createElement('option');
+        optAudio.value = 'audio';
+        optAudio.textContent = '🎵 Первоисточник (Аудиозапись)';
+        sourceSelect.appendChild(optAudio);
+
+        // 2. Транскрипция (если не пуста)
+        const baseText = currentActiveEntry.raw_transcript || currentActiveEntry.transcript || '';
+        if (baseText.trim().length > 0) {
+          const optTranscript = document.createElement('option');
+          optTranscript.value = 'transcript';
+          optTranscript.textContent = '📝 Транскрипция (Исходный текст)';
+          sourceSelect.appendChild(optTranscript);
+        }
+
+        // 3. Другие ИИ-результаты
+        if (currentActiveEntry.ai_results && currentActiveEntry.ai_results.length > 0) {
+          currentActiveEntry.ai_results.forEach((res, idx) => {
+            const optAi = document.createElement('option');
+            optAi.value = `ai_${idx}`;
+            optAi.textContent = `✨ Результат ${idx + 1}: ${res.preset_label}`;
+            sourceSelect.appendChild(optAi);
+          });
+        }
+
+        // Сброс полей
+        presetSelect.value = 'essence';
+        if (customPromptContainer) customPromptContainer.classList.add('hidden');
+        if (customPromptInput) customPromptInput.value = '';
+        if (errorBlock) errorBlock.classList.add('hidden');
+
+        isResultLabelEditedManually = false;
+        updateModalDefaultName();
+
+        // Сброс лоадера на кнопке
+        resetModalSubmitButtonState();
+
+        // Показ модалки с анимацией
+        modal.classList.remove('pointer-events-none', 'opacity-0');
+        modal.classList.add('opacity-100');
+        if (modalContent) {
+          modalContent.classList.remove('scale-95');
+          modalContent.classList.add('scale-100');
+        }
+      }
+
+      function closeNewRequestModal() {
+        const modal = document.getElementById('new-request-modal');
+        const modalContent = document.getElementById('new-request-modal-content');
+        if (!modal) return;
+
+        modal.classList.remove('opacity-100');
+        modal.classList.add('opacity-0', 'pointer-events-none');
+        if (modalContent) {
+          modalContent.classList.remove('scale-100');
+          modalContent.classList.add('scale-95');
+        }
+      }
+
+      function updateModalDefaultName() {
+        if (isResultLabelEditedManually) return;
+
+        const sourceSelect = document.getElementById('modal-source-select');
+        const presetSelect = document.getElementById('modal-preset-select');
+        const resultLabelInput = document.getElementById('modal-result-label-input');
+
+        if (!sourceSelect || !presetSelect || !resultLabelInput) return;
+
+        const sourceVal = sourceSelect.value;
+        const presetVal = presetSelect.value;
+
+        let sourceName = 'Аудиозапись';
+        if (sourceVal === 'transcript') {
+          sourceName = 'Транскрипция';
+        } else if (sourceVal.startsWith('ai_')) {
+          const idx = parseInt(sourceVal.replace('ai_', ''));
+          if (currentActiveEntry && currentActiveEntry.ai_results && currentActiveEntry.ai_results[idx]) {
+            sourceName = currentActiveEntry.ai_results[idx].preset_label;
+          }
+        }
+
+        let presetName = 'Суть';
+        if (presetVal === 'tasks') {
+          presetName = 'Задачи';
+        } else if (presetVal === 'transcript') {
+          presetName = 'Текст';
+        } else if (presetVal === 'email') {
+          presetName = 'Письмо';
+        } else if (presetVal === 'custom') {
+          presetName = 'Свой запрос';
+        }
+
+        resultLabelInput.value = `${presetName} (${sourceName})`;
+      }
+
+      function resetModalSubmitButtonState() {
+        const btn = document.getElementById('modal-submit-btn');
+        const icon = document.getElementById('modal-submit-icon');
+        const text = document.getElementById('modal-submit-text');
+        
+        if (!btn || !icon || !text) return;
+
+        btn.disabled = false;
+        btn.classList.remove('opacity-60', 'cursor-not-allowed');
+        icon.textContent = 'rocket_launch';
+        icon.classList.remove('animate-spin');
+        text.textContent = 'Создать';
+
+        // Разблокировка других полей
+        toggleModalFormElements(false);
+      }
+
+      function toggleModalFormElements(disabled) {
+        const sourceSelect = document.getElementById('modal-source-select');
+        const presetSelect = document.getElementById('modal-preset-select');
+        const customPromptInput = document.getElementById('modal-custom-prompt-input');
+        const resultLabelInput = document.getElementById('modal-result-label-input');
+        const closeBtn = document.getElementById('modal-close-btn');
+        const cancelBtn = document.getElementById('modal-cancel-btn');
+
+        if (sourceSelect) sourceSelect.disabled = disabled;
+        if (presetSelect) presetSelect.disabled = disabled;
+        if (customPromptInput) customPromptInput.disabled = disabled;
+        if (resultLabelInput) resultLabelInput.disabled = disabled;
+        if (closeBtn) closeBtn.disabled = disabled;
+        if (cancelBtn) cancelBtn.disabled = disabled;
+      }
+
+      async function submitNewRequest() {
+        if (!currentActiveEntry) return;
+
+        const sourceSelect = document.getElementById('modal-source-select');
+        const presetSelect = document.getElementById('modal-preset-select');
+        const customPromptInput = document.getElementById('modal-custom-prompt-input');
+        const resultLabelInput = document.getElementById('modal-result-label-input');
+        const errorBlock = document.getElementById('modal-error-block');
+        const errorText = document.getElementById('modal-error-text');
+
+        const btn = document.getElementById('modal-submit-btn');
+        const icon = document.getElementById('modal-submit-icon');
+        const text = document.getElementById('modal-submit-text');
+
+        if (!sourceSelect || !presetSelect || !resultLabelInput || !errorBlock || !errorText) return;
+
+        const sourceVal = sourceSelect.value;
+        const presetVal = presetSelect.value;
+        const resultLabel = resultLabelInput.value.trim();
+        const customPrompt = customPromptInput ? customPromptInput.value.trim() : '';
+
+        // Валидация
+        if (!resultLabel) {
+          errorText.textContent = 'Укажите название результата';
+          errorBlock.classList.remove('hidden');
+          return;
+        }
+
+        if (presetVal === 'custom' && !customPrompt) {
+          errorText.textContent = 'Укажите текст промпта для ИИ';
+          errorBlock.classList.remove('hidden');
+          return;
+        }
+
+        errorBlock.classList.add('hidden');
+
+        // Переводим UI в режим загрузки
+        if (btn) btn.disabled = true;
+        if (btn) btn.classList.add('opacity-60', 'cursor-not-allowed');
+        if (icon) {
+          icon.textContent = 'sync';
+          icon.classList.add('animate-spin');
+        }
+        if (text) text.textContent = 'Создание...';
+        toggleModalFormElements(true);
+
+        // Получаем исходный текст
+        let sourceType = 'text';
+        let sourceText = '';
+
+        if (sourceVal === 'audio') {
+          sourceType = 'audio';
+        } else if (sourceVal === 'transcript') {
+          sourceText = currentActiveEntry.raw_transcript || currentActiveEntry.transcript || '';
+        } else if (sourceVal.startsWith('ai_')) {
+          const idx = parseInt(sourceVal.replace('ai_', ''));
+          if (currentActiveEntry.ai_results && currentActiveEntry.ai_results[idx]) {
+            sourceText = currentActiveEntry.ai_results[idx].text;
+          }
+        }
+
+        if (window.__TAURI__) {
+          try {
+            // Вызов команды Tauri
+            const updatedHistory = await window.__TAURI__.core.invoke('process_ai_request', {
+              entryId: currentActiveEntry.id,
+              sourceType: sourceType,
+              sourceText: sourceText,
+              preset: presetVal,
+              customPrompt: presetVal === 'custom' ? customPrompt : null,
+              resultLabel: resultLabel
+            });
+
+            currentHistory = updatedHistory;
+            renderHistory();
+
+            // Обновляем текущую активную запись
+            const updatedEntry = currentHistory.find(e => e.id === currentActiveEntry.id);
+            if (updatedEntry) {
+              renderActiveCard(updatedEntry);
+
+              // Переключаем ComboBox на новый результат
+              const newAiIndex = updatedEntry.ai_results.length - 1;
+              dashboardViewMode = `ai_${newAiIndex}`;
+              localStorage.setItem('dashboardViewMode', dashboardViewMode);
+
+              const dashCombo = document.getElementById('dashboard-view-combo');
+              if (dashCombo) {
+                dashCombo.value = dashboardViewMode;
+              }
+              onDashboardViewChange();
+            }
+
+            closeNewRequestModal();
+            showToast('ИИ-обработка успешно завершена!', false);
+          } catch (err) {
+            console.error('Ошибка ИИ-запроса:', err);
+            errorText.textContent = err.toString();
+            errorBlock.classList.remove('hidden');
+            resetModalSubmitButtonState();
+          }
+        } else {
+          // Mock режим для браузера
+          setTimeout(() => {
+            try {
+              if (!currentActiveEntry.ai_results) {
+                currentActiveEntry.ai_results = [];
+              }
+              const mockText = presetVal === 'custom' 
+                ? `[Mock] Обработка кастомным промптом "${customPrompt}" для источника "${sourceVal}":\nТекст обработан успешно.`
+                : `[Mock] Результат ИИ по шаблону "${presetVal}" для источника "${sourceVal}".`;
+              
+              const newResult = {
+                preset: presetVal,
+                preset_label: resultLabel,
+                text: mockText,
+                timestamp: new Date().toLocaleString()
+              };
+
+              currentActiveEntry.ai_results.push(newResult);
+              renderHistory();
+              renderActiveCard(currentActiveEntry);
+
+              // Переключаем ComboBox на новый результат
+              const newAiIndex = currentActiveEntry.ai_results.length - 1;
+              dashboardViewMode = `ai_${newAiIndex}`;
+              localStorage.setItem('dashboardViewMode', dashboardViewMode);
+
+              const dashCombo = document.getElementById('dashboard-view-combo');
+              if (dashCombo) {
+                dashCombo.value = dashboardViewMode;
+              }
+              onDashboardViewChange();
+
+              closeNewRequestModal();
+              showToast('ИИ-обработка успешно завершена! (Mock)', false);
+            } catch (err) {
+              errorText.textContent = err.toString();
+              errorBlock.classList.remove('hidden');
+              resetModalSubmitButtonState();
+            }
+          }, 1500);
+        }
+      }
+
+      function setupNewRequestModalEvents() {
+        const modal = document.getElementById('new-request-modal');
+        const closeBtn = document.getElementById('modal-close-btn');
+        const cancelBtn = document.getElementById('modal-cancel-btn');
+        const submitBtn = document.getElementById('modal-submit-btn');
+        const sourceSelect = document.getElementById('modal-source-select');
+        const presetSelect = document.getElementById('modal-preset-select');
+        const resultLabelInput = document.getElementById('modal-result-label-input');
+
+        if (modal) {
+          modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+              const submitBtn = document.getElementById('modal-submit-btn');
+              if (submitBtn && submitBtn.disabled) return; // не закрывать при загрузке
+              closeNewRequestModal();
+            }
+          });
+        }
+
+        if (closeBtn) closeBtn.addEventListener('click', closeNewRequestModal);
+        if (cancelBtn) cancelBtn.addEventListener('click', closeNewRequestModal);
+        if (submitBtn) submitBtn.addEventListener('click', submitNewRequest);
+
+        if (sourceSelect) {
+          sourceSelect.addEventListener('change', () => {
+            updateModalDefaultName();
+          });
+        }
+
+        if (presetSelect) {
+          presetSelect.addEventListener('change', () => {
+            const container = document.getElementById('modal-custom-prompt-container');
+            if (container) {
+              if (presetSelect.value === 'custom') {
+                container.classList.remove('hidden');
+              } else {
+                container.classList.add('hidden');
+              }
+            }
+            updateModalDefaultName();
+          });
+        }
+
+        if (resultLabelInput) {
+          resultLabelInput.addEventListener('input', () => {
+            isResultLabelEditedManually = true;
           });
         }
       }
@@ -2043,6 +2572,75 @@
       }
     </script>
 
+
+    <!-- Modal: Новый запрос ИИ -->
+    <div id="new-request-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center opacity-0 pointer-events-none transition-all duration-300 ease-out z-[90]">
+      <div class="bg-[#1b1b20] border border-[#4a4455]/40 rounded-2xl w-full max-w-[420px] p-6 shadow-2xl transform scale-95 transition-all duration-300 ease-out flex flex-col gap-4 text-[#e4e1e9]" id="new-request-modal-content">
+        
+        <!-- Шапка -->
+        <div class="flex items-center justify-between pb-3 border-b border-[#4a4455]/20">
+          <div class="flex items-center gap-2">
+            <span class="material-symbols-outlined text-[#8e52ff] text-[20px]">psychology</span>
+            <h3 class="text-sm font-semibold tracking-wide">Новый ИИ-запрос</h3>
+          </div>
+          <button id="modal-close-btn" class="p-1 rounded-lg text-[#ccc3d8] hover:text-white hover:bg-[#2a292f] transition-all cursor-pointer outline-none">
+            <span class="material-symbols-outlined text-[18px]">close</span>
+          </button>
+        </div>
+
+        <!-- Тело запроса -->
+        <div class="flex flex-col gap-4">
+          <!-- Источник -->
+          <div class="flex flex-col gap-1.5">
+            <label for="modal-source-select" class="text-[11px] text-[#ccc3d8] font-medium">Источник обработки</label>
+            <select id="modal-source-select" class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] rounded-lg px-3 py-2 text-[12px] focus:outline-none focus:border-[#8e52ff] focus:ring-1 focus:ring-[#8e52ff] w-full transition-all cursor-pointer">
+              <!-- Опции заполняются динамически -->
+            </select>
+          </div>
+
+          <!-- Пресет / Шаблон -->
+          <div class="flex flex-col gap-1.5">
+            <label for="modal-preset-select" class="text-[11px] text-[#ccc3d8] font-medium">ИИ Шаблон (Пресет)</label>
+            <select id="modal-preset-select" class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] rounded-lg px-3 py-2 text-[12px] focus:outline-none focus:border-[#8e52ff] focus:ring-1 focus:ring-[#8e52ff] w-full transition-all cursor-pointer">
+              <option value="essence">💡 Выделить суть (Концепт)</option>
+              <option value="tasks">📋 Составить список задач (TODO)</option>
+              <option value="transcript">✍️ Улучшить текст (Очистить речь)</option>
+              <option value="email">✉️ Составить деловое письмо (Email)</option>
+              <option value="custom">🛠️ Свой собственный промпт...</option>
+            </select>
+          </div>
+
+          <!-- Поле для кастомного промпта (показывается только для custom) -->
+          <div id="modal-custom-prompt-container" class="hidden flex flex-col gap-1.5">
+            <label for="modal-custom-prompt-input" class="text-[11px] text-[#ccc3d8] font-medium">Текст вашего промпта</label>
+            <textarea id="modal-custom-prompt-input" rows="3" class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] rounded-lg p-2.5 text-[12px] focus:outline-none focus:border-[#8e52ff] focus:ring-1 focus:ring-[#8e52ff] w-full resize-none placeholder-[#ccc3d8]/40 transition-all" placeholder="Опишите, что ИИ должен сделать с источником..."></textarea>
+          </div>
+
+          <!-- Имя результата -->
+          <div class="flex flex-col gap-1.5">
+            <label for="modal-result-label-input" class="text-[11px] text-[#ccc3d8] font-medium">Название результата</label>
+            <input type="text" id="modal-result-label-input" class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] rounded-lg px-3 py-2 text-[12px] focus:outline-none focus:border-[#8e52ff] focus:ring-1 focus:ring-[#8e52ff] w-full transition-all" placeholder="Например: Суть (Транскрипция)">
+          </div>
+
+          <!-- Блок ошибок -->
+          <div id="modal-error-block" class="hidden text-[11px] text-[#ffb4ab] bg-[#ffb4ab]/10 border border-[#ffb4ab]/30 p-2.5 rounded-lg flex items-start gap-1.5">
+            <span class="material-symbols-outlined text-[14px] flex-shrink-0 mt-0.5">error</span>
+            <span id="modal-error-text">Произошла ошибка</span>
+          </div>
+        </div>
+
+        <!-- Подвал -->
+        <div class="flex items-center justify-end gap-2.5 pt-3 border-t border-[#4a4455]/20 mt-2">
+          <button id="modal-cancel-btn" class="px-4 py-2 rounded-xl text-[12px] font-medium text-[#ccc3d8] hover:text-white hover:bg-[#2a292f] border border-transparent transition-all cursor-pointer outline-none">
+            Отмена
+          </button>
+          <button id="modal-submit-btn" class="px-4 py-2 rounded-xl text-[12px] font-semibold text-white bg-gradient-to-r from-[#8e52ff] to-[#a370ff] hover:from-[#9d66ff] hover:to-[#b385ff] shadow-lg shadow-[#8e52ff]/20 hover:shadow-[#8e52ff]/30 transition-all cursor-pointer outline-none flex items-center justify-center gap-1.5 min-w-[100px]">
+            <span class="material-symbols-outlined text-[14px]" id="modal-submit-icon">rocket_launch</span>
+            <span id="modal-submit-text">Создать</span>
+          </button>
+        </div>
+      </div>
+    </div>
 
     <!-- Toast Notification -->
     <div class="fixed bottom-6 right-6 bg-[#1f1f24] text-white text-[13px] px-4 py-2.5 rounded-xl shadow-2xl border border-[#8e52ff]/30 transition-all duration-300 opacity-0 pointer-events-none z-[100] flex items-center gap-2" id="dashboard-toast">
