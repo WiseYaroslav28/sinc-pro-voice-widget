@@ -140,6 +140,14 @@ class VoiceCore {
         }, 500);
     }
 
+    log(message) {
+        const msg = `[VoiceCore] ${message}`;
+        console.log(msg);
+        if (window.__TAURI__) {
+            window.__TAURI__.core.invoke('write_js_log', { log: msg }).catch(()=>{});
+        }
+    }
+
     removeMarkdown(text) {
         if (!text) return "";
         let str = text;
@@ -240,6 +248,7 @@ class VoiceCore {
         this.isPrefetching = false; // Останавливаем старую очередь загрузки
         this.currentText = this.cleanText(text);
         this.sentences = this.splitIntoSentences(this.currentText);
+        this.log(`loadText() called, sentences count: ${this.sentences.length}`);
         this.audioBuffers = new Array(this.sentences.length).fill(null);
         this.audioDurations = new Array(this.sentences.length).fill(0);
         this.currentSentenceIndex = 0;
@@ -333,11 +342,11 @@ class VoiceCore {
                     const cachedAudio = await this.cache.get(voiceKey, this.sentences[i]);
                     if (cachedAudio) {
                         if (this.audioBuffers === currentBuffersRef) {
-                            console.log(`[VoiceCore] Cache HIT for sentence ${i}`);
+                            this.log(`Cache HIT for sentence ${i}`);
                             this.audioBuffers[i] = cachedAudio;
                             this.updateProgress();
-                            if (this.isPlaying && this.currentSentenceIndex === i && this.audioElement.paused) {
-                                console.log('[VoiceCore] cache -> triggering playCurrentSentence()');
+                            if (this.isPlaying && this.currentSentenceIndex === i) {
+                                this.log(`cache -> triggering playCurrentSentence() for index ${i}`);
                                 this.playCurrentSentence();
                             }
                         }
@@ -361,7 +370,7 @@ class VoiceCore {
 
                     if (window.__TAURI__) {
                         const distance = i - this.currentSentenceIndex;
-                        console.log(`[VoiceCore] Fetching sentence ${i} (delay=${delay}ms, distance=${distance})`);
+                        this.log(`Fetching sentence ${i} (delay=${delay}ms, distance=${distance})`);
                         const voiceKey = this.settings.voice || 'ru-RU-SvetlanaNeural';
                         const base64Audio = await window.__TAURI__.core.invoke('speak_edge_tts', {
                             text: this.sentences[i],
@@ -377,18 +386,18 @@ class VoiceCore {
                             // Сохраняем в локальный кэш
                             await this.cache.set(voiceKey, this.sentences[i], dataUrl);
                             
-                            if (this.isPlaying && this.currentSentenceIndex === i && this.audioElement.paused) {
-                                console.log('[VoiceCore] prefetch -> triggering playCurrentSentence()');
+                            if (this.isPlaying && this.currentSentenceIndex === i) {
+                                this.log(`prefetch -> triggering playCurrentSentence() for index ${i}`);
                                 this.playCurrentSentence();
                             }
                         }
                     }
                 } catch (err) {
-                    console.error("Prefetch error at index " + i + ":", err);
+                    this.log(`Prefetch error at index ${i}: ${err}`);
                     if (window.showToast) window.showToast("Ошибка TTS: " + err, true);
                     this.audioBuffers[i] = "ERROR";
                     
-                    if (this.isPlaying && this.currentSentenceIndex === i && this.audioElement.paused) {
+                    if (this.isPlaying && this.currentSentenceIndex === i) {
                         this.currentSentenceIndex++;
                         this.playCurrentSentence();
                     }
@@ -401,6 +410,7 @@ class VoiceCore {
 
     seek(index) {
         if (index >= 0 && index < this.sentences.length) {
+            this.log(`seek() called to index ${index}`);
             this.currentSentenceIndex = index;
             this.startPrefetchQueue();
             if (this.isPlaying) {
@@ -414,7 +424,7 @@ class VoiceCore {
     }
 
     async play(shouldBroadcast = true) {
-        console.log('[VoiceCore] play() called, sentences=' + this.sentences.length);
+        this.log('play() called, sentences=' + this.sentences.length);
         if (this.sentences.length === 0) {
             this.stop(shouldBroadcast); 
             return;
@@ -435,19 +445,19 @@ class VoiceCore {
         const hasSrc = this.audioElement.hasAttribute('src');
         const ended = this.audioElement.ended;
         const paused = this.audioElement.paused;
-        console.log('[VoiceCore] play() state: hasSrc=' + hasSrc + ' ended=' + ended + ' paused=' + paused);
+        this.log('play() state: hasSrc=' + hasSrc + ' ended=' + ended + ' paused=' + paused);
 
         if (hasSrc && !ended && paused) {
-            console.log('[VoiceCore] play() -> resuming audio');
+            this.log('play() -> resuming audio');
             this.audioElement.play().catch(e => {
-                console.error("Audio play error:", e);
+                this.log("Audio play error: " + e.name + " " + e.message);
                 if (e.name === 'NotAllowedError') {
                     if (window.showToast) window.showToast("Кликните в любое место программы для разблокировки звука", true);
                     this.pause();
                 }
             });
         } else {
-            console.log('[VoiceCore] play() -> playCurrentSentence()');
+            this.log('play() -> playCurrentSentence()');
             this.playCurrentSentence();
         }
     }
@@ -477,10 +487,11 @@ class VoiceCore {
     }
 
     async playCurrentSentence() {
-        console.log('[VoiceCore] playCurrentSentence() index=' + this.currentSentenceIndex + ' isPlaying=' + this.isPlaying);
+        this.log('playCurrentSentence() index=' + this.currentSentenceIndex + ' isPlaying=' + this.isPlaying);
         if (!this.isPlaying) return;
         
         if (this.currentSentenceIndex >= this.sentences.length) {
+            this.log('playCurrentSentence() - reached end of sentences');
             this.stop(); // Естественное окончание текста
             return;
         }
@@ -491,33 +502,34 @@ class VoiceCore {
 
         // Если аудио уже скачано
         const bufferState = this.audioBuffers[this.currentSentenceIndex] ? (this.audioBuffers[this.currentSentenceIndex] === 'ERROR' ? 'ERROR' : 'READY') : 'NULL';
-        console.log('[VoiceCore] playCurrentSentence() buffer=' + bufferState);
+        this.log('playCurrentSentence() bufferState=' + bufferState);
         if (this.audioBuffers[this.currentSentenceIndex]) {
             const srcVal = this.audioBuffers[this.currentSentenceIndex];
             if (srcVal === "ERROR" || !srcVal.startsWith("data:")) {
-                console.warn('[VoiceCore] Invalid or error audio buffer at index ' + this.currentSentenceIndex);
+                this.log('playCurrentSentence() - invalid buffer at index ' + this.currentSentenceIndex + ', skipping');
                 this.currentSentenceIndex++;
                 this.playCurrentSentence();
                 return;
             }
             this.audioElement.src = srcVal;
             this.audioElement.playbackRate = this.settings.speed;
-            console.log('[VoiceCore] playCurrentSentence() calling audioElement.play()');
+            this.log('playCurrentSentence() calling audioElement.play() for index ' + this.currentSentenceIndex);
             this.audioElement.play().catch(e => {
-                console.error('[VoiceCore] Audio play FAILED:', e.name, e.message);
+                this.log('Audio play FAILED: ' + e.name + ' ' + e.message);
                 if (e.name === 'NotAllowedError') {
                     if (window.showToast) window.showToast("Кликните в любое место программы для разблокировки звука", true);
                     this.pause();
                 }
             });
         } else {
-            console.log('[VoiceCore] playCurrentSentence() buffer not ready, waiting for prefetch...');
+            this.log('playCurrentSentence() - buffer not ready, waiting for prefetch...');
         }
         this.updateProgress();
     }
 
     setupAudioEvents() {
         this.audioElement.addEventListener('ended', () => {
+            this.log('audioElement ended event for index ' + this.currentSentenceIndex);
             if (this.isPlaying) {
                 this.currentSentenceIndex++;
                 this.playCurrentSentence();
@@ -565,7 +577,7 @@ class VoiceCore {
         });
 
         window.__TAURI__.event.listen('recording-started', () => {
-            console.log('[VoiceCore] recording-started detected, pausing playback');
+            this.log('recording-started detected, pausing playback');
             if (this.isPlaying) {
                 this.pause();
             }
