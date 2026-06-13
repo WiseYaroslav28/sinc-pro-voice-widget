@@ -273,6 +273,34 @@ class VoiceCore {
         }
     }
 
+    getPrefetchDelay(index) {
+        const distance = index - this.currentSentenceIndex;
+        if (distance >= 0 && distance <= 3) {
+            return 150; // Минимальная пауза в 150мс для предотвращения TLS/Schannel ошибок (os error -2146893008) при частых WebSocket-соединениях
+        }
+
+        // Опережающие или уже прослушанные предложения загружаются с задержками
+        let delay = 400; // Базовая задержка для фоновой буферизации
+        if (index > 0 && index % 2 === 0) {
+            delay += 200; // Небольшой разброс для партий
+        }
+
+        if (!this.isPlaying || this.isPaused) {
+            if (distance >= 6 || distance < 0) {
+                delay += 800;
+            } else {
+                delay += 400; // distance равно 4 или 5
+            }
+        } else {
+            if (distance >= 6 || distance < 0) {
+                delay += 500;
+            } else {
+                delay += 250; // distance равно 4 или 5
+            }
+        }
+        return delay;
+    }
+
     async startPrefetchQueue() {
         // Уникальный ID для каждой очереди загрузки
         const queueId = Date.now() + Math.random();
@@ -316,47 +344,15 @@ class VoiceCore {
                         continue; // Идем к следующему
                     }
 
-                    // 2. Рассчитываем динамическую адаптивную задержку для защиты от DDoS/блокировок
-                    // Для текущего и следующего по ходу воспроизведения предложения загружаем мгновенно (delay = 0)
-                    const distance = i - this.currentSentenceIndex;
-                    let delay = 0;
-
-                    if (distance > 1 || distance < 0) {
-                        // Опережающие или уже прослушанные предложения загружаются с задержками
-                        delay = 400; // Базовая задержка для фоновой буферизации
-                        if (i > 0 && i % 2 === 0) {
-                            delay += 600; // Дополнительная задержка для партий
-                        }
-
-                        if (!this.isPlaying || this.isPaused) {
-                            if (distance >= 5) delay = 2000;
-                            else if (distance >= 3) delay = 1000;
-                        } else {
-                            if (distance >= 5) delay = 1500;
-                            else if (distance >= 3) delay = 800;
-                        }
-                    }
+                    // 2. Рассчитываем динамическую адаптивную задержку
+                    let delay = this.getPrefetchDelay(i);
 
                     // 3. Выполняем адаптивное ожидание задержки (с шагом 50мс)
                     const startWait = Date.now();
                     while (Date.now() - startWait < delay) {
                         if (this.currentQueueId !== queueId || this.audioBuffers !== currentBuffersRef) return;
                         
-                        const currentDistance = i - this.currentSentenceIndex;
-                        let currentDelay = 0;
-                        if (currentDistance > 1 || currentDistance < 0) {
-                            currentDelay = 400;
-                            if (i > 0 && i % 2 === 0) currentDelay += 600;
-
-                            if (!this.isPlaying || this.isPaused) {
-                                if (currentDistance >= 5) currentDelay = 2000;
-                                else if (currentDistance >= 3) currentDelay = 1000;
-                            } else {
-                                if (currentDistance >= 5) currentDelay = 1500;
-                                else if (currentDistance >= 3) currentDelay = 800;
-                            }
-                        }
-
+                        const currentDelay = this.getPrefetchDelay(i);
                         if (Date.now() - startWait >= currentDelay) {
                             break;
                         }
@@ -364,6 +360,7 @@ class VoiceCore {
                     }
 
                     if (window.__TAURI__) {
+                        const distance = i - this.currentSentenceIndex;
                         console.log(`[VoiceCore] Fetching sentence ${i} (delay=${delay}ms, distance=${distance})`);
                         const voiceKey = this.settings.voice || 'ru-RU-SvetlanaNeural';
                         const base64Audio = await window.__TAURI__.core.invoke('speak_edge_tts', {
