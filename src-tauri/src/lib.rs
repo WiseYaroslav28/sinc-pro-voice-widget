@@ -1736,6 +1736,18 @@ async fn write_clipboard_text(text: String) -> Result<(), String> {
 
 
 #[cfg(target_os = "windows")]
+fn log_to_file(msg: &str) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("debug_clipboard.log")
+    {
+        use std::io::Write;
+        let _ = writeln!(file, "[{}] {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"), msg);
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn backup_clipboard() -> Result<Vec<(u32, Vec<u8>)>, String> {
     #[link(name = "user32")]
     extern "system" {
@@ -1751,9 +1763,20 @@ fn backup_clipboard() -> Result<Vec<(u32, Vec<u8>)>, String> {
         fn GlobalSize(hMem: isize) -> usize;
     }
 
+    log_to_file("backup_clipboard: Start backing up");
     let mut backup = Vec::new();
     unsafe {
-        if OpenClipboard(0) == 0 {
+        let mut opened = false;
+        for i in 0..15 {
+            if OpenClipboard(0) != 0 {
+                opened = true;
+                break;
+            }
+            log_to_file(&format!("backup_clipboard: OpenClipboard failed, retry {}/15...", i + 1));
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+        if !opened {
+            log_to_file("backup_clipboard: Failed to open clipboard after 15 retries");
             return Err("Не удалось открыть буфер обмена для бэкапа".to_string());
         }
         let mut format = 0;
@@ -1762,7 +1785,8 @@ fn backup_clipboard() -> Result<Vec<(u32, Vec<u8>)>, String> {
             if format == 0 {
                 break;
             }
-            if format == 2 || format == 8 || format == 17 {
+            // Skip GDI handle-based formats that cannot be backed up as raw byte arrays
+            if format == 2 || format == 3 || format == 9 || format == 14 {
                 continue;
             }
             let h_mem = GetClipboardData(format);
@@ -1781,6 +1805,7 @@ fn backup_clipboard() -> Result<Vec<(u32, Vec<u8>)>, String> {
         }
         CloseClipboard();
     }
+    log_to_file(&format!("backup_clipboard: Backup successful. Saved {} formats", backup.len()));
     Ok(backup)
 }
 
@@ -1801,8 +1826,24 @@ fn restore_clipboard(backup: Vec<(u32, Vec<u8>)>) -> Result<(), String> {
     }
     const GMEM_MOVEABLE: u32 = 2;
 
+    log_to_file(&format!("restore_clipboard: Start restoring {} formats", backup.len()));
+    if backup.is_empty() {
+        log_to_file("restore_clipboard: Backup is empty, skipping restore to avoid clearing clipboard");
+        return Ok(());
+    }
+
     unsafe {
-        if OpenClipboard(0) == 0 {
+        let mut opened = false;
+        for i in 0..15 {
+            if OpenClipboard(0) != 0 {
+                opened = true;
+                break;
+            }
+            log_to_file(&format!("restore_clipboard: OpenClipboard failed, retry {}/15...", i + 1));
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+        if !opened {
+            log_to_file("restore_clipboard: Failed to open clipboard after 15 retries");
             return Err("Не удалось открыть буфер обмена для восстановления".to_string());
         }
         EmptyClipboard();
@@ -1821,6 +1862,7 @@ fn restore_clipboard(backup: Vec<(u32, Vec<u8>)>) -> Result<(), String> {
         }
         CloseClipboard();
     }
+    log_to_file("restore_clipboard: Restore successful");
     Ok(())
 }
 
@@ -4593,13 +4635,36 @@ async fn paste_text(app_handle: tauri::AppHandle, text: String) -> Result<bool, 
     #[cfg(target_os = "windows")]
     {
         let possible = is_insertion_possible();
-        let _ = set_clipboard_text(&text);
+        log_to_file(&format!("paste_text: Started. Text length = {}, insertion possible = {}", text.len(), possible));
         if possible {
+            let backup = match backup_clipboard() {
+                Ok(b) => b,
+                Err(e) => {
+                    log_to_file(&format!("paste_text: backup_clipboard failed: {}", e));
+                    Vec::new()
+                }
+            };
+            
+            log_to_file("paste_text: Setting new clipboard text");
+            let _ = set_clipboard_text(&text);
+            
+            log_to_file("paste_text: Sleeping 150ms before Ctrl+V");
             tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            
+            log_to_file("paste_text: Simulating Ctrl+V");
             simulate_ctrl_v();
+            
+            log_to_file("paste_text: Sleeping 300ms before restoring clipboard");
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            
+            log_to_file("paste_text: Restoring clipboard");
+            let _ = restore_clipboard(backup);
+            
+            log_to_file("paste_text: Finished successfully");
             Ok(true)
         } else {
             show_result_window(&app_handle, text);
+            log_to_file("paste_text: Finished (showing result window)");
             Ok(false)
         }
     }

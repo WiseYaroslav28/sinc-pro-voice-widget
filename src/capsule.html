@@ -1322,6 +1322,7 @@
             switchState('recording');
             startTimer();
             startVisualizer(audioStream);
+            if (window.__TAURI__) window.__TAURI__.event.emit('recording-started');
           };
 
           mediaRecorder.onpause = () => {
@@ -1336,6 +1337,7 @@
             switchState('recording');
             startTimer();
             startVisualizer(audioStream);
+            if (window.__TAURI__) window.__TAURI__.event.emit('recording-started');
           };
 
           mediaRecorder.onstop = () => {
@@ -1833,6 +1835,14 @@
         window.__TAURI__.event.listen('capsule-magnet-changed', (event) => {
           isMagnetEnabled = !!event.payload;
           localStorage.setItem('capsuleMagnet', isMagnetEnabled);
+        });
+
+        window.__TAURI__.event.listen('tts-playing-started', () => {
+          console.log("SINC PRO: tts-playing-started event received in capsule");
+          if (currentState === 'recording') {
+            console.log("SINC PRO: Pausing recording because TTS playback started");
+            pauseRecordingProcess();
+          }
         });
 
         // Настройка Режима работы капсулы — переключение из дашборда

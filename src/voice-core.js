@@ -424,6 +424,10 @@ class VoiceCore {
         this.isPaused = false;
         this.notifyState();
         
+        if (window.__TAURI__) {
+            window.__TAURI__.event.emit('tts-playing-started');
+        }
+        
         if (shouldBroadcast) {
             this.broadcastState('play');
         }
@@ -557,6 +561,13 @@ class VoiceCore {
                     localStorage.setItem('tts-settings', JSON.stringify(this.settings));
                     if (this.onSettingsSync) this.onSettingsSync(this.settings);
                 }
+            }
+        });
+
+        window.__TAURI__.event.listen('recording-started', () => {
+            console.log('[VoiceCore] recording-started detected, pausing playback');
+            if (this.isPlaying) {
+                this.pause();
             }
         });
     }
