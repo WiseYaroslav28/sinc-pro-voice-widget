@@ -285,7 +285,15 @@ class VoiceCore {
         this.isPrefetching = true;
         const currentBuffersRef = this.audioBuffers;
 
-        for (let i = 0; i < this.sentences.length; i++) {
+        // Формируем закольцованный обход индексов, начиная с текущего предложения
+        const startIndex = this.currentSentenceIndex;
+        const indices = [];
+        for (let idx = 0; idx < this.sentences.length; idx++) {
+            indices.push((startIndex + idx) % this.sentences.length);
+        }
+
+        for (let k = 0; k < indices.length; k++) {
+            const i = indices[k];
             if (this.currentQueueId !== queueId || this.audioBuffers !== currentBuffersRef) {
                 return; // Очередь прервана
             }
@@ -309,30 +317,23 @@ class VoiceCore {
                     }
 
                     // 2. Рассчитываем динамическую адаптивную задержку для защиты от DDoS/блокировок
+                    // Для текущего и следующего по ходу воспроизведения предложения загружаем мгновенно (delay = 0)
                     const distance = i - this.currentSentenceIndex;
-                    let delay = 800; // Безопасный базовый интервал между запросами
+                    let delay = 0;
 
-                    // Партии по 2 предложения: добавляем дополнительную задержку 1200мс
-                    if (i > 0 && i % 2 === 0) {
-                        delay += 1200;
-                    }
-
-                    if (!this.isPlaying || this.isPaused) {
-                        // Если плеер стоит на паузе / не играет, а очередь ушла вперед
-                        if (distance >= 5) {
-                            delay = 5000;
-                        } else if (distance >= 3) {
-                            delay = 3000;
+                    if (distance > 1 || distance < 0) {
+                        // Опережающие или уже прослушанные предложения загружаются с задержками
+                        delay = 400; // Базовая задержка для фоновой буферизации
+                        if (i > 0 && i % 2 === 0) {
+                            delay += 600; // Дополнительная задержка для партий
                         }
-                    } else {
-                        // Если проигрывание активно
-                        if (distance >= 5) {
-                            delay = 3500;
-                        } else if (distance >= 3) {
-                            delay = 2000;
+
+                        if (!this.isPlaying || this.isPaused) {
+                            if (distance >= 5) delay = 2000;
+                            else if (distance >= 3) delay = 1000;
                         } else {
-                            // Озвучка догоняет загрузку
-                            delay = 600;
+                            if (distance >= 5) delay = 1500;
+                            else if (distance >= 3) delay = 800;
                         }
                     }
 
@@ -341,18 +342,19 @@ class VoiceCore {
                     while (Date.now() - startWait < delay) {
                         if (this.currentQueueId !== queueId || this.audioBuffers !== currentBuffersRef) return;
                         
-                        // Позволяет прервать или сократить задержку, если плеер сняли с паузы или он догнал
                         const currentDistance = i - this.currentSentenceIndex;
-                        let currentDelay = 800;
-                        if (i > 0 && i % 2 === 0) currentDelay += 1200;
+                        let currentDelay = 0;
+                        if (currentDistance > 1 || currentDistance < 0) {
+                            currentDelay = 400;
+                            if (i > 0 && i % 2 === 0) currentDelay += 600;
 
-                        if (!this.isPlaying || this.isPaused) {
-                            if (currentDistance >= 5) currentDelay = 5000;
-                            else if (currentDistance >= 3) currentDelay = 3000;
-                        } else {
-                            if (currentDistance >= 5) currentDelay = 3500;
-                            else if (currentDistance >= 3) currentDelay = 2000;
-                            else currentDelay = 600;
+                            if (!this.isPlaying || this.isPaused) {
+                                if (currentDistance >= 5) currentDelay = 2000;
+                                else if (currentDistance >= 3) currentDelay = 1000;
+                            } else {
+                                if (currentDistance >= 5) currentDelay = 1500;
+                                else if (currentDistance >= 3) currentDelay = 800;
+                            }
                         }
 
                         if (Date.now() - startWait >= currentDelay) {
@@ -403,6 +405,7 @@ class VoiceCore {
     seek(index) {
         if (index >= 0 && index < this.sentences.length) {
             this.currentSentenceIndex = index;
+            this.startPrefetchQueue();
             if (this.isPlaying) {
                 this.audioElement.pause();
                 this.playCurrentSentence();
