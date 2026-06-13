@@ -488,6 +488,23 @@
                   </div>
                   <input type="checkbox" id="setting-autostart" style="display:none;" />
                 </div>
+
+                <!-- Tauri Updater -->
+                <div class="flex flex-col gap-2 pt-4 border-t border-[#4a4455]/20">
+                  <div class="flex items-center justify-between">
+                    <div>
+                      <div class="text-[13px] text-[#e4e1e9] font-medium">Автоматические обновления</div>
+                      <div class="text-[11px] text-[#ccc3d8] mt-0.5" id="update-status-text">Текущая версия: 3.4.8</div>
+                    </div>
+                    <button class="bg-[#a377ff] text-[#36007d] hover:bg-[#eaddff] transition-all font-semibold rounded-lg px-4 py-2 text-[12px] focus:outline-none cursor-pointer" id="btn-check-updates">
+                      Проверить обновления
+                    </button>
+                  </div>
+                  <!-- Прогресс-бар скачивания обновления (скрыт по умолчанию) -->
+                  <div id="update-progress-container" class="w-full bg-[#1b1b20] rounded-full h-2 mt-2 hidden border border-[#4a4455]/20 relative overflow-hidden">
+                    <div id="update-progress-bar" class="bg-[#a377ff] h-full rounded-full w-0 transition-all duration-300"></div>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -2569,6 +2586,88 @@
         window.__TAURI__.event.listen('history-updated', () => {
           refreshHistory();
         });
+
+        // Логика Tauri Updater
+        const btnCheckUpdates = document.getElementById('btn-check-updates');
+        const updateStatusText = document.getElementById('update-status-text');
+        const updateProgressContainer = document.getElementById('update-progress-container');
+        const updateProgressBar = document.getElementById('update-progress-bar');
+
+        if (btnCheckUpdates) {
+          btnCheckUpdates.addEventListener('click', async () => {
+            if (!window.__TAURI__ || !window.__TAURI__.updater) {
+              showToast('Обновления недоступны в этом режиме', true);
+              return;
+            }
+
+            try {
+              btnCheckUpdates.disabled = true;
+              btnCheckUpdates.textContent = 'Проверка...';
+              if (updateStatusText) updateStatusText.textContent = 'Проверка наличия обновлений...';
+
+              const { check } = window.__TAURI__.updater;
+              const update = await check();
+
+              if (!update) {
+                if (updateStatusText) updateStatusText.textContent = 'У вас установлена последняя версия';
+                showToast('Обновлений не найдено');
+                btnCheckUpdates.disabled = false;
+                btnCheckUpdates.textContent = 'Проверить обновления';
+                return;
+              }
+
+              // Если обновление найдено
+              if (updateStatusText) {
+                updateStatusText.innerHTML = `Доступна новая версия: <strong class="text-[#7bd6d1]">${update.version}</strong>`;
+              }
+
+              const confirmUpdate = confirm(`Доступно обновление до версии ${update.version}.\n\nОписание изменений:\n${update.body || 'Нет описания'}\n\nХотите скачать и установить его сейчас?`);
+              
+              if (!confirmUpdate) {
+                btnCheckUpdates.disabled = false;
+                btnCheckUpdates.textContent = 'Проверить обновления';
+                return;
+              }
+
+              // Запуск скачивания и установки
+              btnCheckUpdates.textContent = 'Установка...';
+              if (updateProgressContainer) updateProgressContainer.classList.remove('hidden');
+              if (updateProgressBar) updateProgressBar.style.width = '0%';
+
+              let downloadedBytes = 0;
+              let totalBytes = 0;
+
+              await update.downloadAndInstall((progress) => {
+                if (progress.event === 'Started') {
+                  if (updateStatusText) updateStatusText.textContent = 'Загрузка пакета обновления...';
+                  downloadedBytes = 0;
+                  totalBytes = progress.data.contentLength || 0;
+                } else if (progress.event === 'Progress') {
+                  downloadedBytes += progress.data.chunkLength;
+                  totalBytes = progress.data.contentLength || totalBytes;
+                  const percent = totalBytes ? Math.round((downloadedBytes / totalBytes) * 100) : 0;
+                  if (updateProgressBar) updateProgressBar.style.width = `${percent}%`;
+                  if (updateStatusText) updateStatusText.textContent = `Загружено: ${percent}% (${Math.round(downloadedBytes / 1024 / 1024 * 10) / 10} MB / ${Math.round(totalBytes / 1024 / 1024 * 10) / 10} MB)`;
+                } else if (progress.event === 'Finished') {
+                  if (updateStatusText) updateStatusText.textContent = 'Установка завершена. Перезапуск...';
+                  if (updateProgressBar) updateProgressBar.style.width = '100%';
+                }
+              });
+
+              // Перезапускаем приложение
+              const { relaunch } = window.__TAURI__.process;
+              await relaunch();
+
+            } catch (err) {
+              console.error('Ошибка при обновлении приложения:', err);
+              if (updateStatusText) updateStatusText.textContent = 'Ошибка проверки обновлений';
+              showToast('Не удалось установить обновление: ' + err, true);
+              btnCheckUpdates.disabled = false;
+              btnCheckUpdates.textContent = 'Проверить обновления';
+              if (updateProgressContainer) updateProgressContainer.classList.add('hidden');
+            }
+          });
+        }
       }
     </script>
 

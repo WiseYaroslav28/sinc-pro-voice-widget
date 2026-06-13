@@ -114,7 +114,16 @@
       }
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://raw.githubusercontent.com/WiseYaroslav28/sinc-pro-voice-widget/master/docs/updater.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFGMzZGODgzREYwQTQ0NEMKUldSTVJBcmZnL2cySHhrbUIvSUlmRlp3aHRnTGpNUEZiWVJOckV4eW15ZU9UVXNJNEVoVHorZkcK"
+    }
+  },
   "bundle": {
+    "createUpdaterArtifacts": true,
     "active": true,
     "targets": "all",
     "icon": [

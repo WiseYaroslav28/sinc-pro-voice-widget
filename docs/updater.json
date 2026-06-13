@@ -1,0 +1,11 @@
+{
+  "version": "3.4.8",
+  "notes": "Релиз 3.4.8: Добавлен встроенный механизм автоматического обновления приложения.",
+  "pub_date": "2026-06-13T19:40:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNpZ25lciB3aWxsIGJlIGhlcmU=",
+      "url": "https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/download/v3.4.8/tauri-app_3.4.8_x64_en-US.msi.zip"
+    }
+  }
+}
