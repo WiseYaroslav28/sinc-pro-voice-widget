@@ -19,6 +19,14 @@ const EDGE_TTS_ENDPOINT: &str =
 static LAST_SKEW_UPDATE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 static CACHED_SKEW: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 
+lazy_static::lazy_static! {
+    static ref SKEW_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
+}
+
+lazy_static::lazy_static! {
+    static ref EDGE_TTS_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
+}
+
 async fn get_clock_skew() -> i64 {
     let now = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
         Ok(d) => d.as_secs() as i64,
@@ -26,13 +34,29 @@ async fn get_clock_skew() -> i64 {
     };
     let last_update = LAST_SKEW_UPDATE.load(Ordering::Relaxed);
     
-    // Если прошло меньше 10 минут (600 секунд) с последнего обновления, возвращаем кэшированное значение
+    // Быстрая проверка без блокировки: если кэш свежий, возвращаем сразу
     if last_update != 0 && (now - last_update) < 600 {
         return CACHED_SKEW.load(Ordering::Relaxed);
     }
 
-    let client = reqwest::Client::new();
+    // Блокируем, чтобы только один поток делал сетевой запрос
+    let _guard = SKEW_MUTEX.lock().await;
+
+    // Повторно проверяем после захвата блокировки (double-checked locking)
+    let last_update = LAST_SKEW_UPDATE.load(Ordering::Relaxed);
+    if last_update != 0 && (now - last_update) < 600 {
+        return CACHED_SKEW.load(Ordering::Relaxed);
+    }
+
+    // Создаем клиент с коротким таймаутом (1.5 секунды), чтобы не вешать озвучку
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(1500))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
     let url = "https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list?trustedclienttoken=6A5AA1D4EAFF4E9FB37E23D68491D6F4";
+    let mut success = false;
+
     if let Ok(resp) = client.head(url).send().await {
         if let Some(date_header) = resp.headers().get("date") {
             if let Ok(date_str) = date_header.to_str() {
@@ -43,14 +67,16 @@ async fn get_clock_skew() -> i64 {
                     println!("SINC PRO TTS: Clock skew adjusted by {} seconds (network update)", skew);
                     
                     CACHED_SKEW.store(skew, Ordering::Relaxed);
-                    LAST_SKEW_UPDATE.store(now, Ordering::Relaxed);
-                    return skew;
+                    success = true;
                 }
             }
         }
     }
     
-    // Если сетевой запрос провалился, возвращаем старое кэшированное значение
+    // Устанавливаем задержку до следующей попытки: 600 секунд при успехе, 60 секунд при ошибке
+    let next_retry_delay = if success { 600 } else { 60 };
+    LAST_SKEW_UPDATE.store(now - 600 + next_retry_delay, Ordering::Relaxed);
+
     CACHED_SKEW.load(Ordering::Relaxed)
 }
 
@@ -96,6 +122,7 @@ fn write_js_log(log: String) {
 
 #[tauri::command]
 async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String, String> {
+    let _guard = EDGE_TTS_MUTEX.lock().await;
     let res = speak_edge_tts_internal(text.clone(), voice, rate).await;
     if let Err(ref e) = res {
         log_tts_error(&text, e);
@@ -135,62 +162,71 @@ async fn speak_edge_tts_internal(text: String, voice: String, rate: f32) -> Resu
     let muid = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
     headers.insert("Cookie", format!("muid={};", muid).parse().unwrap());
     
-    let (mut ws, _) = tokio_tungstenite::connect_async_tls_with_config(request, None, false, None)
-        .await
-        .map_err(|e| format!("WebSocket connect failed: {}", e))?;
+    // Задаем таймаут на все сетевое взаимодействие с Edge TTS (10 секунд)
+    let net_result = tokio::time::timeout(Duration::from_secs(10), async {
+        let (mut ws, _) = tokio_tungstenite::connect_async_tls_with_config(request, None, false, None)
+            .await
+            .map_err(|e| format!("WebSocket connect failed: {}", e))?;
 
-    // 1. Отправляем конфигурационное сообщение
-    let config_msg = format!(
-        "X-Timestamp:{ts}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n\
-         {{\"context\":{{\"synthesis\":{{\"audio\":{{\"metadataoptions\":{{\"sentenceBoundaryEnabled\":false,\
-         \"wordBoundaryEnabled\":false}},\"outputFormat\":\"audio-24khz-48kbitrate-mono-mp3\"}}}}}}}}",
-        ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S.000Z")
-    );
-    ws.send(Message::Text(config_msg.into())).await
-        .map_err(|e| format!("Send config failed: {}", e))?;
+        // 1. Отправляем конфигурационное сообщение
+        let config_msg = format!(
+            "X-Timestamp:{ts}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n\
+             {{\"context\":{{\"synthesis\":{{\"audio\":{{\"metadataoptions\":{{\"sentenceBoundaryEnabled\":false,\
+             \"wordBoundaryEnabled\":false}},\"outputFormat\":\"audio-24khz-48kbitrate-mono-mp3\"}}}}}}}}",
+            ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S.000Z")
+        );
+        ws.send(Message::Text(config_msg.into())).await
+            .map_err(|e| format!("Send config failed: {}", e))?;
 
-    // 2. SSML синтез
-    let request_id = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
-    let ssml_text = text
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;");
-    let ssml_msg = format!(
-        "X-RequestId:{req}\r\nContent-Type:application/ssml+xml\r\n\
-         X-Timestamp:{ts}\r\nPath:ssml\r\n\r\n\
-         <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>\
-         <voice name='{voice}'><prosody rate='{rate}'>{text}</prosody></voice></speak>",
-        req  = request_id,
-        ts   = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S.000Z"),
-        voice = voice,
-        rate = rate_str,
-        text = ssml_text,
-    );
-    ws.send(Message::Text(ssml_msg.into())).await
-        .map_err(|e| format!("Send SSML failed: {}", e))?;
+        // 2. SSML синтез
+        let request_id = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
+        let ssml_text = text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;");
+        let ssml_msg = format!(
+            "X-RequestId:{req}\r\nContent-Type:application/ssml+xml\r\n\
+             X-Timestamp:{ts}\r\nPath:ssml\r\n\r\n\
+             <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>\
+             <voice name='{voice}'><prosody rate='{rate}'>{text}</prosody></voice></speak>",
+            req  = request_id,
+            ts   = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S.000Z"),
+            voice = voice,
+            rate = rate_str,
+            text = ssml_text,
+        );
+        ws.send(Message::Text(ssml_msg.into())).await
+            .map_err(|e| format!("Send SSML failed: {}", e))?;
 
-    // 3. Собираем бинарные чанки MP3
-    let mut audio_bytes: Vec<u8> = Vec::new();
-    let separator = b"Path:audio\r\n";
+        // 3. Собираем бинарные чанки MP3
+        let mut audio_bytes: Vec<u8> = Vec::new();
+        let separator = b"Path:audio\r\n";
 
-    loop {
-        match ws.next().await {
-            Some(Ok(Message::Binary(data))) => {
-                if let Some(pos) = data.windows(separator.len()).position(|w| w == separator) {
-                    let audio_start = pos + separator.len();
-                    if audio_start < data.len() {
-                        audio_bytes.extend_from_slice(&data[audio_start..]);
+        loop {
+            match ws.next().await {
+                Some(Ok(Message::Binary(data))) => {
+                    if let Some(pos) = data.windows(separator.len()).position(|w| w == separator) {
+                        let audio_start = pos + separator.len();
+                        if audio_start < data.len() {
+                            audio_bytes.extend_from_slice(&data[audio_start..]);
+                        }
                     }
                 }
+                Some(Ok(Message::Text(t))) => {
+                    if t.contains("Path:turn.end") { break; }
+                }
+                Some(Ok(Message::Close(_))) | None => break,
+                Some(Err(e)) => return Err(format!("WebSocket error: {}", e)),
+                _ => {}
             }
-            Some(Ok(Message::Text(t))) => {
-                if t.contains("Path:turn.end") { break; }
-            }
-            Some(Ok(Message::Close(_))) | None => break,
-            Some(Err(e)) => return Err(format!("WebSocket error: {}", e)),
-            _ => {}
         }
-    }
+        Ok(audio_bytes)
+    }).await;
+
+    let audio_bytes = match net_result {
+        Ok(inner_res) => inner_res?,
+        Err(_) => return Err("Timeout requesting Edge TTS (10s)".into()),
+    };
 
     if audio_bytes.is_empty() {
         return Err("Edge TTS вернул пустой аудио-ответ".into());

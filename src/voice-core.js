@@ -111,6 +111,9 @@ class VoiceCore {
         this.isPlaying = false;
         this.isPaused = false;
         this.isPrefetching = false; // Флаг работы фоновой очереди
+        this.currentlyLoading = new Set(); // Набор индексов предложений, находящихся в процессе загрузки
+        this.lastNetworkRequestTime = 0; // Время завершения последнего сетевого запроса к Edge TTS
+        this.isNetworkFetching = false; // Флаг активного сетевого запроса к Edge TTS
         
         this.cache = new TtsCacheDB();
         this.cache.cleanOldRecords();
@@ -243,6 +246,42 @@ class VoiceCore {
         return sentences;
     }
 
+    async loadCachedSentences(startIndex = 0) {
+        const currentBuffersRef = this.audioBuffers;
+        const voiceKey = this.settings.voice || 'ru-RU-SvetlanaNeural';
+        
+        // Создаем массив промисов для проверки кэша для всех предложений, начиная с startIndex
+        const promises = this.sentences.slice(startIndex).map(async (sentence, relativeIndex) => {
+            const i = startIndex + relativeIndex;
+            if (currentBuffersRef[i]) return;
+            
+            try {
+                const cachedAudio = await this.cache.get(voiceKey, sentence);
+                if (cachedAudio && this.audioBuffers === currentBuffersRef) {
+                    this.log(`Instant Cache load for sentence ${i}`);
+                    this.audioBuffers[i] = cachedAudio;
+                }
+            } catch (e) {
+                this.log(`Failed to instantly check cache for sentence ${i}: ${e}`);
+            }
+        });
+
+        await Promise.all(promises);
+        
+        if (this.audioBuffers === currentBuffersRef) {
+            this.updateProgress();
+            
+            // Если мы сейчас играем текущее предложение и оно только что подгрузилось из кэша, запустим его
+            if (this.isPlaying && !this.audioElement.src) {
+                const currentBuffer = this.audioBuffers[this.currentSentenceIndex];
+                if (currentBuffer && currentBuffer !== "ERROR") {
+                    this.log(`Instant cache load triggered playCurrentSentence() for active index ${this.currentSentenceIndex}`);
+                    this.playCurrentSentence();
+                }
+            }
+        }
+    }
+
     loadText(text) {
         this.stop(); // Жесткая остановка старого воспроизведения при загрузке нового текста
         this.isPrefetching = false; // Останавливаем старую очередь загрузки
@@ -256,15 +295,19 @@ class VoiceCore {
         this.isPaused = false;
         this.notifyState();
         
-        // Запускаем фоновую последовательную загрузку ВСЕХ предложений
         if (this.sentences.length > 0) {
-            this.startPrefetchQueue();
+            // Мгновенная массовая загрузка кэшированных предложений из IndexedDB
+            this.loadCachedSentences(0).then(() => {
+                // После того как кэшированные подгрузились, запускаем префетч очередь для недостающих предложений
+                this.startPrefetchQueue();
+            });
         }
     }
 
     appendText(text) {
         if (!text || !text.trim()) return;
         const cleaned = this.cleanText(text);
+        const oldLength = this.sentences.length;
         this.currentText += '\n\n' + cleaned;
         
         const newSentences = this.splitIntoSentences(cleaned);
@@ -276,142 +319,186 @@ class VoiceCore {
         
         this.updateProgress();
         
-        // Перезапускаем очередь загрузки, если она остановилась
-        if (!this.isPrefetching) {
-            this.startPrefetchQueue();
-        }
+        // Мгновенная массовая загрузка кэшированных предложений для новых индексов
+        this.loadCachedSentences(oldLength).then(() => {
+            // Перезапускаем очередь загрузки, если она остановилась
+            if (!this.isPrefetching) {
+                this.startPrefetchQueue();
+            }
+        });
     }
 
-    getPrefetchDelay(index) {
-        const distance = index - this.currentSentenceIndex;
-        if (distance >= 0 && distance <= 3) {
-            return 150; // Минимальная пауза в 150мс для предотвращения TLS/Schannel ошибок (os error -2146893008) при частых WebSocket-соединениях
-        }
+    async fetchSentence(i, queueId, currentBuffersRef) {
+        this.currentlyLoading.add(i);
 
-        // Опережающие или уже прослушанные предложения загружаются с задержками
-        let delay = 400; // Базовая задержка для фоновой буферизации
-        if (index > 0 && index % 2 === 0) {
-            delay += 200; // Небольшой разброс для партий
-        }
+        try {
+            const voiceKey = this.settings.voice || 'ru-RU-SvetlanaNeural';
+            
+            // 1. Проверяем IndexedDB кэш (мгновенно, без задержек)
+            const cachedAudio = await this.cache.get(voiceKey, this.sentences[i]);
+            if (cachedAudio) {
+                if (this.audioBuffers === currentBuffersRef) {
+                    this.log(`Cache HIT for sentence ${i}`);
+                    this.audioBuffers[i] = cachedAudio;
+                    this.updateProgress();
+                    if (this.isPlaying && this.currentSentenceIndex === i) {
+                        this.log(`cache -> triggering playCurrentSentence() for index ${i}`);
+                        this.playCurrentSentence();
+                    }
+                }
+                return;
+            }
 
-        if (!this.isPlaying || this.isPaused) {
-            if (distance >= 6 || distance < 0) {
-                delay += 800;
-            } else {
-                delay += 400; // distance равно 4 или 5
+            // 2. Выдерживаем задержку в 500 мс после предыдущего сетевого запроса к Edge TTS
+            const timeSinceLastRequest = Date.now() - this.lastNetworkRequestTime;
+            const minDelay = 500;
+            if (timeSinceLastRequest < minDelay) {
+                const waitTime = minDelay - timeSinceLastRequest;
+                await new Promise(r => setTimeout(r, waitTime));
             }
-        } else {
-            if (distance >= 6 || distance < 0) {
-                delay += 500;
-            } else {
-                delay += 250; // distance равно 4 или 5
+
+            // Проверяем, не сменилась ли очередь за время ожидания
+            if (this.currentQueueId !== queueId || this.audioBuffers !== currentBuffersRef) {
+                return;
             }
+
+            if (window.__TAURI__) {
+                const distance = i - this.currentSentenceIndex;
+                this.log(`Fetching sentence ${i} from network (distance=${distance})`);
+                
+                this.isNetworkFetching = true;
+                try {
+                    const base64Audio = await window.__TAURI__.core.invoke('speak_edge_tts', {
+                        text: this.sentences[i],
+                        voice: voiceKey,
+                        rate: 1.0
+                    });
+                    
+                    // Фиксируем время окончания сетевого запроса
+                    this.lastNetworkRequestTime = Date.now();
+                    
+                    if (this.audioBuffers === currentBuffersRef) {
+                        const dataUrl = `data:audio/mp3;base64,${base64Audio}`;
+                        this.audioBuffers[i] = dataUrl;
+                        this.updateProgress();
+                        
+                        // Сохраняем в локальный кэш
+                        await this.cache.set(voiceKey, this.sentences[i], dataUrl);
+                        
+                        if (this.isPlaying && this.currentSentenceIndex === i) {
+                            this.log(`prefetch -> triggering playCurrentSentence() for index ${i}`);
+                            this.playCurrentSentence();
+                        }
+                    }
+                } finally {
+                    this.isNetworkFetching = false;
+                }
+            }
+        } catch (err) {
+            this.log(`Prefetch error at index ${i}: ${err}`);
+            if (window.showToast) window.showToast("Ошибка TTS: " + err, true);
+            if (this.audioBuffers === currentBuffersRef) {
+                this.audioBuffers[i] = "ERROR";
+                
+                if (this.isPlaying && this.currentSentenceIndex === i) {
+                    this.currentSentenceIndex++;
+                    this.playCurrentSentence();
+                }
+            }
+        } finally {
+            this.currentlyLoading.delete(i);
         }
-        return delay;
     }
 
     async startPrefetchQueue() {
-        // Уникальный ID для каждой очереди загрузки
+        // Если префетч уже запущен, он сам адаптируется к смене currentSentenceIndex,
+        // так как он динамически проверяет границы на каждом шаге цикла.
+        if (this.isPrefetching) {
+            this.log('Prefetch queue is already running, skipping restart');
+            return;
+        }
+
         const queueId = Date.now() + Math.random();
         this.currentQueueId = queueId;
-
-        // Если очередь уже идет, она прервется, так как мы изменили currentQueueId
-        // Дадим ей миллисекунду на завершение (чтобы не дублировать логику)
-        await new Promise(r => setTimeout(r, 10));
-
         this.isPrefetching = true;
+
+        // Дадим предыдущей очереди время на завершение
+        await new Promise(r => setTimeout(r, 10));
+        if (this.currentQueueId !== queueId) return;
+
         const currentBuffersRef = this.audioBuffers;
+        this.log('Prefetch queue started with ID ' + queueId);
 
-        // Формируем закольцованный обход индексов, начиная с текущего предложения
-        const startIndex = this.currentSentenceIndex;
-        const indices = [];
-        for (let idx = 0; idx < this.sentences.length; idx++) {
-            indices.push((startIndex + idx) % this.sentences.length);
-        }
+        try {
+            while (true) {
+                if (this.currentQueueId !== queueId || this.audioBuffers !== currentBuffersRef) {
+                    this.log('Prefetch queue ' + queueId + ' superseded or text changed');
+                    return;
+                }
 
-        for (let k = 0; k < indices.length; k++) {
-            const i = indices[k];
-            if (this.currentQueueId !== queueId || this.audioBuffers !== currentBuffersRef) {
-                return; // Очередь прервана
-            }
-            
-            if (!this.audioBuffers[i]) {
-                try {
-                    // 1. Проверяем IndexedDB кэш
-                    const voiceKey = this.settings.voice || 'ru-RU-SvetlanaNeural';
-                    const cachedAudio = await this.cache.get(voiceKey, this.sentences[i]);
-                    if (cachedAudio) {
-                        if (this.audioBuffers === currentBuffersRef) {
-                            this.log(`Cache HIT for sentence ${i}`);
-                            this.audioBuffers[i] = cachedAudio;
-                            this.updateProgress();
-                            if (this.isPlaying && this.currentSentenceIndex === i) {
-                                this.log(`cache -> triggering playCurrentSentence() for index ${i}`);
-                                this.playCurrentSentence();
-                            }
-                        }
-                        continue; // Идем к следующему
-                    }
-
-                    // 2. Рассчитываем динамическую адаптивную задержку
-                    let delay = this.getPrefetchDelay(i);
-
-                    // 3. Выполняем адаптивное ожидание задержки (с шагом 50мс)
-                    const startWait = Date.now();
-                    while (Date.now() - startWait < delay) {
-                        if (this.currentQueueId !== queueId || this.audioBuffers !== currentBuffersRef) return;
-                        
-                        const currentDelay = this.getPrefetchDelay(i);
-                        if (Date.now() - startWait >= currentDelay) {
-                            break;
-                        }
-                        await new Promise(r => setTimeout(r, 50));
-                    }
-
-                    if (window.__TAURI__) {
-                        const distance = i - this.currentSentenceIndex;
-                        this.log(`Fetching sentence ${i} (delay=${delay}ms, distance=${distance})`);
-                        const voiceKey = this.settings.voice || 'ru-RU-SvetlanaNeural';
-                        const base64Audio = await window.__TAURI__.core.invoke('speak_edge_tts', {
-                            text: this.sentences[i],
-                            voice: voiceKey,
-                            rate: 1.0
-                        });
-                        
-                        if (this.audioBuffers === currentBuffersRef) {
-                            const dataUrl = `data:audio/mp3;base64,${base64Audio}`;
-                            this.audioBuffers[i] = dataUrl;
-                            this.updateProgress();
-                            
-                            // Сохраняем в локальный кэш
-                            await this.cache.set(voiceKey, this.sentences[i], dataUrl);
-                            
-                            if (this.isPlaying && this.currentSentenceIndex === i) {
-                                this.log(`prefetch -> triggering playCurrentSentence() for index ${i}`);
-                                this.playCurrentSentence();
-                            }
-                        }
-                    }
-                } catch (err) {
-                    this.log(`Prefetch error at index ${i}: ${err}`);
-                    if (window.showToast) window.showToast("Ошибка TTS: " + err, true);
-                    this.audioBuffers[i] = "ERROR";
-                    
-                    if (this.isPlaying && this.currentSentenceIndex === i) {
-                        this.currentSentenceIndex++;
-                        this.playCurrentSentence();
-                    }
+                // Если идет активный сетевой запрос, ждем его завершения
+                if (this.isNetworkFetching) {
+                    await new Promise(r => setTimeout(r, 100));
                     continue;
                 }
+
+                const startIndex = this.currentSentenceIndex;
+                const windowSize = 4; // current + 3 предложения наперед
+                const endIndex = Math.min(startIndex + windowSize, this.sentences.length);
+
+                // Находим первое незагруженное предложение в текущем окне буферизации
+                let targetIndex = -1;
+                for (let i = startIndex; i < endIndex; i++) {
+                    if (!this.audioBuffers[i] && !this.currentlyLoading.has(i)) {
+                        targetIndex = i;
+                        break;
+                    }
+                }
+
+                // Если все предложения в текущем окне загружены или уже загружаются, цикл засыпает
+                if (targetIndex === -1) {
+                    // Но если какое-то предложение из текущего окна еще загружается в фоне,
+                    // мы не должны выходить из цикла префетча совсем, иначе при завершении этой загрузки
+                    // цикл не пойдет дальше. Мы просто подождем.
+                    let anyLoadingInWindow = false;
+                    for (let i = startIndex; i < endIndex; i++) {
+                        if (this.currentlyLoading.has(i)) {
+                            anyLoadingInWindow = true;
+                            break;
+                        }
+                    }
+                    
+                    if (anyLoadingInWindow) {
+                        await new Promise(r => setTimeout(r, 100));
+                        continue;
+                    }
+
+                    this.log('Prefetch queue ' + queueId + ' has nothing to load, sleeping...');
+                    break;
+                }
+
+                // Загружаем предложение targetIndex строго последовательно
+                await this.fetchSentence(targetIndex, queueId, currentBuffersRef);
+            }
+        } catch (err) {
+            this.log('Error in prefetch queue loop: ' + err);
+        } finally {
+            if (this.currentQueueId === queueId) {
+                this.isPrefetching = false;
+                this.log('Prefetch queue ' + queueId + ' stopped');
             }
         }
-        this.isPrefetching = false;
     }
 
     seek(index) {
         if (index >= 0 && index < this.sentences.length) {
             this.log(`seek() called to index ${index}`);
             this.currentSentenceIndex = index;
+            
+            // Принудительно сбрасываем предыдущий префетч при seek
+            this.isPrefetching = false;
+            this.currentQueueId = null;
+            
             this.startPrefetchQueue();
             if (this.isPlaying) {
                 this.audioElement.pause();
@@ -478,6 +565,7 @@ class VoiceCore {
         this.audioElement.pause();
         this.audioElement.removeAttribute('src'); // Правильное удаление ресурса
         this.currentSentenceIndex = 0; // Полный сброс к началу
+        this.currentlyLoading.clear(); // Очищаем набор загрузок
         this.notifyState();
         if (this.onProgress) this.onProgress(0, 0);
         if (this.onSentenceActive) this.onSentenceActive(-1);
@@ -533,6 +621,7 @@ class VoiceCore {
             if (this.isPlaying) {
                 this.currentSentenceIndex++;
                 this.playCurrentSentence();
+                this.startPrefetchQueue(); // Сдвигаем окно буферизации и догружаем следующее предложение
             }
         });
 
