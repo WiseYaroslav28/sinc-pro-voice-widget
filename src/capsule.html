@@ -596,12 +596,11 @@
       let maybeDragging = false;
 
       // Режим Магнит: прижиматься к нижней части монитора с курсором
-      const magnetSaved = localStorage.getItem('capsuleMagnet');
-      let isMagnetEnabled = magnetSaved === null ? true : magnetSaved === 'true';
+      let isMagnetEnabled = true;
 
       // Модуль Капсулы и его режим работы
-      let capsuleMode = parseInt(localStorage.getItem('capsuleMode') || '2', 10);
-      let isCapsuleEnabled = (capsuleMode > 0);
+      let capsuleMode = 2;
+      let isCapsuleEnabled = true;
 
       // ======================================================================
       // ОБЩАЯ ЛОГИКА ПОЗИЦИОНИРОВАНИЯ (Окно зафиксировано 340x260)
@@ -1683,12 +1682,62 @@
       // ======================================================================
 
       if (window.__TAURI__) {
-        if ((capsuleMode === 0 || capsuleMode === 1) && appWindow) {
-          appWindow.hide().catch(() => {});
-        } else if (appWindow) {
-          appWindow.show().catch(() => {});
-          initPosition();
-        }
+        const { invoke } = window.__TAURI__.core;
+        
+        invoke('is_minimized_startup').then((isMinimized) => {
+          invoke('load_config').then((config) => {
+            capsuleMode = config.capsule_mode !== undefined ? config.capsule_mode : 2;
+            isCapsuleEnabled = (capsuleMode > 0);
+            isMagnetEnabled = config.capsule_magnet !== undefined ? config.capsule_magnet : true;
+
+            if (isMinimized) {
+              if (appWindow) {
+                appWindow.hide().catch(() => {});
+              }
+            } else {
+              if ((capsuleMode === 0 || capsuleMode === 1) && appWindow) {
+                appWindow.hide().catch(() => {});
+              } else if (appWindow) {
+                appWindow.show().catch(() => {});
+                initPosition();
+              }
+            }
+          }).catch(err => {
+            console.error("Failed to load config in capsule:", err);
+            if (isMinimized) {
+              if (appWindow) appWindow.hide().catch(() => {});
+            } else {
+              if ((capsuleMode === 0 || capsuleMode === 1) && appWindow) {
+                appWindow.hide().catch(() => {});
+              } else if (appWindow) {
+                appWindow.show().catch(() => {});
+                initPosition();
+              }
+            }
+          });
+        }).catch(() => {
+          // Fallback if is_minimized_startup fails
+          invoke('load_config').then((config) => {
+            capsuleMode = config.capsule_mode !== undefined ? config.capsule_mode : 2;
+            isCapsuleEnabled = (capsuleMode > 0);
+            isMagnetEnabled = config.capsule_magnet !== undefined ? config.capsule_magnet : true;
+
+            if ((capsuleMode === 0 || capsuleMode === 1) && appWindow) {
+              appWindow.hide().catch(() => {});
+            } else if (appWindow) {
+              appWindow.show().catch(() => {});
+              initPosition();
+            }
+          }).catch(err => {
+            console.error("Failed to load config in capsule (fallback):", err);
+            if ((capsuleMode === 0 || capsuleMode === 1) && appWindow) {
+              appWindow.hide().catch(() => {});
+            } else if (appWindow) {
+              appWindow.show().catch(() => {});
+              initPosition();
+            }
+          });
+        });
 
         // Обновляем якорь ТОЛЬКО при ручном перетаскивании
         if (appWindow) {
@@ -1853,6 +1902,9 @@
         window.__TAURI__.event.listen('capsule-magnet-changed', (event) => {
           isMagnetEnabled = !!event.payload;
           localStorage.setItem('capsuleMagnet', isMagnetEnabled);
+          if (window.__TAURI__) {
+            window.__TAURI__.core.invoke('update_config_fields', { fields: { capsule_magnet: isMagnetEnabled } }).catch(()=>{});
+          }
         });
 
         window.__TAURI__.event.listen('tts-playing-started', () => {

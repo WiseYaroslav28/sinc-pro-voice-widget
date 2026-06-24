@@ -226,7 +226,17 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 const text = await invoke('capture_clipboard_text', { translate: false });
                 handleNewText(text);
-                const widgetMode = parseInt(localStorage.getItem('widgetMode') || '2', 10);
+                
+                let widgetMode = 2;
+                try {
+                    const config = await invoke('load_config');
+                    if (config.widget_mode !== undefined) {
+                        widgetMode = config.widget_mode;
+                    }
+                } catch (_) {
+                    widgetMode = parseInt(localStorage.getItem('widgetMode') || '2', 10);
+                }
+
                 if (widgetMode === 2) {
                     await invoke('show_widget_window');
                 }
@@ -239,7 +249,17 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 const text = await invoke('capture_clipboard_text', { translate: true });
                 handleNewText(text);
-                const widgetMode = parseInt(localStorage.getItem('widgetMode') || '2', 10);
+                
+                let widgetMode = 2;
+                try {
+                    const config = await invoke('load_config');
+                    if (config.widget_mode !== undefined) {
+                        widgetMode = config.widget_mode;
+                    }
+                } catch (_) {
+                    widgetMode = parseInt(localStorage.getItem('widgetMode') || '2', 10);
+                }
+
                 if (widgetMode === 2) {
                     await invoke('show_widget_window');
                 }

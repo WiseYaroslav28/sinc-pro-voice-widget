@@ -700,6 +700,26 @@ pub struct AppConfig {
     pub ai_model: String,
     #[serde(default = "default_ocr_mode")]
     pub ocr_mode: String,
+    
+    // Режимы работы окон
+    #[serde(default = "default_capsule_mode")]
+    pub capsule_mode: u8,
+    #[serde(default = "default_widget_mode")]
+    pub widget_mode: u8,
+    #[serde(default = "default_ocr_mode_switch")]
+    pub ocr_mode_switch: u8,
+    
+    // Настройки капсулы
+    #[serde(default = "default_true")]
+    pub capsule_magnet: bool,
+    
+    // Настройки TTS
+    #[serde(default = "default_tts_speed")]
+    pub tts_speed: f32,
+    #[serde(default = "default_tts_voice")]
+    pub tts_voice: String,
+    #[serde(default = "default_false")]
+    pub tts_translate: bool,
 }
 
 fn default_ui_lang() -> String {
@@ -713,6 +733,27 @@ fn default_ai_model() -> String {
 }
 fn default_ocr_mode() -> String {
     "text".to_string()
+}
+fn default_capsule_mode() -> u8 {
+    2
+}
+fn default_widget_mode() -> u8 {
+    2
+}
+fn default_ocr_mode_switch() -> u8 {
+    0
+}
+fn default_true() -> bool {
+    true
+}
+fn default_false() -> bool {
+    false
+}
+fn default_tts_speed() -> f32 {
+    1.0
+}
+fn default_tts_voice() -> String {
+    "ru-RU-SvetlanaNeural".to_string()
 }
 
 // Один AI-результат (может быть несколько на одну запись)
@@ -780,6 +821,13 @@ fn load_config_internal(app_handle: &tauri::AppHandle) -> Result<AppConfig, Stri
             yandex_api_key: "".to_string(),
             ai_model: "gemini-2.0-flash".to_string(),
             ocr_mode: "text".to_string(),
+            capsule_mode: 2,
+            widget_mode: 2,
+            ocr_mode_switch: 0,
+            capsule_magnet: true,
+            tts_speed: 1.0,
+            tts_voice: "ru-RU-SvetlanaNeural".to_string(),
+            tts_translate: false,
         });
     }
     let json_str = std::fs::read_to_string(config_path).map_err(|e| e.to_string())?;
@@ -802,6 +850,90 @@ async fn save_config(app_handle: tauri::AppHandle, config: AppConfig) -> Result<
     let config_path = config_dir.join("config.json");
     let json_str = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     std::fs::write(config_path, json_str).map_err(|e| e.to_string())?;
+
+    // Синхронизируем глобальные атомики
+    CAPSULE_ENABLED.store(config.capsule_mode, Ordering::SeqCst);
+    WIDGET_ENABLED.store(config.widget_mode, Ordering::SeqCst);
+    OCR_ENABLED.store(config.ocr_mode_switch, Ordering::SeqCst);
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn update_config_fields(app_handle: tauri::AppHandle, fields: serde_json::Value) -> Result<(), String> {
+    let mut config = load_config_internal(&app_handle).unwrap_or_else(|_| AppConfig {
+        ui_lang: "ru".to_string(),
+        dictation_lang: "auto".to_string(),
+        api_key: "".to_string(),
+        yandex_api_key: "".to_string(),
+        ai_model: "gemini-2.0-flash".to_string(),
+        ocr_mode: "text".to_string(),
+        capsule_mode: 2,
+        widget_mode: 2,
+        ocr_mode_switch: 0,
+        capsule_magnet: true,
+        tts_speed: 1.0,
+        tts_voice: "ru-RU-SvetlanaNeural".to_string(),
+        tts_translate: false,
+    });
+
+    if let Some(obj) = fields.as_object() {
+        if let Some(val) = obj.get("ui_lang") {
+            if let Some(s) = val.as_str() { config.ui_lang = s.to_string(); }
+        }
+        if let Some(val) = obj.get("dictation_lang") {
+            if let Some(s) = val.as_str() { config.dictation_lang = s.to_string(); }
+        }
+        if let Some(val) = obj.get("api_key") {
+            if let Some(s) = val.as_str() { config.api_key = s.to_string(); }
+        }
+        if let Some(val) = obj.get("yandex_api_key") {
+            if let Some(s) = val.as_str() { config.yandex_api_key = s.to_string(); }
+        }
+        if let Some(val) = obj.get("ai_model") {
+            if let Some(s) = val.as_str() { config.ai_model = s.to_string(); }
+        }
+        if let Some(val) = obj.get("ocr_mode") {
+            if let Some(s) = val.as_str() { config.ocr_mode = s.to_string(); }
+        }
+        if let Some(val) = obj.get("capsule_mode") {
+            if let Some(n) = val.as_u64() { config.capsule_mode = n as u8; }
+        }
+        if let Some(val) = obj.get("widget_mode") {
+            if let Some(n) = val.as_u64() { config.widget_mode = n as u8; }
+        }
+        if let Some(val) = obj.get("ocr_mode_switch") {
+            if let Some(n) = val.as_u64() { config.ocr_mode_switch = n as u8; }
+        }
+        if let Some(val) = obj.get("capsule_magnet") {
+            if let Some(b) = val.as_bool() { config.capsule_magnet = b; }
+        }
+        if let Some(val) = obj.get("tts_speed") {
+            if let Some(f) = val.as_f64() { config.tts_speed = f as f32; }
+            else if let Some(n) = val.as_u64() { config.tts_speed = n as f32; }
+        }
+        if let Some(val) = obj.get("tts_voice") {
+            if let Some(s) = val.as_str() { config.tts_voice = s.to_string(); }
+        }
+        if let Some(val) = obj.get("tts_translate") {
+            if let Some(b) = val.as_bool() { config.tts_translate = b; }
+        }
+    }
+
+    let config_dir = app_handle
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&config_dir).map_err(|e| e.to_string())?;
+    let config_path = config_dir.join("config.json");
+    let json_str = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+    std::fs::write(config_path, json_str).map_err(|e| e.to_string())?;
+
+    // Обновляем глобальные атомики
+    CAPSULE_ENABLED.store(config.capsule_mode, Ordering::SeqCst);
+    WIDGET_ENABLED.store(config.widget_mode, Ordering::SeqCst);
+    OCR_ENABLED.store(config.ocr_mode_switch, Ordering::SeqCst);
+
     Ok(())
 }
 
@@ -4999,10 +5131,48 @@ pub fn run() {
             // Сохраняем handle для отправки событий
             *APP_HANDLE.lock().unwrap() = Some(app.handle().clone());
 
+            // Загружаем конфигурацию
+            let app_handle = app.handle();
+            let config = load_config_internal(app_handle).unwrap_or_else(|_| AppConfig {
+                ui_lang: "ru".to_string(),
+                dictation_lang: "auto".to_string(),
+                api_key: "".to_string(),
+                yandex_api_key: "".to_string(),
+                ai_model: "gemini-2.0-flash".to_string(),
+                ocr_mode: "text".to_string(),
+                capsule_mode: 2,
+                widget_mode: 2,
+                ocr_mode_switch: 0,
+                capsule_magnet: true,
+                tts_speed: 1.0,
+                tts_voice: "ru-RU-SvetlanaNeural".to_string(),
+                tts_translate: false,
+            });
+
+            // Синхронизируем глобальные атомики
+            CAPSULE_ENABLED.store(config.capsule_mode, std::sync::atomic::Ordering::SeqCst);
+            WIDGET_ENABLED.store(config.widget_mode, std::sync::atomic::Ordering::SeqCst);
+            OCR_ENABLED.store(config.ocr_mode_switch, std::sync::atomic::Ordering::SeqCst);
+
+            // Автозапуск: если автозапуск включен в реестре, обновляем его путь на текущий запускаемый файл
+            if is_autostart_enabled() == Ok(true) {
+                let _ = set_autostart_enabled(true);
+            }
+
             let minimize = MINIMIZED_STARTUP.load(std::sync::atomic::Ordering::SeqCst);
             if !minimize {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.show();
+                }
+                if config.capsule_mode == 2 {
+                    if let Some(w) = app.get_webview_window("capsule") {
+                        let _ = w.show();
+                    }
+                }
+                if config.widget_mode == 2 {
+                    if let Some(w) = app.get_webview_window("widget") {
+                        let _ = w.show();
+                    }
                 }
             }
 
@@ -5127,6 +5297,7 @@ pub fn run() {
             write_js_log,
             load_config,
             save_config,
+            update_config_fields,
             fetch_gemini_models,
             set_module_mode,
             load_history,

@@ -14,13 +14,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Скрываем/показываем виджет при старте в зависимости от режима
   if (window.__TAURI__ && appWindow) {
-    const widgetMode = parseInt(localStorage.getItem('widgetMode') || '2', 10);
-    if (widgetMode === 0 || widgetMode === 1) {
-      appWindow.hide().catch(console.error);
-    } else {
-      appWindow.show().catch(console.error);
-      initPosition();
-    }
+    const { invoke } = window.__TAURI__.core;
+    invoke('is_minimized_startup').then((isMinimized) => {
+      invoke('load_config').then((config) => {
+        const widgetMode = config.widget_mode !== undefined ? config.widget_mode : 2;
+        if (isMinimized) {
+          appWindow.hide().catch(console.error);
+        } else {
+          if (widgetMode === 0 || widgetMode === 1) {
+            appWindow.hide().catch(console.error);
+          } else {
+            appWindow.show().catch(console.error);
+            initPosition();
+          }
+        }
+      }).catch(err => {
+        console.error('[Widget] Failed to load config:', err);
+        const widgetMode = parseInt(localStorage.getItem('widgetMode') || '2', 10);
+        if (isMinimized || widgetMode === 0 || widgetMode === 1) {
+          appWindow.hide().catch(console.error);
+        } else {
+          appWindow.show().catch(console.error);
+          initPosition();
+        }
+      });
+    }).catch(() => {
+      const widgetMode = parseInt(localStorage.getItem('widgetMode') || '2', 10);
+      if (widgetMode === 0 || widgetMode === 1) {
+        appWindow.hide().catch(console.error);
+      } else {
+        appWindow.show().catch(console.error);
+        initPosition();
+      }
+    });
   }
 
   // Принудительная инициализация WinAPI SetWindowPos для обхода бага с системной рамкой DWM

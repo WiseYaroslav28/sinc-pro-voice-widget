@@ -748,6 +748,15 @@
             localStorage.setItem('apiKey', config.api_key || '');
             document.getElementById('setting-yandex-api-key').value = config.yandex_api_key || '';
             document.getElementById('setting-ocr-mode').value = config.ocr_mode || 'text';
+            
+            // Восстанавливаем состояние магнита капсулы
+            const magnetToggle = document.getElementById('setting-capsule-magnet');
+            if (magnetToggle) {
+              const magnetVal = config.capsule_magnet !== undefined ? config.capsule_magnet : true;
+              magnetToggle.checked = magnetVal;
+              syncMagnetToggleUI(magnetVal);
+            }
+
             // Сначала грузим модели, потом восстанавливаем выбор
             await fetchAndPopulateModels(config.api_key, config.ai_model);
             updateApiStatus(config.api_key);
@@ -1667,16 +1676,18 @@
       }
 
       if (magnetToggle) {
-        // Восстанавливаем сохранённое значение (null = по умолчанию true)
-        const saved = localStorage.getItem('capsuleMagnet');
-        magnetToggle.checked = saved === null ? true : saved === 'true';
-        syncMagnetToggleUI(magnetToggle.checked);
+        // Начальное дефолтное состояние, loadConfig перезапишет его актуальным значением
+        magnetToggle.checked = true;
+        syncMagnetToggleUI(true);
 
-        magnetToggle.addEventListener('change', () => {
-          localStorage.setItem('capsuleMagnet', magnetToggle.checked);
-          syncMagnetToggleUI(magnetToggle.checked);
+        magnetToggle.addEventListener('change', async () => {
+          const isChecked = magnetToggle.checked;
+          localStorage.setItem('capsuleMagnet', isChecked);
+          syncMagnetToggleUI(isChecked);
           if (window.__TAURI__) {
-            window.__TAURI__.event.emit('capsule-magnet-changed', magnetToggle.checked).catch(() => {});
+            const { invoke } = window.__TAURI__.core;
+            await invoke('update_config_fields', { fields: { capsule_magnet: isChecked } }).catch(()=>{});
+            window.__TAURI__.event.emit('capsule-magnet-changed', isChecked).catch(() => {});
           }
         });
       }

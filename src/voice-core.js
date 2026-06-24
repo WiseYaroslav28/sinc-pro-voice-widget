@@ -119,12 +119,29 @@ class VoiceCore {
         this.cache.cleanOldRecords();
         
         // Настройки по умолчанию
-        const savedSettings = JSON.parse(localStorage.getItem('tts-settings') || '{}');
         this.settings = {
-            voice: savedSettings.voice || 'ru-RU-SvetlanaNeural',
-            speed: savedSettings.speed || 1.0,
-            translate: savedSettings.translate || false
+            voice: 'ru-RU-SvetlanaNeural',
+            speed: 1.0,
+            translate: false
         };
+
+        if (window.__TAURI__) {
+            const { invoke } = window.__TAURI__.core;
+            invoke('load_config').then((config) => {
+                if (config.tts_voice) this.settings.voice = config.tts_voice;
+                if (config.tts_speed) this.settings.speed = config.tts_speed;
+                if (config.tts_translate !== undefined) this.settings.translate = config.tts_translate;
+                this.audioElement.playbackRate = this.settings.speed;
+                if (this.onSettingsSync) this.onSettingsSync(this.settings);
+            }).catch(()=>{});
+        } else {
+            const savedSettings = JSON.parse(localStorage.getItem('tts-settings') || '{}');
+            this.settings = {
+                voice: savedSettings.voice || 'ru-RU-SvetlanaNeural',
+                speed: savedSettings.speed || 1.0,
+                translate: savedSettings.translate || false
+            };
+        }
 
         this.audioElement = new Audio();
         this.audioElement.playbackRate = this.settings.speed;
@@ -660,6 +677,14 @@ class VoiceCore {
                         this.audioElement.playbackRate = this.settings.speed;
                     }
                     localStorage.setItem('tts-settings', JSON.stringify(this.settings));
+                    if (window.__TAURI__) {
+                        const { invoke } = window.__TAURI__.core;
+                        invoke('update_config_fields', { fields: {
+                            tts_voice: this.settings.voice,
+                            tts_speed: this.settings.speed,
+                            tts_translate: this.settings.translate
+                        }}).catch(()=>{});
+                    }
                     if (this.onSettingsSync) this.onSettingsSync(this.settings);
                 }
             }
@@ -749,22 +774,30 @@ class WindowToggleManager {
             defaultVal = "0"; // Оверлей OCR выключен по умолчанию при старте
         }
 
-        const savedMode = localStorage.getItem(`${targetWindowLabel}Mode`) || defaultVal;
-        slider.value = savedMode;
-        wrapper.setAttribute('data-state', savedMode);
-
         if (window.__TAURI__) {
             const { invoke } = window.__TAURI__.core;
             const { listen, emit } = window.__TAURI__.event;
 
-            const modeNum = parseInt(savedMode, 10);
-            // Синхронизируем начальный режим с Rust
-            invoke('set_module_mode', { module: targetWindowLabel, mode: modeNum }).catch(()=>{});
+            invoke('load_config').then((config) => {
+                let modeVal = defaultVal;
+                if (targetWindowLabel === 'capsule' && config.capsule_mode !== undefined) modeVal = String(config.capsule_mode);
+                if (targetWindowLabel === 'widget' && config.widget_mode !== undefined) modeVal = String(config.widget_mode);
+                if (targetWindowLabel === 'ocr' && config.ocr_mode_switch !== undefined) modeVal = String(config.ocr_mode_switch);
 
-            // Для виджета: если режим "Все включено" (2) при старте, показываем его
-            if (targetWindowLabel === 'widget' && modeNum === 2) {
-                invoke(showCommand).catch(() => {});
-            }
+                slider.value = modeVal;
+                wrapper.setAttribute('data-state', modeVal);
+
+                const modeNum = parseInt(modeVal, 10);
+                invoke('set_module_mode', { module: targetWindowLabel, mode: modeNum }).catch(()=>{});
+
+                if (targetWindowLabel === 'widget' && modeNum === 2) {
+                    invoke(showCommand).catch(() => {});
+                }
+            }).catch(() => {
+                const savedMode = localStorage.getItem(`${targetWindowLabel}Mode`) || defaultVal;
+                slider.value = savedMode;
+                wrapper.setAttribute('data-state', savedMode);
+            });
 
             // 2. Обработчик изменения ползунка
             slider.addEventListener('input', async () => {
@@ -775,8 +808,12 @@ class WindowToggleManager {
                 const currentModeNum = parseInt(val, 10);
 
                 try {
-                    // Отправляем режим на бэкенд в Rust
-                    await invoke('set_module_mode', { module: targetWindowLabel, mode: currentModeNum }).catch(()=>{});
+                    // Сохраняем в единый конфиг на бэкенде
+                    const fields = {};
+                    if (targetWindowLabel === 'capsule') fields.capsule_mode = currentModeNum;
+                    if (targetWindowLabel === 'widget') fields.widget_mode = currentModeNum;
+                    if (targetWindowLabel === 'ocr') fields.ocr_mode_switch = currentModeNum;
+                    await invoke('update_config_fields', { fields });
 
                     if (currentModeNum === 2) {
                         // Только widget показывается сразу при включении режима 2 (Все включено)
@@ -805,6 +842,10 @@ class WindowToggleManager {
                 const currentModeNum = parseInt(val, 10);
                 invoke('set_module_mode', { module: targetWindowLabel, mode: currentModeNum }).catch(()=>{});
             });
+        } else {
+            const savedMode = localStorage.getItem(`${targetWindowLabel}Mode`) || defaultVal;
+            slider.value = savedMode;
+            wrapper.setAttribute('data-state', savedMode);
         }
     }
 }

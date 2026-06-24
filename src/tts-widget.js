@@ -201,23 +201,22 @@ function initTtsWidgetLogic(container, isMain) {
   const btnStop = container.querySelector('#tts-widget-stop');
   const btnTranslate = container.querySelector('#tts-btn-translate');
   
-  const savedSettings = JSON.parse(localStorage.getItem('tts-settings') || '{}');
-  let currentVoice = savedSettings.voice || PREFERRED_VOICES[0].edgeId;
-  let currentSpeed = savedSettings.speed || 1.0;
+  let currentVoice = PREFERRED_VOICES[0].edgeId;
+  let currentSpeed = 1.0;
+  let currentTranslate = false;
   let isPlaying = false;
   let isPaused = false;
 
   // Render Voices
   voiceMenu.innerHTML += PREFERRED_VOICES.map(v => 
-    `<div class="px-2 py-1.5 text-[11px] cursor-pointer hover:bg-[#8e52ff]/20 rounded-md transition-colors voice-item ${v.edgeId === currentVoice ? 'bg-[#8e52ff]/20 text-[#8e52ff]' : ''}" data-id="${v.edgeId}" data-label="${v.label}">${v.label}</div>`
+    `<div class="px-2 py-1.5 text-[11px] cursor-pointer hover:bg-[#8e52ff]/20 rounded-md transition-colors voice-item" data-id="${v.edgeId}" data-label="${v.label}">${v.label}</div>`
   ).join('');
 
-  const activeVoice = PREFERRED_VOICES.find(v => v.edgeId === currentVoice) || PREFERRED_VOICES[0];
-  voiceLabel.textContent = activeVoice.label;
+  voiceLabel.textContent = PREFERRED_VOICES[0].label;
 
   // Render Speeds
   speedList.innerHTML += SPEEDS.map(s => 
-    `<div class="px-2 py-0 text-[11px] flex items-center h-[20px] cursor-pointer hover:bg-[#8e52ff]/20 rounded-md transition-colors speed-item ${s === currentSpeed ? 'bg-[#8e52ff]/20 text-[#8e52ff] font-bold' : ''}" data-speed="${s}">${s}x</div>`
+    `<div class="px-2 py-0 text-[11px] flex items-center h-[20px] cursor-pointer hover:bg-[#8e52ff]/20 rounded-md transition-colors speed-item" data-speed="${s}">${s}x</div>`
   ).join('');
 
   // Helper function to update window size for Tauri (only for floating widget)
@@ -333,8 +332,6 @@ function initTtsWidgetLogic(container, isMain) {
     notifyChange('stop', {});
   });
 
-  let currentTranslate = false;
-
   btnTranslate.addEventListener('click', (e) => {
     e.stopPropagation();
     currentTranslate = !currentTranslate;
@@ -417,6 +414,51 @@ function initTtsWidgetLogic(container, isMain) {
       stopBtnContainer.style.opacity = '0';
       stopBtnContainer.style.transform = 'translateY(-50%) translateX(-10px)';
       stopBtnContainer.style.pointerEvents = 'none';
+    });
+  }
+
+  // Асинхронная инициализация настроек из бэкенда
+  function applyInitialConfig(config) {
+    if (config.tts_voice) {
+      currentVoice = config.tts_voice;
+      voiceMenu.querySelectorAll('.voice-item').forEach(i => {
+        i.classList.remove('bg-[#8e52ff]/20', 'text-[#8e52ff]');
+        if (i.dataset.id === currentVoice) {
+          i.classList.add('bg-[#8e52ff]/20', 'text-[#8e52ff]');
+          voiceLabel.textContent = i.dataset.label;
+        }
+      });
+    }
+    if (config.tts_speed) {
+      currentSpeed = config.tts_speed;
+      updateSpeedUI(currentSpeed);
+    }
+    if (config.tts_translate !== undefined) {
+      currentTranslate = config.tts_translate;
+      if (btnTranslate) {
+        btnTranslate.style.color = currentTranslate ? '#7bd6d1' : '';
+      }
+    }
+  }
+
+  if (window.__TAURI__) {
+    window.__TAURI__.core.invoke('load_config').then((config) => {
+      applyInitialConfig(config);
+    }).catch(err => {
+      console.error("[TtsWidget] Failed to load config from backend:", err);
+      const savedSettings = JSON.parse(localStorage.getItem('tts-settings') || '{}');
+      applyInitialConfig({
+        tts_voice: savedSettings.voice,
+        tts_speed: savedSettings.speed,
+        tts_translate: savedSettings.translate
+      });
+    });
+  } else {
+    const savedSettings = JSON.parse(localStorage.getItem('tts-settings') || '{}');
+    applyInitialConfig({
+      tts_voice: savedSettings.voice,
+      tts_speed: savedSettings.speed,
+      tts_translate: savedSettings.translate
     });
   }
 }
