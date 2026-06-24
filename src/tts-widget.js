@@ -304,6 +304,9 @@ function initTtsWidgetLogic(container, isMain) {
     });
   }
 
+  // Синхронизируем UI с сохраненным значением скорости при старте
+  updateSpeedUI(currentSpeed);
+
   speedList.querySelectorAll('.speed-item').forEach(item => {
     item.addEventListener('click', () => {
       const val = parseFloat(item.dataset.speed);

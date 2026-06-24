@@ -610,6 +610,13 @@
       async function resizeToState(state) {
         if (!invoke || !isCapsuleEnabled) return;
 
+        // Если капсула в режиме 1 (скрыта, но работает) и находится в неактивном состоянии,
+        // не выполняем ресайз/позиционирование, чтобы избежать принудительного показа скрытого окна
+        // через SetWindowPos (флаг SWP_SHOWWINDOW на бэкенде Rust).
+        if (capsuleMode === 1 && (state === 'idle' || state === 'hover')) {
+          return;
+        }
+
         const w_phys = Math.round(340 * cachedScaleFactor);
         const h_phys = Math.round(260 * cachedScaleFactor);
 
@@ -1291,8 +1298,19 @@
           recordSeconds = 0;
           activeTimer.textContent = '00:00';
 
-          // Используем постоянно открытый поток
-          if (!globalAudioStream) {
+          // Используем постоянно открытый поток с валидацией его жизнеспособности (особенно после сна ОС)
+          const isStreamValid = globalAudioStream && 
+                                globalAudioStream.active && 
+                                globalAudioStream.getAudioTracks().length > 0 &&
+                                globalAudioStream.getAudioTracks().every(track => track.readyState === 'live');
+
+          if (!isStreamValid) {
+            console.log("SINC PRO: Audio stream is invalid or ended (possibly after OS sleep). Re-initializing microphone...");
+            if (globalAudioStream) {
+              try {
+                globalAudioStream.getTracks().forEach(track => track.stop());
+              } catch (_) {}
+            }
             globalAudioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
           }
           audioStream = globalAudioStream;
