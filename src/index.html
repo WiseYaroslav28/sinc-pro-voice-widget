@@ -494,7 +494,8 @@
                   <div class="flex items-center justify-between">
                     <div>
                       <div class="text-[13px] text-[#e4e1e9] font-medium">Автоматические обновления</div>
-                      <div class="text-[11px] text-[#ccc3d8] mt-0.5" id="update-status-text">Текущая версия: 3.5.0</div>
+                      <div class="text-[11px] text-[#ccc3d8] mt-0.5" id="app-version-display">Текущая версия: Загрузка...</div>
+                      <div class="text-[11px] text-[#a377ff] mt-0.5 hidden" id="update-status-text"></div>
                     </div>
                     <button class="bg-[#a377ff] text-[#36007d] hover:bg-[#eaddff] transition-all font-semibold rounded-lg px-4 py-2 text-[12px] focus:outline-none cursor-pointer" id="btn-check-updates">
                       Проверить обновления
@@ -2349,6 +2350,27 @@
 
       // Инициализация при загрузке
       document.addEventListener('DOMContentLoaded', async () => {
+        // Отображение текущей версии приложения
+        if (window.__TAURI__) {
+          window.__TAURI__.app.getVersion().then((version) => {
+            const versionDisplay = document.getElementById('app-version-display');
+            if (versionDisplay) {
+              versionDisplay.textContent = `Текущая версия: ${version}`;
+            }
+          }).catch(err => {
+            console.error("Failed to load app version:", err);
+            const versionDisplay = document.getElementById('app-version-display');
+            if (versionDisplay) {
+              versionDisplay.textContent = `Текущая версия: 3.5.1`;
+            }
+          });
+        } else {
+          const versionDisplay = document.getElementById('app-version-display');
+          if (versionDisplay) {
+            versionDisplay.textContent = `Текущая версия: 3.5.1 (Mock)`;
+          }
+        }
+
         setupAudioPlayer();
         setupDashboardEvents();
         switchTab('tab-home');
@@ -2614,13 +2636,19 @@
             try {
               btnCheckUpdates.disabled = true;
               btnCheckUpdates.textContent = 'Проверка...';
-              if (updateStatusText) updateStatusText.textContent = 'Проверка наличия обновлений...';
+              if (updateStatusText) {
+                updateStatusText.classList.remove('hidden');
+                updateStatusText.textContent = 'Проверка наличия обновлений...';
+              }
 
               const { check } = window.__TAURI__.updater;
               const update = await check();
 
               if (!update) {
-                if (updateStatusText) updateStatusText.textContent = 'У вас установлена последняя версия';
+                if (updateStatusText) {
+                  updateStatusText.classList.remove('hidden');
+                  updateStatusText.textContent = 'У вас установлена последняя версия';
+                }
                 showToast('Обновлений не найдено');
                 btnCheckUpdates.disabled = false;
                 btnCheckUpdates.textContent = 'Проверить обновления';
@@ -2629,6 +2657,7 @@
 
               // Если обновление найдено
               if (updateStatusText) {
+                updateStatusText.classList.remove('hidden');
                 updateStatusText.innerHTML = `Доступна новая версия: <strong class="text-[#7bd6d1]">${update.version}</strong>`;
               }
 
@@ -2650,7 +2679,10 @@
 
               await update.downloadAndInstall((progress) => {
                 if (progress.event === 'Started') {
-                  if (updateStatusText) updateStatusText.textContent = 'Загрузка пакета обновления...';
+                  if (updateStatusText) {
+                    updateStatusText.classList.remove('hidden');
+                    updateStatusText.textContent = 'Загрузка пакета обновления...';
+                  }
                   downloadedBytes = 0;
                   totalBytes = progress.data.contentLength || 0;
                 } else if (progress.event === 'Progress') {
@@ -2658,9 +2690,15 @@
                   totalBytes = progress.data.contentLength || totalBytes;
                   const percent = totalBytes ? Math.round((downloadedBytes / totalBytes) * 100) : 0;
                   if (updateProgressBar) updateProgressBar.style.width = `${percent}%`;
-                  if (updateStatusText) updateStatusText.textContent = `Загружено: ${percent}% (${Math.round(downloadedBytes / 1024 / 1024 * 10) / 10} MB / ${Math.round(totalBytes / 1024 / 1024 * 10) / 10} MB)`;
+                  if (updateStatusText) {
+                    updateStatusText.classList.remove('hidden');
+                    updateStatusText.textContent = `Загружено: ${percent}% (${Math.round(downloadedBytes / 1024 / 1024 * 10) / 10} MB / ${Math.round(totalBytes / 1024 / 1024 * 10) / 10} MB)`;
+                  }
                 } else if (progress.event === 'Finished') {
-                  if (updateStatusText) updateStatusText.textContent = 'Установка завершена. Перезапуск...';
+                  if (updateStatusText) {
+                    updateStatusText.classList.remove('hidden');
+                    updateStatusText.textContent = 'Установка завершена. Перезапуск...';
+                  }
                   if (updateProgressBar) updateProgressBar.style.width = '100%';
                 }
               });
@@ -2671,7 +2709,10 @@
 
             } catch (err) {
               console.error('Ошибка при обновлении приложения:', err);
-              if (updateStatusText) updateStatusText.textContent = 'Ошибка проверки обновлений';
+              if (updateStatusText) {
+                updateStatusText.classList.remove('hidden');
+                updateStatusText.textContent = 'Ошибка проверки обновлений';
+              }
               showToast('Не удалось установить обновление: ' + err, true);
               btnCheckUpdates.disabled = false;
               btnCheckUpdates.textContent = 'Проверить обновления';
