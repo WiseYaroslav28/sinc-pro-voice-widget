@@ -1,11 +1,11 @@
 {
-  "version": "3.5.3",
-  "notes": "Версия 3.5.3: Исправление сброса настроек скорости TTS и магнита капсулы.",
-  "pub_date": "2026-06-25T22:30:00Z",
+  "version": "3.5.4",
+  "notes": "Версия 3.5.4: Исправление рассинхронизации и гонки условий при инициализации скорости TTS.",
+  "pub_date": "2026-06-25T22:44:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSTVJBcmZnL2cySCs2Y2Z6bHk0dWtqODhCaVFwT1haZG14WjNoc3YvRTQ3Rnk0T2l4aFAwVWU2dXg2YjBCRmJRanFyNUtnKzVrVjRBYXFlcC9ITlAzUkZFVkhGcmRnblFVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyNDI2NzM5CWZpbGU6dGF1cmktYXBwXzMuNS4zX3g2NF9lbi1VUy5tc2kKa0ZMOXFSNFF4THAzVTRnWVQxdnRURmlFb1JnZE54Q3VEQnhLNGJ2bWRUTzRjalF6UGtuV3NwU0phRTJCZWR6VmtYenlVUk10U3hzYThORU0yVGtBQ2c9PQo=",
-      "url": "https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/download/v3.5.3/tauri-app_3.5.3_x64_en-US.msi"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSTVJBcmZnL2cySHpIOEtPSGtSdmlGdGNSMEd1WUg0N0Zoc0RRaG1DalJGQTJMM05oVFNJdlhkVFdTbjZyMklhNmo3TEp1SGhNMkZkY0lka0RmdnZaTXRaL1AzV2dTR1FJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyNDI3NDc3CWZpbGU6dGF1cmktYXBwXzMuNS40X3g2NF9lbi1VUy5tc2kKbWd5amFtTDM4ckM2UzRaN0dEUDdmNEpwM25aa3hkNm9xcEtoZzRqNGpFOWd3b2Y4VGVNUzZkMno3aDZnMG96UDNJSWdENEJFOWxwZmUySGd3UUZPQVE9PQo=",
+      "url": "https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/download/v3.5.4/tauri-app_3.5.4_x64_en-US.msi"
     }
   }
 }
