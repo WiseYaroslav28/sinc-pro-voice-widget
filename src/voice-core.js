@@ -133,6 +133,7 @@ class VoiceCore {
                 if (config.tts_translate !== undefined) this.settings.translate = config.tts_translate;
                 this.audioElement.playbackRate = this.settings.speed;
                 if (this.onSettingsSync) this.onSettingsSync(this.settings);
+                this.broadcastState('settings', this.settings);
             }).catch(()=>{});
         } else {
             const savedSettings = JSON.parse(localStorage.getItem('tts-settings') || '{}');
@@ -154,10 +155,6 @@ class VoiceCore {
 
         this.setupAudioEvents();
         this.setupTauriSync();
-        
-        setTimeout(() => {
-            this.broadcastState('settings', this.settings);
-        }, 500);
     }
 
     log(message) {
