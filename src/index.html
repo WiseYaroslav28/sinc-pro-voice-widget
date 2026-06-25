@@ -775,7 +775,7 @@
 
       async function saveConfig() {
         if (invoke) {
-          const config = {
+          const fields = {
             ui_lang: document.getElementById('setting-ui-lang').value,
             dictation_lang: document.getElementById('setting-dictation-lang').value,
             api_key: document.getElementById('setting-api-key').value,
@@ -784,10 +784,10 @@
             ocr_mode: document.getElementById('setting-ocr-mode').value
           };
           try {
-            await invoke('save_config', { config });
-            updateApiStatus(config.api_key);
-            localStorage.setItem('apiKey', config.api_key || '');
-            console.log("Настройки сохранены:", config);
+            await invoke('update_config_fields', { fields });
+            updateApiStatus(fields.api_key);
+            localStorage.setItem('apiKey', fields.api_key || '');
+            console.log("Настройки сохранены:", fields);
           } catch (err) {
             console.error("Ошибка сохранения настроек:", err);
           }
@@ -2361,13 +2361,13 @@
             console.error("Failed to load app version:", err);
             const versionDisplay = document.getElementById('app-version-display');
             if (versionDisplay) {
-              versionDisplay.textContent = `Текущая версия: 3.5.1`;
+              versionDisplay.textContent = `Текущая версия: 3.5.3`;
             }
           });
         } else {
           const versionDisplay = document.getElementById('app-version-display');
           if (versionDisplay) {
-            versionDisplay.textContent = `Текущая версия: 3.5.1 (Mock)`;
+            versionDisplay.textContent = `Текущая версия: 3.5.3 (Mock)`;
           }
         }
 

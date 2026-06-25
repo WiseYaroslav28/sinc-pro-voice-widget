@@ -1,6 +1,6 @@
 [package]
-name = "tauri-app"
-version = "3.5.2"
+name = "sinc-pro-voice-widget"
+version = "3.5.3"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
