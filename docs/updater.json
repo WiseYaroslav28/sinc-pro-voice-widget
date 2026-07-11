@@ -1,11 +1,11 @@
 {
-  "version": "3.5.4",
-  "notes": "Версия 3.5.4: Исправление рассинхронизации и гонки условий при инициализации скорости TTS.",
-  "pub_date": "2026-06-25T22:44:00Z",
+  "version": "3.5.5",
+  "notes": "Версия 3.5.5: Добавлен локальный модуль смены раскладки клавиатуры выделенного текста по хоткею (Ctrl + Pause по умолчанию) с блокировкой клавиатурных хуков для избежания конфликтов с озвучкой.",
+  "pub_date": "2026-07-11T19:42:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSTVJBcmZnL2cySHpIOEtPSGtSdmlGdGNSMEd1WUg0N0Zoc0RRaG1DalJGQTJMM05oVFNJdlhkVFdTbjZyMklhNmo3TEp1SGhNMkZkY0lka0RmdnZaTXRaL1AzV2dTR1FJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyNDI3NDc3CWZpbGU6dGF1cmktYXBwXzMuNS40X3g2NF9lbi1VUy5tc2kKbWd5amFtTDM4ckM2UzRaN0dEUDdmNEpwM25aa3hkNm9xcEtoZzRqNGpFOWd3b2Y4VGVNUzZkMno3aDZnMG96UDNJSWdENEJFOWxwZmUySGd3UUZPQVE9PQo=",
-      "url": "https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/download/v3.5.4/tauri-app_3.5.4_x64_en-US.msi"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSTVJBcmZnL2cySC9KNTdoQ1FoOGlKdWk1UVh5Z3NwQS9raTkyb2xpTUFWRlhNUEZ2TWRMMytQdnFBZlpVWnRpZEZoaURlb3lCaUNydlpucE5xNzAzYmdKdTNuQ2NLK1FrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNzk4OTU2CWZpbGU6dGF1cmktYXBwXzMuNS41X3g2NF9lbi1VUy5tc2kKMjV5RmNZMWhMOFZ3TTNSTFh4N1hWa05EOWhpQk9xYjZkbm1JOFRTSmJOZXF6ZGFyVUU1Z1pZZHRSRm1GSTcvaXN3NTNXTEdKT0pGU0FiMHFDdDNiQlE9PQo=",
+      "url": "https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/download/v3.5.5/tauri-app_3.5.5_x64_en-US.msi"
     }
   }
 }
