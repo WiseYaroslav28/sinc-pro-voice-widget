@@ -28,3 +28,8 @@ dist-ssr
 
 # Memory Engine DB
 .memory-engine/
+
+# Environment Variables / Secrets
+.env
+*.env
+.env.*
