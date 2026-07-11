@@ -756,6 +756,18 @@ class WindowToggleManager {
         `;
     }
 
+    static renderToggle2State(id, icon, title) {
+        // Рендерим 2-позиционный слайдер (0: Выкл, 2: Вкл) с использованием step="2"
+        return `
+            <div class="tri-switch-wrapper" id="${id}-wrapper" title="${title}" data-state="2">
+                <span class="material-symbols-outlined tri-switch-icon">${icon}</span>
+                <div class="tri-switch-container">
+                    <input type="range" class="tri-slider" min="0" max="2" step="2" value="2" id="${id}">
+                </div>
+            </div>
+        `;
+    }
+
     static initToggle(sliderId, targetWindowLabel) {
         const slider = document.getElementById(sliderId);
         const wrapper = document.getElementById(sliderId + '-wrapper');
@@ -780,6 +792,7 @@ class WindowToggleManager {
                 if (targetWindowLabel === 'capsule' && config.capsule_mode !== undefined) modeVal = String(config.capsule_mode);
                 if (targetWindowLabel === 'widget' && config.widget_mode !== undefined) modeVal = String(config.widget_mode);
                 if (targetWindowLabel === 'ocr' && config.ocr_mode_switch !== undefined) modeVal = String(config.ocr_mode_switch);
+                if (targetWindowLabel === 'layout' && config.layout_converter_mode !== undefined) modeVal = String(config.layout_converter_mode);
 
                 slider.value = modeVal;
                 wrapper.setAttribute('data-state', modeVal);
@@ -810,6 +823,7 @@ class WindowToggleManager {
                     if (targetWindowLabel === 'capsule') fields.capsule_mode = currentModeNum;
                     if (targetWindowLabel === 'widget') fields.widget_mode = currentModeNum;
                     if (targetWindowLabel === 'ocr') fields.ocr_mode_switch = currentModeNum;
+                    if (targetWindowLabel === 'layout') fields.layout_converter_mode = currentModeNum;
                     await invoke('update_config_fields', { fields });
 
                     if (currentModeNum === 2) {
@@ -818,8 +832,10 @@ class WindowToggleManager {
                             await invoke(showCommand).catch(() => {});
                         }
                     } else {
-                        // При режимах 1 (Только хоткеи) и 0 (Выключено) скрываем окна
-                        await invoke(hideCommand).catch(() => {});
+                        // При режимах 1 (Только хоткеи) и 0 (Выключено) скрываем окна (кроме layout)
+                        if (targetWindowLabel !== 'layout') {
+                            await invoke(hideCommand).catch(() => {});
+                        }
                     }
 
                     // Оповещаем другие окна об изменении режима

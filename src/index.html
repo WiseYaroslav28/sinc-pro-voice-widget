@@ -464,9 +464,29 @@
                   <span class="text-[#ccc3d8]">Быстрый перевод области OCR</span>
                   <kbd class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] px-2 py-1 rounded font-semibold text-[11px]">Alt + Q</kbd>
                 </div>
-                <div class="flex justify-between items-center py-2">
+                <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
                   <span class="text-[#ccc3d8]">Озвучить выделенный фрагмент</span>
                   <kbd class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] px-2 py-1 rounded font-semibold text-[11px]">Ctrl + Shift + S</kbd>
+                </div>
+                <div class="flex justify-between items-center py-2">
+                  <span class="text-[#ccc3d8]">Смена раскладки текста</span>
+                  <div class="flex items-center gap-1.5">
+                    <select class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] rounded px-1.5 py-0.5 text-[11px] font-semibold focus:outline-none focus:border-[#d2bbff]" id="setting-layout-modifier">
+                      <option value="Ctrl">Ctrl</option>
+                      <option value="Alt">Alt</option>
+                      <option value="Shift">Shift</option>
+                      <option value="Win">Win</option>
+                    </select>
+                    <span class="text-[#ccc3d8]">+</span>
+                    <select class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] rounded px-1.5 py-0.5 text-[11px] font-semibold focus:outline-none focus:border-[#d2bbff]" id="setting-layout-key">
+                      <option value="Pause">Pause</option>
+                      <option value="`">&grave; (Ё)</option>
+                      <option value="CapsLock">CapsLock</option>
+                      <option value="Insert">Insert</option>
+                      <option value="ScrollLock">ScrollLock</option>
+                      <option value="F12">F12</option>
+                    </select>
+                  </div>
                 </div>
               </div>
             </div>
@@ -749,6 +769,8 @@
             localStorage.setItem('apiKey', config.api_key || '');
             document.getElementById('setting-yandex-api-key').value = config.yandex_api_key || '';
             document.getElementById('setting-ocr-mode').value = config.ocr_mode || 'text';
+            document.getElementById('setting-layout-modifier').value = config.layout_hotkey_modifier || 'Ctrl';
+            document.getElementById('setting-layout-key').value = config.layout_hotkey_key || 'Pause';
             
             // Восстанавливаем состояние магнита капсулы
             const magnetToggle = document.getElementById('setting-capsule-magnet');
@@ -781,7 +803,9 @@
             api_key: document.getElementById('setting-api-key').value,
             yandex_api_key: document.getElementById('setting-yandex-api-key').value,
             ai_model: document.getElementById('setting-ai-model').value,
-            ocr_mode: document.getElementById('setting-ocr-mode').value
+            ocr_mode: document.getElementById('setting-ocr-mode').value,
+            layout_hotkey_modifier: document.getElementById('setting-layout-modifier').value,
+            layout_hotkey_key: document.getElementById('setting-layout-key').value
           };
           try {
             await invoke('update_config_fields', { fields });
@@ -946,6 +970,8 @@
       document.getElementById('setting-ui-lang').addEventListener('change', saveConfig);
       document.getElementById('setting-dictation-lang').addEventListener('change', saveConfig);
       document.getElementById('setting-ocr-mode').addEventListener('change', saveConfig);
+      document.getElementById('setting-layout-modifier').addEventListener('change', saveConfig);
+      document.getElementById('setting-layout-key').addEventListener('change', saveConfig);
       document.getElementById('setting-api-key').addEventListener('input', debounce(async () => {
         const key = document.getElementById('setting-api-key').value;
         localStorage.setItem('apiKey', key);
@@ -1820,11 +1846,13 @@
         dashboardToggles.innerHTML = 
           WindowToggleManager.renderToggle('toggle-capsule', 'mic', 'Капсула (быстрый ИИ-ввод)&#10;Удерживайте Ctrl+Win для диктовки&#10;Ctrl+Win+Alt — ввод с промптом') +
           WindowToggleManager.renderToggle('toggle-widget', 'record_voice_over', 'Виджет озвучки (плавающий плеер)&#10;Ctrl+Shift — озвучить выделенное&#10;Escape — остановить воспроизведение') +
-          WindowToggleManager.renderToggle('toggle-ocr', 'screenshot_region', 'Оверлей переводчика OCR&#10;Alt+Q — открыть/закрыть оверлей');
+          WindowToggleManager.renderToggle('toggle-ocr', 'screenshot_region', 'Оверлей переводчика OCR&#10;Alt+Q — открыть/закрыть оверлей') +
+          WindowToggleManager.renderToggle2State('toggle-layout', 'keyboard', 'Смена раскладки клавиатуры&#10;Инвертировать раскладку выделенного текста по настроенному хоткею');
 
         WindowToggleManager.initToggle('toggle-capsule', 'capsule');
         WindowToggleManager.initToggle('toggle-widget', 'widget');
         WindowToggleManager.initToggle('toggle-ocr', 'ocr');
+        WindowToggleManager.initToggle('toggle-layout', 'layout');
       }
 
 
@@ -2361,13 +2389,13 @@
             console.error("Failed to load app version:", err);
             const versionDisplay = document.getElementById('app-version-display');
             if (versionDisplay) {
-              versionDisplay.textContent = `Текущая версия: 3.5.4`;
+              versionDisplay.textContent = `Текущая версия: 3.5.5`;
             }
           });
         } else {
           const versionDisplay = document.getElementById('app-version-display');
           if (versionDisplay) {
-            versionDisplay.textContent = `Текущая версия: 3.5.4 (Mock)`;
+            versionDisplay.textContent = `Текущая версия: 3.5.5 (Mock)`;
           }
         }
 
