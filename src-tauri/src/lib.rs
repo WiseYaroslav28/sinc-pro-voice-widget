@@ -501,6 +501,25 @@ fn convert_layout(text: &str) -> String {
     }).collect()
 }
 
+fn switch_active_window_layout(to_english: bool) {
+    use winapi::um::winuser::{GetForegroundWindow, PostMessageW, WM_INPUTLANGCHANGEREQUEST};
+    use winapi::shared::minwindef::LPARAM;
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if !hwnd.is_null() {
+            // 0x04090409 - Английский (США)
+            // 0x04190419 - Русский
+            let layout_id = if to_english {
+                0x04090409 as LPARAM
+            } else {
+                0x04190419 as LPARAM
+            };
+            PostMessageW(hwnd, WM_INPUTLANGCHANGEREQUEST, 0, layout_id);
+            log_to_file(&format!("switch_active_window_layout: Sent WM_INPUTLANGCHANGEREQUEST with layout_id: {:#X}", layout_id));
+        }
+    }
+}
+
 fn convert_selected_text_layout() {
     LAYOUT_PROCESSING.store(true, Ordering::SeqCst);
     CTRL_PRESSED.store(false, Ordering::SeqCst);
@@ -539,6 +558,18 @@ fn convert_selected_text_layout() {
         };
 
         if !selected.is_empty() {
+            // Считаем русские и английские буквы для определения направления переключения раскладки
+            let mut rus_count = 0;
+            let mut eng_count = 0;
+            for c in selected.chars() {
+                if (c >= 'а' && c <= 'я') || (c >= 'А' && c <= 'Я') || c == 'ё' || c == 'Ё' {
+                    rus_count += 1;
+                } else if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+                    eng_count += 1;
+                }
+            }
+            let to_english = rus_count > eng_count;
+
             let converted = convert_layout(&selected);
             log_to_file(&format!("convert_selected_text_layout: Selected string length: {}, converting", selected.len()));
             if let Err(e) = set_clipboard_text(&converted) {
@@ -549,6 +580,9 @@ fn convert_selected_text_layout() {
             }
             simulate_ctrl_v();
             std::thread::sleep(std::time::Duration::from_millis(150));
+
+            // Переключаем системную раскладку ввода в активном окне в Windows
+            switch_active_window_layout(to_english);
         } else {
             log_to_file("convert_selected_text_layout: Selected text is empty");
         }

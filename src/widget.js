@@ -379,7 +379,7 @@ document.addEventListener('DOMContentLoaded', () => {
         WindowToggleManager.renderToggle('toggle-capsule-widget', 'mic', 'Капсула (ИИ-ввод):\n0: Выключено\n1: Только хоткеи\n2: Все включено') +
         WindowToggleManager.renderToggle('toggle-widget-widget', 'record_voice_over', 'Виджет озвучки:\n0: Выключено\n1: Только хоткеи\n2: Все включено') +
         WindowToggleManager.renderToggle('toggle-ocr-widget', 'screenshot_region', 'Перевод экрана OCR:\n0: Выключено\n1: Только хоткеи\n2: Все включено') +
-        WindowToggleManager.renderToggle2State('toggle-layout-widget', 'keyboard', 'Смена раскладки клавиатуры:\n0: Выключено\n2: Включено');
+        WindowToggleManager.renderToggle('toggle-layout-widget', 'keyboard', 'Смена раскладки клавиатуры:\n0: Выключено\n1: Только хоткеи\n2: Автозамена на лету');
 
       WindowToggleManager.initToggle('toggle-capsule-widget', 'capsule');
       WindowToggleManager.initToggle('toggle-widget-widget', 'widget');
