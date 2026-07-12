@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build Tailwind CSS
+        run: npm run build:css
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'SINC PRO v__VERSION__'
+          releaseBody: 'Автоматический релиз версии ${{ github.ref_name }}'
+          releaseDraft: false
+          prerelease: false
+
+      - name: Update updater.json
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".SubString(1) # убираем 'v' из 'v3.5.6'
+          $sigFile = Get-ChildItem -Path src-tauri/target/release/bundle/msi/*.msi.sig | Select-Object -First 1
+          if (-not $sigFile) {
+            Write-Error "Signature file not found!"
+            exit 1
+          }
+          $signature = Get-Content $sigFile.FullName -Raw
+          $signature = $signature.Trim()
+          
+          $updaterPath = "docs/updater.json"
+          $updater = Get-Content $updaterPath | ConvertFrom-Json
+          
+          $updater.version = $version
+          $updater.pub_date = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+          $updater.notes = "Версия $version: Автоматический релиз"
+          $updater.platforms."windows-x86_64".signature = $signature
+          $updater.platforms."windows-x86_64".url = "https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/download/v$version/tauri-app_${version}_x64_en-US.msi"
+          
+          # Преобразуем обратно в JSON без экранирования кириллицы
+          $json = ConvertTo-Json $updater -Depth 100
+          # Сохраняем в UTF-8 без BOM для чистого коммита
+          [System.IO.File]::WriteAllText($updaterPath, $json, [System.Text.Encoding]::UTF8)
+          
+          # Настраиваем git и пушим изменения
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/updater.json
+          git commit -m "chore: update updater.json for version $version [skip ci]"
+          git push origin HEAD:master
