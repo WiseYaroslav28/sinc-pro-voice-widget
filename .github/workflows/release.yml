@@ -70,7 +70,7 @@ jobs:
           
           $updater.version = $version
           $updater.pub_date = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
-          $updater.notes = "Версия $version: Автоматический релиз"
+          $updater.notes = "Версия $version — Автоматический релиз"
           $updater.platforms."windows-x86_64".signature = $signature
           $updater.platforms."windows-x86_64".url = "https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/download/v$version/tauri-app_${version}_x64_en-US.msi"
           
