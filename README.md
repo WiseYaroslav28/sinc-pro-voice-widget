@@ -83,6 +83,20 @@ SINC PRO — это локальное и облачное desktop-прилож�
 ### Мультимониторная безопасность
 Перед восстановлением сохраненных координат X, Y приложение опрашивает API `availableMonitors()`. Если сохраненные координаты ведут на отключенный монитор, окно автоматически центрируется на основном экране для предотвращения «улетания» за видимые границы.
 
+### Локальный OCR переводчик (WinRT API & xcap)
+*   **Захват экрана**: Захват выделенной области осуществляется кроссплатформенной библиотекой `xcap` с автоматическим расчетом масштабирования (DPI scale factor) монитора, на котором находится курсор.
+*   **Локальное распознавание**: OCR-обработка происходит локально средствами встроенного системного движка Windows (`Windows.Media.Ocr`), что гарантирует конфиденциальность и мгновенный отклик без отправки скриншотов на внешние сервера.
+*   **ИИ-постобработка**: Распознанный сырой текст отправляется в Gemini для сегментации на грамматически и логически связные предложения по специальному JSON-промпту, после чего переводится.
+
+### Динамическая установка локальных ИИ-расширений (Whisper & Piper)
+В приложении реализована система "плагинов", позволяющая в один клик скачать и развернуть локальные движки для оффлайн-работы:
+*   **STT (Распознавание речи)**: Скачивается CLI-версия `whisper.cpp` с `ffmpeg.exe` и выбранная пользователем модель (tiny/base) напрямую с HuggingFace.
+*   **TTS (Синтез речи / Озвучка)**: Разворачивается легковесный движок `piper.exe` с `espeak-ng-data` и выбранный голос (мужской `dmitri` или женский `irina`) в формате ONNX с HuggingFace.
+
+### Интеллектуальный гибридный перевод и офлайн-фоллбэк
+*   **Гибридный перевод**: Перевод оверлея по умолчанию выполняется через Gemini API. При отсутствии сети или API-ключа приложение автоматически переключается на бесплатный веб-интерфейс Google Translate API, избирательно вычленяя только англоязычные фрагменты и заменяя их в тексте для экономии трафика и сохранения разметки.
+*   **Текстовый фоллбэк**: Текстовая обработка диктовки при сбое Gemini автоматически каскадируется на локальный сервер Ollama с поиском запущенных локальных моделей (`gemma2:9b`, `gemma2`, `llama3`, `qwen2.5`, `mistral`).
+
 </details>
 
 ---
@@ -208,6 +222,20 @@ On starting with the `--minimized` flag:
 
 ### Multi-Monitor Safety
 Prior to restoring coordinates, the app queries `availableMonitors()`. If coordinates point to an inactive monitor, the window is centered on the primary display.
+
+### Local OCR Translator (WinRT API & xcap)
+*   **Screen Capture**: Screenshot capture of the selected area is performed via `xcap` cross-platform library, dynamically computing DPI scale factor of the target monitor under user cursor.
+*   **Local Recognition**: OCR is executed locally on user's machine using built-in system API (`Windows.Media.Ocr`), ensuring high speed and absolute privacy without sending screen captures to external APIs.
+*   **AI Post-Processing**: The recognized raw text undergoes segmentation into gramatically and logically structured sentences using Gemini AI with a specific JSON schema prompt, and is then translated.
+
+### Dynamic Installation of Local AI Extensions (Whisper & Piper)
+SINC PRO features a plugin manager enabling one-click download of offline AI models:
+*   **STT (Speech-to-Text)**: Downloads a standalone `whisper.cpp` CLI binary along with `ffmpeg.exe` and user-chosen models (tiny/base) directly from HuggingFace.
+*   **TTS (Text-to-Speech)**: Deploys a lightweight `piper.exe` binary with `espeak-ng-data` assets and ONNX voice models (male `dmitri` or female `irina`) from HuggingFace.
+
+### Intelligent Hybrid Translation & Offline Fallback
+*   **Hybrid Translation**: Overlay translation defaults to Gemini API. In case of network errors or missing API key, the app transparently shifts to the free Google Translate API, selectively parsing and translating only foreign language parts to preserve structure.
+*   **Text Processing Fallback**: Speech dictation processing cascades to a local Ollama server running locally on port 11434, seeking active local models (`gemma2:9b`, `gemma2`, `llama3`, `qwen2.5`, `mistral`).
 
 </details>
 
