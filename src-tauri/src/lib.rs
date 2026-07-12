@@ -27,6 +27,33 @@ lazy_static::lazy_static! {
     static ref EDGE_TTS_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
 }
 
+use std::collections::HashSet;
+
+#[derive(Clone)]
+struct TypedKey {
+    vk: u32,
+    eng_char: char,
+    rus_char: char,
+    is_english_layout: bool,
+}
+
+lazy_static::lazy_static! {
+    static ref TYPED_BUFFER: std::sync::Mutex<Vec<TypedKey>> = std::sync::Mutex::new(Vec::new());
+    static ref LAST_AUTOCORRECT: std::sync::Mutex<Option<(String, String, bool)>> = std::sync::Mutex::new(None);
+    static ref EXCLUDED_PROCESSES: std::sync::Mutex<HashSet<String>> = {
+        let mut set = HashSet::new();
+        set.insert("cmd.exe".to_string());
+        set.insert("powershell.exe".to_string());
+        set.insert("git.exe".to_string());
+        set.insert("cargo.exe".to_string());
+        set.insert("code.exe".to_string());
+        set.insert("idea64.exe".to_string());
+        set.insert("clion64.exe".to_string());
+        set.insert("studio64.exe".to_string());
+        std::sync::Mutex::new(set)
+    };
+}
+
 async fn get_clock_skew() -> i64 {
     let now = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
         Ok(d) => d.as_secs() as i64,
@@ -501,6 +528,405 @@ fn convert_layout(text: &str) -> String {
     }).collect()
 }
 
+fn map_vk_to_chars(vk: u32) -> Option<(char, char)> {
+    match vk {
+        0x51 => Some(('q', 'й')),
+        0x57 => Some(('w', 'ц')),
+        0x45 => Some(('e', 'у')),
+        0x52 => Some(('r', 'к')),
+        0x54 => Some(('t', 'е')),
+        0x59 => Some(('y', 'н')),
+        0x55 => Some(('u', 'г')),
+        0x49 => Some(('i', 'ш')),
+        0x4F => Some(('o', 'щ')),
+        0x50 => Some(('p', 'з')),
+        0xDB => Some(('[', 'х')),
+        0xDD => Some((']', 'ъ')),
+        0x41 => Some(('a', 'ф')),
+        0x53 => Some(('s', 'ы')),
+        0x44 => Some(('d', 'в')),
+        0x46 => Some(('f', 'а')),
+        0x47 => Some(('g', 'п')),
+        0x48 => Some(('h', 'р')),
+        0x4A => Some(('j', 'о')),
+        0x4B => Some(('k', 'л')),
+        0x4C => Some(('l', 'д')),
+        0xBA => Some((';', 'ж')),
+        0xDE => Some(('\'', 'э')),
+        0x5A => Some(('z', 'я')),
+        0x58 => Some(('x', 'ч')),
+        0x43 => Some(('c', 'с')),
+        0x56 => Some(('v', 'м')),
+        0x42 => Some(('b', 'и')),
+        0x4E => Some(('n', 'т')),
+        0x4D => Some(('m', 'ь')),
+        0xBC => Some((',', 'б')),
+        0xBE => Some(('.', 'ю')),
+        0xBF => Some(('/', '.')),
+        0xC0 => Some(('`', 'ё')),
+        _ => None,
+    }
+}
+
+fn is_invalid_layout_word(word: &str, is_english: bool) -> bool {
+    if word.len() < 2 {
+        return false;
+    }
+    
+    if is_english {
+        let chars: Vec<char> = word.chars().collect();
+        let has_vowel = chars.iter().any(|&c| matches!(c, 'a'|'e'|'i'|'o'|'u'|'y'|'A'|'E'|'I'|'O'|'U'|'Y'));
+        if !has_vowel && word.len() >= 3 {
+            return true;
+        }
+
+        let mut consecutive_consonants = 0;
+        for &c in &chars {
+            if c.is_alphabetic() && !matches!(c, 'a'|'e'|'i'|'o'|'u'|'y'|'A'|'E'|'I'|'O'|'U'|'Y') {
+                consecutive_consonants += 1;
+                if consecutive_consonants >= 4 {
+                    return true;
+                }
+            } else {
+                consecutive_consonants = 0;
+            }
+        }
+        
+        let invalid_pairs = ["qg", "qx", "qz", "qk", "qv", "qw", "qy", "qb", "qc", "qd", "qj", "qh", "qp", "qs", "wz", "wx", "wq", "jz", "jx", "jq", "vf", "vc", "cx", "cv", "zb", "zd", "zg", "zh", "zj", "zk", "zl", "zm", "zn", "zp", "zq", "zr", "zs", "zv", "zx"];
+        let word_lower = word.to_lowercase();
+        for pair in &invalid_pairs {
+            if word_lower.contains(pair) {
+                return true;
+            }
+        }
+    } else {
+        let chars: Vec<char> = word.chars().collect();
+        if let Some(&first) = chars.first() {
+            if first == 'ы' || first == 'Ы' || first == 'ь' || first == 'Ь' || first == 'ъ' || first == 'Ъ' {
+                return true;
+            }
+        }
+        
+        let has_vowel = chars.iter().any(|&c| matches!(c, 'а'|'о'|'у'|'ы'|'э'|'я'|'е'|'ё'|'и'|'ю'|'А'|'О'|'У'|'Ы'|'Э'|'Я'|'Е'|'Ё'|'И'|'Ю'));
+        if !has_vowel && word.len() >= 3 {
+            return true;
+        }
+
+        let word_lower = word.to_lowercase();
+        let invalid_pairs = ["ьь", "ъъ", "ьъ", "ъь", "чщ", "щч", "жш", "шж", "цщ", "щц", "цч", "чц", "гщ", "кщ", "лщ", "мщ", "нщ", "пщ", "рщ", "сщ", "тщ", "фщ", "хщ", "цщ", "чщ", "шщ", "щщ"];
+        for pair in &invalid_pairs {
+            if word_lower.contains(pair) {
+                return true;
+            }
+        }
+    }
+    
+    false
+}
+
+fn get_active_process_name() -> Option<String> {
+    use winapi::um::winuser::{GetForegroundWindow, GetWindowThreadProcessId};
+    use winapi::um::processthreadsapi::OpenProcess;
+    use winapi::um::winnt::{PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
+    use winapi::um::psapi::GetModuleBaseNameW;
+    use winapi::um::handleapi::CloseHandle;
+
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.is_null() {
+            return None;
+        }
+        let mut process_id = 0;
+        GetWindowThreadProcessId(hwnd, &mut process_id);
+        if process_id == 0 {
+            return None;
+        }
+        
+        let process_handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, process_id);
+        if process_handle.is_null() {
+            return None;
+        }
+        
+        let mut buffer = [0u16; 260];
+        let len = GetModuleBaseNameW(process_handle, std::ptr::null_mut(), buffer.as_mut_ptr(), buffer.len() as u32);
+        CloseHandle(process_handle);
+        
+        if len > 0 {
+            let name = String::from_utf16_lossy(&buffer[..len as usize]);
+            Some(name.to_lowercase())
+        } else {
+            None
+        }
+    }
+}
+
+fn simulate_unicode_input(text: &str) {
+    use winapi::um::winuser::{SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_UNICODE, KEYEVENTF_KEYUP};
+    use std::mem::size_of;
+
+    let mut inputs = Vec::new();
+    for c in text.encode_utf16() {
+        let mut input_press = INPUT {
+            type_: INPUT_KEYBOARD,
+            u: unsafe { std::mem::zeroed() },
+        };
+        unsafe {
+            *input_press.u.ki_mut() = KEYBDINPUT {
+                wVk: 0,
+                wScan: c,
+                dwFlags: KEYEVENTF_UNICODE,
+                time: 0,
+                dwExtraInfo: 0x12345678,
+            };
+        }
+        inputs.push(input_press);
+
+        let mut input_release = INPUT {
+            type_: INPUT_KEYBOARD,
+            u: unsafe { std::mem::zeroed() },
+        };
+        unsafe {
+            *input_release.u.ki_mut() = KEYBDINPUT {
+                wVk: 0,
+                wScan: c,
+                dwFlags: KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+                time: 0,
+                dwExtraInfo: 0x12345678,
+            };
+        }
+        inputs.push(input_release);
+    }
+
+    unsafe {
+        SendInput(inputs.len() as u32, inputs.as_mut_ptr(), size_of::<INPUT>() as i32);
+    }
+}
+
+fn simulate_backspaces(count: usize) {
+    use winapi::um::winuser::{SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_BACK};
+    use std::mem::size_of;
+
+    let mut inputs = Vec::new();
+    for _ in 0..count {
+        let mut input_press = INPUT {
+            type_: INPUT_KEYBOARD,
+            u: unsafe { std::mem::zeroed() },
+        };
+        unsafe {
+            *input_press.u.ki_mut() = KEYBDINPUT {
+                wVk: VK_BACK as u16,
+                wScan: 0,
+                dwFlags: 0,
+                time: 0,
+                dwExtraInfo: 0x12345678,
+            };
+        }
+        inputs.push(input_press);
+
+        let mut input_release = INPUT {
+            type_: INPUT_KEYBOARD,
+            u: unsafe { std::mem::zeroed() },
+        };
+        unsafe {
+            *input_release.u.ki_mut() = KEYBDINPUT {
+                wVk: VK_BACK as u16,
+                wScan: 0,
+                dwFlags: KEYEVENTF_KEYUP,
+                time: 0,
+                dwExtraInfo: 0x12345678,
+            };
+        }
+        inputs.push(input_release);
+    }
+
+    unsafe {
+        SendInput(inputs.len() as u32, inputs.as_mut_ptr(), size_of::<INPUT>() as i32);
+    }
+}
+
+fn simulate_enter() {
+    use winapi::um::winuser::{SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_RETURN};
+    use std::mem::size_of;
+
+    let mut inputs = [
+        INPUT {
+            type_: INPUT_KEYBOARD,
+            u: unsafe { std::mem::zeroed() },
+        },
+        INPUT {
+            type_: INPUT_KEYBOARD,
+            u: unsafe { std::mem::zeroed() },
+        }
+    ];
+
+    unsafe {
+        *inputs[0].u.ki_mut() = KEYBDINPUT {
+            wVk: VK_RETURN as u16,
+            wScan: 0,
+            dwFlags: 0,
+            time: 0,
+            dwExtraInfo: 0x12345678,
+        };
+        *inputs[1].u.ki_mut() = KEYBDINPUT {
+            wVk: VK_RETURN as u16,
+            wScan: 0,
+            dwFlags: KEYEVENTF_KEYUP,
+            time: 0,
+            dwExtraInfo: 0x12345678,
+        };
+        
+        SendInput(2, inputs.as_mut_ptr(), size_of::<INPUT>() as i32);
+    }
+}
+
+fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
+    let mode = LAYOUT_CONVERTER_ENABLED.load(Ordering::SeqCst);
+    if mode == 0 {
+        return false;
+    }
+
+    let ctrl = CTRL_PRESSED.load(Ordering::SeqCst);
+    let alt = ALT_PRESSED.load(Ordering::SeqCst);
+    let shift = SHIFT_PRESSED.load(Ordering::SeqCst);
+    let win = WIN_PRESSED.load(Ordering::SeqCst);
+
+    // 1. Хоткей занесения в черный список: Ctrl + Alt + Shift + X
+    if ctrl && alt && shift && !win && vk == 0x58 && is_key_down {
+        if let Some(proc_name) = get_active_process_name() {
+            let mut set = EXCLUDED_PROCESSES.lock().unwrap();
+            if set.contains(&proc_name) {
+                set.remove(&proc_name);
+                unsafe { winapi::um::utilapiset::Beep(600, 150); }
+                log_to_file(&format!("Layout blacklist: Removed {}", proc_name));
+            } else {
+                set.insert(proc_name.clone());
+                unsafe { winapi::um::utilapiset::Beep(1200, 150); }
+                log_to_file(&format!("Layout blacklist: Added {}", proc_name));
+            }
+        }
+        return true;
+    }
+
+    // 2. Отмена автозамены: Shift + Backspace
+    if shift && !ctrl && !alt && !win && vk == 0x08 && is_key_down {
+        let mut last_correct = LAST_AUTOCORRECT.lock().unwrap();
+        if let Some((original, corrected, to_english)) = last_correct.take() {
+            std::thread::spawn(move || {
+                LAYOUT_PROCESSING.store(true, Ordering::SeqCst);
+                simulate_backspaces(corrected.chars().count());
+                std::thread::sleep(Duration::from_millis(50));
+                simulate_unicode_input(&original);
+                switch_active_window_layout(!to_english);
+                unsafe { winapi::um::utilapiset::Beep(600, 80); }
+                log_to_file(&format!("Autocorrect Undo: Restored '{}'", original));
+                LAYOUT_PROCESSING.store(false, Ordering::SeqCst);
+            });
+            return true;
+        }
+    }
+
+    if mode != 2 {
+        return false;
+    }
+
+    if let Some(proc_name) = get_active_process_name() {
+        let set = EXCLUDED_PROCESSES.lock().unwrap();
+        if set.contains(&proc_name) {
+            return false;
+        }
+    }
+
+    if is_key_down {
+        if let Some((eng, rus)) = map_vk_to_chars(vk) {
+            if ctrl || alt || win {
+                let mut buf = TYPED_BUFFER.lock().unwrap();
+                buf.clear();
+                return false;
+            }
+
+            let is_eng_layout = unsafe {
+                use winapi::um::winuser::{GetForegroundWindow, GetWindowThreadProcessId, GetKeyboardLayout};
+                let hwnd = GetForegroundWindow();
+                let thread_id = GetWindowThreadProcessId(hwnd, std::ptr::null_mut());
+                let hkl = GetKeyboardLayout(thread_id);
+                let lang_id = (hkl as usize) & 0xFFFF;
+                lang_id == 0x0409
+            };
+
+            let mut buf = TYPED_BUFFER.lock().unwrap();
+            buf.push(TypedKey {
+                vk,
+                eng_char: eng,
+                rus_char: rus,
+                is_english_layout: is_eng_layout,
+            });
+            if buf.len() > 30 {
+                buf.remove(0);
+            }
+        } else if vk == 0x08 {
+            let mut buf = TYPED_BUFFER.lock().unwrap();
+            if !buf.is_empty() {
+                buf.pop();
+            }
+        } else if vk == 0x20 || vk == 0x0D {
+            let mut buf_guard = TYPED_BUFFER.lock().unwrap();
+            if buf_guard.is_empty() {
+                return false;
+            }
+
+            let typed_keys = buf_guard.clone();
+            buf_guard.clear();
+            drop(buf_guard);
+
+            let first_layout = typed_keys[0].is_english_layout;
+            let all_same_layout = typed_keys.iter().all(|k| k.is_english_layout == first_layout);
+            if !all_same_layout {
+                return false;
+            }
+
+            let word_current: String = typed_keys.iter().map(|k| if first_layout { k.eng_char } else { k.rus_char }).collect();
+            let word_alternate: String = typed_keys.iter().map(|k| if first_layout { k.rus_char } else { k.eng_char }).collect();
+
+            if word_current.chars().count() < 3 {
+                return false;
+            }
+
+            if is_invalid_layout_word(&word_current, first_layout) && !is_invalid_layout_word(&word_alternate, !first_layout) {
+                let word_len = word_current.chars().count();
+                std::thread::spawn(move || {
+                    LAYOUT_PROCESSING.store(true, Ordering::SeqCst);
+                    simulate_backspaces(word_len);
+                    std::thread::sleep(Duration::from_millis(50));
+                    simulate_unicode_input(&word_alternate);
+                    switch_active_window_layout(!first_layout);
+                    
+                    if vk == 0x20 {
+                        simulate_unicode_input(" ");
+                    } else {
+                        simulate_enter();
+                    }
+                    
+                    let mut last_correct = LAST_AUTOCORRECT.lock().unwrap();
+                    *last_correct = Some((word_current.clone(), word_alternate.clone(), !first_layout));
+                    
+                    unsafe { winapi::um::utilapiset::Beep(800, 50); }
+                    log_to_file(&format!("Autocorrected: '{}' -> '{}'", word_current, word_alternate));
+                    
+                    LAYOUT_PROCESSING.store(false, Ordering::SeqCst);
+                });
+                return true;
+            }
+        } else {
+            if vk != 0xA0 && vk != 0xA1 && vk != 0xA2 && vk != 0xA3 && vk != 0xA4 && vk != 0xA5 {
+                let mut buf = TYPED_BUFFER.lock().unwrap();
+                buf.clear();
+            }
+        }
+    }
+
+    false
+}
+
 fn switch_active_window_layout(to_english: bool) {
     use winapi::um::winuser::{GetForegroundWindow, PostMessageW, WM_INPUTLANGCHANGEREQUEST};
     use winapi::shared::minwindef::LPARAM;
@@ -639,7 +1065,14 @@ unsafe extern "system" fn low_level_keyboard_proc(
             if prev != is_key_down {
                 state_changed = true;
             }
-        } else if vk == VK_ESCAPE && is_key_down {
+        }
+
+        // Вызываем автоанализатор и обработку ввода (автозамену)
+        if process_keyboard_input(vk, is_key_down) {
+            return 1;
+        }
+
+        if vk == VK_ESCAPE && is_key_down {
             if CAPSULE_ENABLED.load(Ordering::SeqCst) > 0 && RECORDING_OR_PAUSED.load(Ordering::SeqCst) {
                 if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
                     let _ = app.emit("global-escape", ());
