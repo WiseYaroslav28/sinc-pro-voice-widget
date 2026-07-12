@@ -1,11 +1,11 @@
-{
-  "version": "3.5.5",
-  "notes": "Версия 3.5.5: Добавлен локальный модуль смены раскладки клавиатуры выделенного текста по хоткею (Ctrl + Pause по умолчанию) с блокировкой клавиатурных хуков для избежания конфликтов с озвучкой.",
-  "pub_date": "2026-07-11T19:42:00Z",
+﻿{
+  "version": "3.5.6",
+  "notes": "Версия 3.5.6 — Автоматический релиз",
+  "pub_date": "2026-07-12T04:39:27Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSTVJBcmZnL2cySC9KNTdoQ1FoOGlKdWk1UVh5Z3NwQS9raTkyb2xpTUFWRlhNUEZ2TWRMMytQdnFBZlpVWnRpZEZoaURlb3lCaUNydlpucE5xNzAzYmdKdTNuQ2NLK1FrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNzk4OTU2CWZpbGU6dGF1cmktYXBwXzMuNS41X3g2NF9lbi1VUy5tc2kKMjV5RmNZMWhMOFZ3TTNSTFh4N1hWa05EOWhpQk9xYjZkbm1JOFRTSmJOZXF6ZGFyVUU1Z1pZZHRSRm1GSTcvaXN3NTNXTEdKT0pGU0FiMHFDdDNiQlE9PQo=",
-      "url": "https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/download/v3.5.5/tauri-app_3.5.5_x64_en-US.msi"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSTVJBcmZnL2cySDdmbHJpTXRmRmdHclg3aW5qNVZwalFNWUxndzBYRW1Tb3c4d3lUTUJjQ1NZL05zYUZ2cjcyejk4Z1JyRXZQYmlZUXVoeE9EOER5VUFvZmp2K2NjM2cwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzODMxMTYyCWZpbGU6dGF1cmktYXBwXzMuNS42X3g2NF9lbi1VUy5tc2kKc3FDbjBkNG44VHVGZmN5TlgwSm1pYk1ESXUxU3RMeHF0Skt4UlV5N3FLTzVzakpOMlRPQ0xsTlA4SXAzdDdVcEFvODlwcUlWNHNybHRSMVhJU2FyQ0E9PQo=",
+      "url": "https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/download/v3.5.6/tauri-app_3.5.6_x64_en-US.msi"
     }
   }
 }
