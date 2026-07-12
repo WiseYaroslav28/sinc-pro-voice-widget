@@ -39,19 +39,10 @@ struct TypedKey {
 
 lazy_static::lazy_static! {
     static ref TYPED_BUFFER: std::sync::Mutex<Vec<TypedKey>> = std::sync::Mutex::new(Vec::new());
-    static ref LAST_AUTOCORRECT: std::sync::Mutex<Option<(String, String, bool)>> = std::sync::Mutex::new(None);
-    static ref EXCLUDED_PROCESSES: std::sync::Mutex<HashSet<String>> = {
-        let mut set = HashSet::new();
-        set.insert("cmd.exe".to_string());
-        set.insert("powershell.exe".to_string());
-        set.insert("git.exe".to_string());
-        set.insert("cargo.exe".to_string());
-        set.insert("code.exe".to_string());
-        set.insert("idea64.exe".to_string());
-        set.insert("clion64.exe".to_string());
-        set.insert("studio64.exe".to_string());
-        std::sync::Mutex::new(set)
-    };
+    static ref LAST_AUTOCORRECT: std::sync::Mutex<Option<(String, String, bool, usize)>> = std::sync::Mutex::new(None);
+    static ref LAST_KEY_TIME: std::sync::Mutex<Instant> = std::sync::Mutex::new(Instant::now());
+    static ref EXCLUDED_WORDS: std::sync::Mutex<HashSet<String>> = std::sync::Mutex::new(HashSet::new());
+    static ref EXCLUDED_PROCESSES: std::sync::Mutex<HashSet<String>> = std::sync::Mutex::new(HashSet::new());
 }
 
 async fn get_clock_skew() -> i64 {
@@ -790,17 +781,33 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
     let shift = SHIFT_PRESSED.load(Ordering::SeqCst);
     let win = WIN_PRESSED.load(Ordering::SeqCst);
 
+    // Сбрасываем возможность отмены автозамены, если нажата любая другая клавиша
+    let is_modifier = vk == 0xA0 || vk == 0xA1 || vk == 0xA2 || vk == 0xA3 || vk == 0xA4 || vk == 0xA5 || vk == 0x5B || vk == 0x5C;
+    let is_undo_hotkey = shift && !ctrl && !alt && !win && vk == 0x08;
+    if is_key_down && !is_modifier && !is_undo_hotkey {
+        let mut last_correct = LAST_AUTOCORRECT.lock().unwrap();
+        if last_correct.is_some() {
+            *last_correct = None;
+        }
+    }
+
     // 1. Хоткей занесения в черный список: Ctrl + Alt + Shift + X
     if ctrl && alt && shift && !win && vk == 0x58 && is_key_down {
         if let Some(proc_name) = get_active_process_name() {
             let mut set = EXCLUDED_PROCESSES.lock().unwrap();
             if set.contains(&proc_name) {
                 set.remove(&proc_name);
-                unsafe { winapi::um::utilapiset::Beep(600, 150); }
+                unsafe {
+                    let _ = winapi::um::utilapiset::Beep(400, 100);
+                    let _ = winapi::um::utilapiset::Beep(350, 100);
+                }
                 log_to_file(&format!("Layout blacklist: Removed {}", proc_name));
             } else {
                 set.insert(proc_name.clone());
-                unsafe { winapi::um::utilapiset::Beep(1200, 150); }
+                unsafe {
+                    let _ = winapi::um::utilapiset::Beep(450, 100);
+                    let _ = winapi::um::utilapiset::Beep(500, 100);
+                }
                 log_to_file(&format!("Layout blacklist: Added {}", proc_name));
             }
         }
@@ -810,14 +817,17 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
     // 2. Отмена автозамены: Shift + Backspace
     if shift && !ctrl && !alt && !win && vk == 0x08 && is_key_down {
         let mut last_correct = LAST_AUTOCORRECT.lock().unwrap();
-        if let Some((original, corrected, to_english)) = last_correct.take() {
+        if let Some((original, corrected, to_english, backspace_count)) = last_correct.take() {
+
             std::thread::spawn(move || {
                 LAYOUT_PROCESSING.store(true, Ordering::SeqCst);
-                simulate_backspaces(corrected.chars().count());
+                // Микропауза перед стиранием, чтобы ОС успела обработать Shift+Backspace
+                std::thread::sleep(Duration::from_millis(30));
+                simulate_backspaces(backspace_count);
                 std::thread::sleep(Duration::from_millis(50));
                 simulate_unicode_input(&original);
                 switch_active_window_layout(!to_english);
-                unsafe { winapi::um::utilapiset::Beep(600, 80); }
+                unsafe { let _ = winapi::um::utilapiset::Beep(350, 60); }
                 log_to_file(&format!("Autocorrect Undo: Restored '{}'", original));
                 LAYOUT_PROCESSING.store(false, Ordering::SeqCst);
             });
@@ -837,11 +847,32 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
     }
 
     if is_key_down {
+        // Сбрасываем буфер ввода, если была пауза в печати больше 2 секунд
+        {
+            let mut last_time = LAST_KEY_TIME.lock().unwrap();
+            if last_time.elapsed() > Duration::from_secs(2) {
+                let mut buf = TYPED_BUFFER.lock().unwrap();
+                buf.clear();
+            }
+            *last_time = Instant::now();
+        }
+
         if let Some((eng, rus)) = map_vk_to_chars(vk) {
             if ctrl || alt || win {
                 let mut buf = TYPED_BUFFER.lock().unwrap();
                 buf.clear();
                 return false;
+            }
+
+            // Учитываем регистр на основе CapsLock и Shift
+            let caps_lock = unsafe { winapi::um::winuser::GetKeyState(winapi::um::winuser::VK_CAPITAL) & 1 } != 0;
+            let is_uppercase = shift ^ caps_lock;
+
+            let mut eng_char = eng;
+            let mut rus_char = rus;
+            if is_uppercase {
+                eng_char = eng_char.to_uppercase().to_string().chars().next().unwrap_or(eng_char);
+                rus_char = rus_char.to_uppercase().to_string().chars().next().unwrap_or(rus_char);
             }
 
             let is_eng_layout = unsafe {
@@ -856,8 +887,8 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
             let mut buf = TYPED_BUFFER.lock().unwrap();
             buf.push(TypedKey {
                 vk,
-                eng_char: eng,
-                rus_char: rus,
+                eng_char: eng_char,
+                rus_char: rus_char,
                 is_english_layout: is_eng_layout,
             });
             if buf.len() > 30 {
@@ -887,6 +918,20 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
             let word_current: String = typed_keys.iter().map(|k| if first_layout { k.eng_char } else { k.rus_char }).collect();
             let word_alternate: String = typed_keys.iter().map(|k| if first_layout { k.rus_char } else { k.eng_char }).collect();
 
+            // Проверяем, не находится ли слово в списке исключений
+            {
+                let word_set = EXCLUDED_WORDS.lock().unwrap();
+                if word_set.contains(&word_current.to_lowercase()) {
+                    return false;
+                }
+            }
+
+            // Игнорируем аббревиатуры (слова целиком в верхнем регистре, например RGB, HTML)
+            let is_all_caps = word_current.chars().all(|c| !c.is_alphabetic() || c.is_uppercase());
+            if is_all_caps {
+                return false;
+            }
+
             if word_current.chars().count() < 3 {
                 return false;
             }
@@ -895,6 +940,8 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
                 let word_len = word_current.chars().count();
                 std::thread::spawn(move || {
                     LAYOUT_PROCESSING.store(true, Ordering::SeqCst);
+                    // Микропауза перед стиранием, чтобы ОС успела завершить печать последней буквы
+                    std::thread::sleep(Duration::from_millis(30));
                     simulate_backspaces(word_len);
                     std::thread::sleep(Duration::from_millis(50));
                     simulate_unicode_input(&word_alternate);
@@ -907,9 +954,10 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
                     }
                     
                     let mut last_correct = LAST_AUTOCORRECT.lock().unwrap();
-                    *last_correct = Some((word_current.clone(), word_alternate.clone(), !first_layout));
+                    let total_backspaces = word_len + 1; // исправленное слово + пробел/Enter
+                    *last_correct = Some((word_current.clone(), word_alternate.clone(), !first_layout, total_backspaces));
                     
-                    unsafe { winapi::um::utilapiset::Beep(800, 50); }
+                    unsafe { let _ = winapi::um::utilapiset::Beep(400, 40); }
                     log_to_file(&format!("Autocorrected: '{}' -> '{}'", word_current, word_alternate));
                     
                     LAYOUT_PROCESSING.store(false, Ordering::SeqCst);
@@ -1436,6 +1484,12 @@ pub struct AppConfig {
     #[serde(default = "default_layout_hotkey_key")]
     pub layout_hotkey_key: String,
     
+    #[serde(default = "default_layout_excluded_words")]
+    pub layout_excluded_words: Vec<String>,
+    
+    #[serde(default = "default_layout_excluded_processes")]
+    pub layout_excluded_processes: Vec<String>,
+    
     #[serde(default)]
     pub ai_servers: Vec<LocalAiServer>,
 }
@@ -1463,9 +1517,28 @@ impl Default for AppConfig {
             tts_local_voice: "ru_RU-dmitri-medium.onnx".to_string(),
             layout_hotkey_modifier: "Ctrl".to_string(),
             layout_hotkey_key: "Pause".to_string(),
+            layout_excluded_words: vec![],
+            layout_excluded_processes: default_layout_excluded_processes(),
             ai_servers: vec![],
         }
     }
+}
+
+fn default_layout_excluded_words() -> Vec<String> {
+    Vec::new()
+}
+
+fn default_layout_excluded_processes() -> Vec<String> {
+    vec![
+        "cmd.exe".to_string(),
+        "powershell.exe".to_string(),
+        "git.exe".to_string(),
+        "cargo.exe".to_string(),
+        "code.exe".to_string(),
+        "idea64.exe".to_string(),
+        "clion64.exe".to_string(),
+        "studio64.exe".to_string(),
+    ]
 }
 
 fn default_ui_lang() -> String {
@@ -1604,6 +1677,18 @@ fn sync_layout_config(config: &AppConfig) {
     LAYOUT_CONVERTER_ENABLED.store(config.layout_converter_mode, Ordering::SeqCst);
     LAYOUT_HOTKEY_MODIFIER.store(parse_hotkey_modifier(&config.layout_hotkey_modifier), Ordering::SeqCst);
     LAYOUT_HOTKEY_KEY.store(parse_hotkey_key(&config.layout_hotkey_key), Ordering::SeqCst);
+
+    let mut word_set = EXCLUDED_WORDS.lock().unwrap();
+    word_set.clear();
+    for word in &config.layout_excluded_words {
+        word_set.insert(word.to_lowercase());
+    }
+
+    let mut proc_set = EXCLUDED_PROCESSES.lock().unwrap();
+    proc_set.clear();
+    for proc in &config.layout_excluded_processes {
+        proc_set.insert(proc.to_lowercase());
+    }
 }
 
 fn load_config_internal(app_handle: &tauri::AppHandle) -> Result<AppConfig, String> {
@@ -1710,6 +1795,16 @@ async fn update_config_fields(app_handle: tauri::AppHandle, fields: serde_json::
         }
         if let Some(val) = obj.get("layout_hotkey_key") {
             if let Some(s) = val.as_str() { config.layout_hotkey_key = s.to_string(); }
+        }
+        if let Some(val) = obj.get("layout_excluded_words") {
+            if let Ok(words) = serde_json::from_value::<Vec<String>>(val.clone()) {
+                config.layout_excluded_words = words;
+            }
+        }
+        if let Some(val) = obj.get("layout_excluded_processes") {
+            if let Ok(procs) = serde_json::from_value::<Vec<String>>(val.clone()) {
+                config.layout_excluded_processes = procs;
+            }
         }
         if let Some(val) = obj.get("ai_servers") {
             if let Ok(servers) = serde_json::from_value::<Vec<LocalAiServer>>(val.clone()) {

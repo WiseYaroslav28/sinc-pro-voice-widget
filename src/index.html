@@ -157,6 +157,10 @@
             <span class="material-symbols-outlined text-[20px]">screenshot_region</span>
             <span class="text-[12px] sidebar-item-text">Перевод экрана</span>
           </button>
+          <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="cursor: pointer;" data-tab="tab-layout">
+            <span class="material-symbols-outlined text-[20px]">keyboard</span>
+            <span class="text-[12px] sidebar-item-text">Автораскладка</span>
+          </button>
           <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="cursor: pointer;" data-tab="tab-history">
             <span class="material-symbols-outlined text-[20px]">psychology</span>
             <span class="text-[12px] sidebar-item-text">Журнал</span>
@@ -395,6 +399,83 @@
             </div>
           </section>
 
+          <!-- ВКЛАДКА: АВТОРАСКЛАДКА (Punto Switcher) -->
+          <section class="tab-content flex flex-col gap-4 flex-1 overflow-y-auto py-4" id="tab-layout" style="display: none;">
+            <!-- Блок 1: Горячие клавиши -->
+            <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-5">
+              <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-4">Управление и Горячие Клавиши</h3>
+              
+              <div class="flex flex-col gap-3 text-[13px] mb-4">
+                <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
+                  <span class="text-[#ccc3d8]">Ручная смена раскладки выделенного / последнего слова</span>
+                  <div class="flex items-center gap-1.5">
+                    <select class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] rounded px-1.5 py-0.5 text-[11px] font-semibold focus:outline-none focus:border-[#d2bbff]" id="setting-layout-modifier">
+                      <option value="Ctrl">Ctrl</option>
+                      <option value="Alt">Alt</option>
+                      <option value="Shift">Shift</option>
+                      <option value="Win">Win</option>
+                    </select>
+                    <span class="text-[#ccc3d8]">+</span>
+                    <select class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] rounded px-1.5 py-0.5 text-[11px] font-semibold focus:outline-none focus:border-[#d2bbff]" id="setting-layout-key">
+                      <option value="Pause">Pause</option>
+                      <option value="`">&grave; (Ё)</option>
+                      <option value="CapsLock">CapsLock</option>
+                      <option value="Insert">Insert</option>
+                      <option value="ScrollLock">ScrollLock</option>
+                      <option value="F12">F12</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="flex justify-between items-center py-2">
+                  <span class="text-[#ccc3d8]">Отмена последнего автоисправления</span>
+                  <kbd class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] px-2 py-1 rounded font-semibold text-[11px]">Shift + Backspace</kbd>
+                </div>
+              </div>
+            </div>
+
+            <!-- Блок 2: Список исключений слов -->
+            <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-5">
+              <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-1">Исключения слов</h3>
+              <p class="text-[11px] text-[#ccc3d8] mb-4">Слова из этого списка не будут автоматически заменяться при вводе.</p>
+              
+              <div class="flex gap-2 mb-4">
+                <input type="text" id="input-layout-word" 
+                       class="flex-1 bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:border-[#d2bbff]" 
+                       placeholder="Введите слово (например: rgb)..." />
+                <button id="btn-layout-add-word" 
+                        class="bg-[#d2bbff] text-[#36007d] hover:bg-[#eaddff] font-semibold px-4 py-2 rounded-lg text-[13px] transition-colors focus:outline-none">
+                  Добавить
+                </button>
+              </div>
+
+              <!-- Контейнер для тегов слов-исключений -->
+              <div id="layout-words-container" class="flex flex-wrap gap-2 min-h-[40px] p-3 bg-[#1b1b20]/30 rounded-lg border border-[#4a4455]/10">
+                <!-- Заполняется JS -->
+              </div>
+            </div>
+
+            <!-- Блок 3: Исключения приложений -->
+            <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-5">
+              <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-1">Исключения приложений</h3>
+              <p class="text-[11px] text-[#ccc3d8] mb-4">Автоматическая смена раскладки будет полностью отключена в этих программах.</p>
+              
+              <div class="flex gap-2 mb-4">
+                <input type="text" id="input-layout-app" 
+                       class="flex-1 bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:border-[#d2bbff]" 
+                       placeholder="Имя процесса (например: photoshop.exe)..." />
+                <button id="btn-layout-add-app" 
+                        class="bg-[#d2bbff] text-[#36007d] hover:bg-[#eaddff] font-semibold px-4 py-2 rounded-lg text-[13px] transition-colors focus:outline-none">
+                  Добавить
+                </button>
+              </div>
+
+              <!-- Контейнер для тегов приложений-исключений -->
+              <div id="layout-apps-container" class="flex flex-wrap gap-2 min-h-[40px] p-3 bg-[#1b1b20]/30 rounded-lg border border-[#4a4455]/10">
+                <!-- Заполняется JS -->
+              </div>
+            </div>
+          </section>
+
           <!-- ВКЛАДКА 4: НАСТРОЙКИ (SETTINGS) -->
           <section class="tab-content flex flex-col gap-4 flex-1 overflow-y-auto py-4" id="tab-settings" style="display: none;">
             <!-- Блок 1: Локализация -->
@@ -599,8 +680,8 @@
                       <option value="F12">F12</option>
                     </select>
                   </div>
-                </div>
               </div>
+            </div>
             </div>
 
             <!-- Блок 5: Система -->
@@ -883,6 +964,10 @@
             document.getElementById('setting-ocr-mode').value = config.ocr_mode || 'text';
             document.getElementById('setting-layout-modifier').value = config.layout_hotkey_modifier || 'Ctrl';
             document.getElementById('setting-layout-key').value = config.layout_hotkey_key || 'Pause';
+            layoutExcludedWords = config.layout_excluded_words || [];
+            renderLayoutWords();
+            layoutExcludedProcesses = config.layout_excluded_processes || [];
+            renderLayoutApps();
             
             // Проверяем статус установленных локальных плагинов для динамического наполнения селекторов
             await updateExtensionsStatus();
@@ -946,6 +1031,8 @@
             tts_engine: document.getElementById('setting-tts-engine').value,
             stt_local_model: sttLocalModel,
             tts_local_voice: document.getElementById('setting-tts-local-voice').value,
+            layout_excluded_words: layoutExcludedWords,
+            layout_excluded_processes: layoutExcludedProcesses,
             ai_servers: localAiServers
           };
           try {
@@ -1236,6 +1323,52 @@
         }
       }
 
+      // Переменные для списков исключений смены раскладки
+      let layoutExcludedWords = [];
+      let layoutExcludedProcesses = [];
+
+      function renderLayoutWords() {
+        const container = document.getElementById('layout-words-container');
+        if (!container) return;
+        if (layoutExcludedWords.length === 0) {
+          container.innerHTML = '<div class="text-[11px] text-[#4a4455] italic">Нет слов в исключениях</div>';
+          return;
+        }
+        container.innerHTML = layoutExcludedWords.map((word, index) => `
+          <span class="flex items-center gap-1.5 bg-[#25232d] hover:bg-[#2f2b3a] border border-[#d2bbff]/20 text-[#d2bbff] px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors">
+            <span>${word}</span>
+            <button class="hover:text-white focus:outline-none leading-none text-[12px] font-bold" onclick="removeLayoutWord(${index})">&times;</button>
+          </span>
+        `).join('');
+      }
+
+      function renderLayoutApps() {
+        const container = document.getElementById('layout-apps-container');
+        if (!container) return;
+        if (layoutExcludedProcesses.length === 0) {
+          container.innerHTML = '<div class="text-[11px] text-[#4a4455] italic">Нет приложений в исключениях</div>';
+          return;
+        }
+        container.innerHTML = layoutExcludedProcesses.map((app, index) => `
+          <span class="flex items-center gap-1.5 bg-[#25232d] hover:bg-[#2f2b3a] border border-[#d2bbff]/20 text-[#d2bbff] px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors">
+            <span>${app}</span>
+            <button class="hover:text-white focus:outline-none leading-none text-[12px] font-bold" onclick="removeLayoutApp(${index})">&times;</button>
+          </span>
+        `).join('');
+      }
+
+      window.removeLayoutWord = function(index) {
+        layoutExcludedWords.splice(index, 1);
+        renderLayoutWords();
+        saveConfig();
+      };
+
+      window.removeLayoutApp = function(index) {
+        layoutExcludedProcesses.splice(index, 1);
+        renderLayoutApps();
+        saveConfig();
+      };
+
       // Привязываем автосохранение настроек
       document.getElementById('setting-ui-lang').addEventListener('change', saveConfig);
       document.getElementById('setting-dictation-lang').addEventListener('change', saveConfig);
@@ -1246,6 +1379,39 @@
       document.getElementById('setting-tts-local-voice').addEventListener('change', saveConfig);
       document.getElementById('setting-layout-modifier').addEventListener('change', saveConfig);
       document.getElementById('setting-layout-key').addEventListener('change', saveConfig);
+
+      // Привязываем обработчики добавления исключений раскладки
+      document.getElementById('btn-layout-add-word').addEventListener('click', () => {
+        const input = document.getElementById('input-layout-word');
+        const val = input.value.trim().toLowerCase();
+        if (val && !layoutExcludedWords.includes(val)) {
+          layoutExcludedWords.push(val);
+          input.value = '';
+          renderLayoutWords();
+          saveConfig();
+        }
+      });
+      document.getElementById('input-layout-word').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          document.getElementById('btn-layout-add-word').click();
+        }
+      });
+
+      document.getElementById('btn-layout-add-app').addEventListener('click', () => {
+        const input = document.getElementById('input-layout-app');
+        const val = input.value.trim().toLowerCase();
+        if (val && !layoutExcludedProcesses.includes(val)) {
+          layoutExcludedProcesses.push(val);
+          input.value = '';
+          renderLayoutApps();
+          saveConfig();
+        }
+      });
+      document.getElementById('input-layout-app').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          document.getElementById('btn-layout-add-app').click();
+        }
+      });
       document.getElementById('setting-api-key').addEventListener('input', debounce(async () => {
         const key = document.getElementById('setting-api-key').value;
         localStorage.setItem('apiKey', key);
@@ -2896,7 +3062,7 @@
 
         // --- DOM элементы ---
         const REQUIRED_IDS = [
-          'tab-home', 'tab-history', 'tab-ocr', 'tab-settings',
+          'tab-home', 'tab-history', 'tab-ocr', 'tab-settings', 'tab-layout',
           'history-list', 'setting-api-key', 'setting-ai-model',
           'dashboard-view-combo', 'summary-text', 'activity-time',
           'win-minimize', 'win-maximize', 'win-close',
@@ -2908,7 +3074,7 @@
         });
 
         // --- Навигация ---
-        const navTabs = ['tab-home', 'tab-ocr', 'tab-history', 'tab-settings'];
+        const navTabs = ['tab-home', 'tab-ocr', 'tab-history', 'tab-settings', 'tab-layout'];
         navTabs.forEach(tabId => {
           check(`NAV: sidebar-item[data-tab="${tabId}"] кликабелен`, () => {
             const btn = document.querySelector(`.sidebar-item[data-tab="${tabId}"]`);
