@@ -24,6 +24,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Инициализация единого виджета TTS
     if (window.renderTtsWidget && root) {
         window.renderTtsWidget(root, true); // isMain = true
+        if (root.updateState) {
+            root.updateState(engine.settings);
+        }
     }
 
     // Слушаем события от компонента виджета
@@ -56,11 +59,19 @@ document.addEventListener('DOMContentLoaded', () => {
                         engine.audioElement.playbackRate = engine.settings.speed;
                     }
                 }
-                if (payload.voice !== undefined) {
-                    engine.settings.voice = payload.voice;
-                    engine.broadcastState('setting', { voice: payload.voice });
+                if (payload.voice !== undefined || payload.tts_local_voice !== undefined || payload.tts_engine !== undefined) {
+                    if (payload.voice !== undefined) engine.settings.voice = payload.voice;
+                    if (payload.tts_engine !== undefined) engine.settings.tts_engine = payload.tts_engine;
+                    if (payload.tts_local_voice !== undefined) engine.settings.tts_local_voice = payload.tts_local_voice;
+                    
+                    engine.broadcastState('setting', { 
+                        voice: engine.settings.voice,
+                        tts_engine: engine.settings.tts_engine,
+                        tts_local_voice: engine.settings.tts_local_voice
+                    });
+                    
                     // Если сменили голос — загружаем текст заново, чтобы перекачать кэш
-                    if (contentEditable.innerText.trim()) {
+                    if (contentEditable && contentEditable.innerText.trim() && contentEditable.innerText.trim() !== DEFAULT_PLACEHOLDER) {
                         engine.loadText(contentEditable.innerText);
                         isTextChanged = false;
                         if (engine.isPlaying) engine.play();

@@ -120,8 +120,93 @@ fn write_js_log(log: String) {
     }
 }
 
+async fn speak_local_tts(app_handle: &tauri::AppHandle, text: String, _voice: String, _rate: f32) -> Result<String, String> {
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let ext_dir = app_data_dir.join("extensions").join("tts");
+
+    let piper_exe = ext_dir.join("piper.exe");
+    let config = load_config_internal(app_handle).unwrap_or_else(|_| AppConfig::default());
+
+    let voice_file = if config.tts_local_voice.is_empty() {
+        "ru_RU-dmitri-medium.onnx".to_string()
+    } else {
+        config.tts_local_voice.clone()
+    };
+    let model_path = ext_dir.join(&voice_file);
+    let temp_wav_path = ext_dir.join("temp_output.wav");
+
+    if !piper_exe.exists() || !model_path.exists() {
+        return Err("Локальный модуль TTS или его компоненты не найдены. Пожалуйста, выполните установку повторно.".to_string());
+    }
+
+    let espeak_data_dir = ext_dir.join("espeak-ng-data");
+
+    // Запускаем piper.exe
+    use tokio::io::AsyncWriteExt;
+    let mut cmd = tokio::process::Command::new(&piper_exe);
+    cmd.current_dir(&ext_dir);
+
+    let path_key = if std::env::var_os("Path").is_some() { "Path" } else { "PATH" };
+    if let Some(path_var) = std::env::var_os(path_key) {
+        let mut paths = std::env::split_paths(&path_var).collect::<Vec<_>>();
+        paths.insert(0, ext_dir.clone());
+        if let Ok(new_path) = std::env::join_paths(paths) {
+            cmd.env(path_key, new_path);
+        }
+    }
+
+    cmd.arg("-m")
+        .arg(&model_path)
+        .arg("-f")
+        .arg(&temp_wav_path);
+
+    if espeak_data_dir.exists() {
+        cmd.arg("--espeak_data").arg(&espeak_data_dir);
+    }
+
+    let mut child = cmd
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Не удалось запустить piper-cli: {}", e))?;
+
+    // Пишем текст в stdin процесса
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(text.as_bytes()).await.map_err(|e| e.to_string())?;
+        stdin.flush().await.map_err(|e| e.to_string())?;
+    }
+
+    let output = child.wait_with_output().await.map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        let err_msg = String::from_utf8_lossy(&output.stderr).to_string();
+        let _ = std::fs::remove_file(&temp_wav_path);
+        return Err(format!("Ошибка генерации речи: {}", err_msg));
+    }
+
+    // Считываем сгенерированный WAV файл
+    let audio_bytes = std::fs::read(&temp_wav_path).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(&temp_wav_path);
+
+    if audio_bytes.is_empty() {
+        return Err("Локальный TTS сгенерировал пустой файл".to_string());
+    }
+
+    Ok(STANDARD.encode(&audio_bytes))
+}
+
 #[tauri::command]
-async fn speak_edge_tts(text: String, voice: String, rate: f32) -> Result<String, String> {
+async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: String, rate: f32) -> Result<String, String> {
+    let config = load_config_internal(&app_handle).unwrap_or_else(|_| AppConfig::default());
+
+    if config.tts_engine == "local" {
+        return speak_local_tts(&app_handle, text, voice, rate).await;
+    }
+
     let _guard = EDGE_TTS_MUTEX.lock().await;
     let res = speak_edge_tts_internal(text.clone(), voice, rate).await;
     if let Err(ref e) = res {
@@ -824,6 +909,14 @@ async fn hide_ocr_window(app_handle: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LocalAiServer {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    pub model: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AppConfig {
     #[serde(default = "default_ui_lang")]
     pub ui_lang: String,
@@ -860,11 +953,52 @@ pub struct AppConfig {
     #[serde(default = "default_false")]
     pub tts_translate: bool,
 
+    // Движки для STT и TTS
+    #[serde(default = "default_stt_engine")]
+    pub stt_engine: String,
+    #[serde(default = "default_tts_engine")]
+    pub tts_engine: String,
+    #[serde(default = "default_stt_local_model")]
+    pub stt_local_model: String,
+    #[serde(default = "default_tts_local_voice")]
+    pub tts_local_voice: String,
+
     // Горячие клавиши смены раскладки
     #[serde(default = "default_layout_hotkey_modifier")]
     pub layout_hotkey_modifier: String,
     #[serde(default = "default_layout_hotkey_key")]
     pub layout_hotkey_key: String,
+    
+    #[serde(default)]
+    pub ai_servers: Vec<LocalAiServer>,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        AppConfig {
+            ui_lang: "ru".to_string(),
+            dictation_lang: "auto".to_string(),
+            api_key: "".to_string(),
+            yandex_api_key: "".to_string(),
+            ai_model: "gemini-2.0-flash".to_string(),
+            ocr_mode: "text".to_string(),
+            capsule_mode: 2,
+            widget_mode: 2,
+            ocr_mode_switch: 0,
+            layout_converter_mode: 2,
+            capsule_magnet: true,
+            tts_speed: 1.0,
+            tts_voice: "ru-RU-SvetlanaNeural".to_string(),
+            tts_translate: false,
+            stt_engine: "gemini".to_string(),
+            tts_engine: "edge".to_string(),
+            stt_local_model: "ggml-base.bin".to_string(),
+            tts_local_voice: "ru_RU-dmitri-medium.onnx".to_string(),
+            layout_hotkey_modifier: "Ctrl".to_string(),
+            layout_hotkey_key: "Pause".to_string(),
+            ai_servers: vec![],
+        }
+    }
 }
 
 fn default_ui_lang() -> String {
@@ -909,6 +1043,18 @@ fn default_layout_hotkey_modifier() -> String {
 fn default_layout_hotkey_key() -> String {
     "Pause".to_string()
 }
+fn default_stt_engine() -> String {
+    "gemini".to_string()
+}
+fn default_tts_engine() -> String {
+    "edge".to_string()
+}
+fn default_stt_local_model() -> String {
+    "ggml-base.bin".to_string()
+}
+fn default_tts_local_voice() -> String {
+    "ru_RU-dmitri-medium.onnx".to_string()
+}
 
 // Один AI-результат (может быть несколько на одну запись)
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -939,6 +1085,10 @@ pub struct HistoryEntry {
     #[serde(default)]
     pub ai_results: Vec<AiResult>,
     pub audio_path: String,
+    #[serde(default)]
+    pub stt_model: String,
+    #[serde(default)]
+    pub llm_model: String,
 }
 
 #[derive(Deserialize)]
@@ -996,24 +1146,7 @@ fn load_config_internal(app_handle: &tauri::AppHandle) -> Result<AppConfig, Stri
         .map_err(|e| e.to_string())?;
     let config_path = config_dir.join("config.json");
     if !config_path.exists() {
-        return Ok(AppConfig {
-            ui_lang: "ru".to_string(),
-            dictation_lang: "auto".to_string(),
-            api_key: "".to_string(),
-            yandex_api_key: "".to_string(),
-            ai_model: "gemini-2.0-flash".to_string(),
-            ocr_mode: "text".to_string(),
-            capsule_mode: 2,
-            widget_mode: 2,
-            ocr_mode_switch: 0,
-            layout_converter_mode: 2,
-            capsule_magnet: true,
-            tts_speed: 1.0,
-            tts_voice: "ru-RU-SvetlanaNeural".to_string(),
-            tts_translate: false,
-            layout_hotkey_modifier: "Ctrl".to_string(),
-            layout_hotkey_key: "Pause".to_string(),
-        });
+        return Ok(AppConfig::default());
     }
     let json_str = std::fs::read_to_string(config_path).map_err(|e| e.to_string())?;
     let config: AppConfig = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
@@ -1047,24 +1180,7 @@ async fn save_config(app_handle: tauri::AppHandle, config: AppConfig) -> Result<
 
 #[tauri::command]
 async fn update_config_fields(app_handle: tauri::AppHandle, fields: serde_json::Value) -> Result<(), String> {
-    let mut config = load_config_internal(&app_handle).unwrap_or_else(|_| AppConfig {
-        ui_lang: "ru".to_string(),
-        dictation_lang: "auto".to_string(),
-        api_key: "".to_string(),
-        yandex_api_key: "".to_string(),
-        ai_model: "gemini-2.0-flash".to_string(),
-        ocr_mode: "text".to_string(),
-        capsule_mode: 2,
-        widget_mode: 2,
-        ocr_mode_switch: 0,
-        layout_converter_mode: 2,
-        capsule_magnet: true,
-        tts_speed: 1.0,
-        tts_voice: "ru-RU-SvetlanaNeural".to_string(),
-        tts_translate: false,
-        layout_hotkey_modifier: "Ctrl".to_string(),
-        layout_hotkey_key: "Pause".to_string(),
-    });
+    let mut config = load_config_internal(&app_handle).unwrap_or_else(|_| AppConfig::default());
 
     if let Some(obj) = fields.as_object() {
         if let Some(val) = obj.get("ui_lang") {
@@ -1107,6 +1223,18 @@ async fn update_config_fields(app_handle: tauri::AppHandle, fields: serde_json::
         if let Some(val) = obj.get("tts_translate") {
             if let Some(b) = val.as_bool() { config.tts_translate = b; }
         }
+        if let Some(val) = obj.get("stt_engine") {
+            if let Some(s) = val.as_str() { config.stt_engine = s.to_string(); }
+        }
+        if let Some(val) = obj.get("tts_engine") {
+            if let Some(s) = val.as_str() { config.tts_engine = s.to_string(); }
+        }
+        if let Some(val) = obj.get("stt_local_model") {
+            if let Some(s) = val.as_str() { config.stt_local_model = s.to_string(); }
+        }
+        if let Some(val) = obj.get("tts_local_voice") {
+            if let Some(s) = val.as_str() { config.tts_local_voice = s.to_string(); }
+        }
         if let Some(val) = obj.get("layout_converter_mode") {
             if let Some(n) = val.as_u64() { config.layout_converter_mode = n as u8; }
         }
@@ -1115,6 +1243,11 @@ async fn update_config_fields(app_handle: tauri::AppHandle, fields: serde_json::
         }
         if let Some(val) = obj.get("layout_hotkey_key") {
             if let Some(s) = val.as_str() { config.layout_hotkey_key = s.to_string(); }
+        }
+        if let Some(val) = obj.get("ai_servers") {
+            if let Ok(servers) = serde_json::from_value::<Vec<LocalAiServer>>(val.clone()) {
+                config.ai_servers = servers;
+            }
         }
     }
 
@@ -1133,6 +1266,460 @@ async fn update_config_fields(app_handle: tauri::AppHandle, fields: serde_json::
     OCR_ENABLED.store(config.ocr_mode_switch, Ordering::SeqCst);
     sync_layout_config(&config);
 
+    Ok(())
+}
+#[tauri::command]
+async fn get_installed_voices(app_handle: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let ext_dir = app_data_dir.join("extensions").join("tts");
+    if !ext_dir.exists() {
+        return Ok(vec![]);
+    }
+    let mut voices = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(ext_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext == "onnx" {
+                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                            voices.push(name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(voices)
+}
+
+#[tauri::command]
+async fn get_installed_stt_models(app_handle: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let ext_dir = app_data_dir.join("extensions").join("stt");
+    if !ext_dir.exists() {
+        return Ok(vec![]);
+    }
+    let mut models = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(ext_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext == "bin" {
+                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                            models.push(name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(models)
+}
+
+#[tauri::command]
+async fn ping_ai_server(url: String) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(2000))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    let check_url = format!("{}/v1/models", url.trim_end_matches('/'));
+
+    match client.get(&check_url).send().await {
+        Ok(res) => {
+            if res.status().is_success() {
+                Ok("online".to_string())
+            } else {
+                Ok("online".to_string())
+            }
+        }
+        Err(_) => {
+            let root_url = url.trim_end_matches('/').to_string();
+            match client.get(&root_url).send().await {
+                Ok(_) => Ok("online".to_string()),
+                Err(_) => Ok("offline".to_string())
+            }
+        }
+    }
+}
+
+#[tauri::command]
+async fn check_extension_status(app_handle: tauri::AppHandle, ext_type: String) -> Result<String, String> {
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+
+    let ext_dir = app_data_dir.join("extensions").join(&ext_type);
+
+    if !ext_dir.exists() {
+        return Ok("NotInstalled".to_string());
+    }
+
+    let has_exe = std::fs::read_dir(&ext_dir)
+        .map(|entries| {
+            entries.filter_map(|e| e.ok()).any(|entry| {
+                let path = entry.path();
+                path.is_file() && path.extension().map_or(false, |ext| ext == "exe")
+            })
+        })
+        .unwrap_or(false);
+
+    if has_exe {
+        Ok("Installed".to_string())
+    } else {
+        Ok("NotInstalled".to_string())
+    }
+}
+
+#[tauri::command]
+async fn download_file_with_progress(
+    app_handle: &tauri::AppHandle,
+    _client: &reqwest::Client,
+    url: &str,
+    dest_path: &std::path::Path,
+    ext_type: &str,
+    progress_offset: f64,
+    progress_scale: f64,
+) -> Result<(), String> {
+    use tauri::Emitter;
+    use tokio::time::{sleep, Duration};
+
+    println!("[DOWNLOAD] Starting curl download for: {}", url);
+
+    if dest_path.exists() {
+        let _ = std::fs::remove_file(dest_path);
+    }
+
+    let expected_size: u64 = if url.contains("piper_windows_amd64.zip") {
+        15_600_000
+    } else if url.contains("whisper-bin-x64.zip") {
+        3_600_000
+    } else if url.contains(".onnx") {
+        63_200_000
+    } else {
+        5_000
+    };
+
+    let mut child = tokio::process::Command::new("curl")
+        .arg("-L")
+        .arg("-s")
+        .arg("-o")
+        .arg(dest_path)
+        .arg(url)
+        .spawn()
+        .map_err(|e| format!("Не удалось запустить curl: {}", e))?;
+
+    loop {
+        tokio::select! {
+            status = child.wait() => {
+                match status {
+                    Ok(s) if s.success() => {
+                        println!("[DOWNLOAD] curl finished successfully");
+                        break;
+                    }
+                    Ok(s) => return Err(format!("curl завершился с ошибкой: {}", s)),
+                    Err(e) => return Err(format!("Ошибка ожидания curl: {}", e)),
+                }
+            }
+            _ = sleep(Duration::from_millis(300)) => {
+                if let Ok(meta) = std::fs::metadata(dest_path) {
+                    let downloaded = meta.len();
+                    let file_percent = if expected_size > 0 {
+                        (downloaded as f64 / expected_size as f64).min(1.0)
+                    } else {
+                        0.0
+                    };
+                    let overall_percent = ((progress_offset + file_percent * progress_scale) * 100.0) as u32;
+                    let _ = app_handle.emit("extension-progress", serde_json::json!({
+                        "ext_type": ext_type,
+                        "percent": overall_percent.clamp(0, 100),
+                        "downloaded": downloaded,
+                        "total": expected_size
+                    }));
+                }
+            }
+        }
+    }
+
+    let overall_percent = ((progress_offset + progress_scale) * 100.0) as u32;
+    let _ = app_handle.emit("extension-progress", serde_json::json!({
+        "ext_type": ext_type,
+        "percent": overall_percent.clamp(0, 100),
+        "downloaded": expected_size,
+        "total": expected_size
+    }));
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn install_extension(app_handle: tauri::AppHandle, ext_type: String, model_id: String) -> Result<(), String> {
+    use tauri::Emitter;
+
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let ext_dir = app_data_dir.join("extensions").join(&ext_type);
+    std::fs::create_dir_all(&ext_dir).map_err(|e| e.to_string())?;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    if ext_type == "stt" {
+        let whisper_exe = ext_dir.join("whisper-cli.exe");
+        let ffmpeg_exe = ext_dir.join("ffmpeg.exe");
+
+        if !whisper_exe.exists() {
+            // Шаг 1: Скачиваем whisper-bin-x64.zip (3.5 MB) -> Прогресс 0% - 15%
+            let zip_url = "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-bin-x64.zip";
+            let temp_zip_path = ext_dir.join("temp.zip");
+            download_file_with_progress(&app_handle, &client, zip_url, &temp_zip_path, "stt", 0.0, 0.15).await?;
+
+            // Рапасковка ZIP-архива -> Прогресс 15% - 20%
+            let _ = app_handle.emit("extension-progress", serde_json::json!({
+                "ext_type": "stt",
+                "percent": 15,
+                "downloaded": 0,
+                "total": 100
+            }));
+
+            let zip_file = std::fs::File::open(&temp_zip_path).map_err(|e| e.to_string())?;
+            let mut archive = zip::ZipArchive::new(zip_file).map_err(|e| e.to_string())?;
+            for i in 0..archive.len() {
+                let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
+                let outpath = match file.enclosed_name() {
+                    Some(path) => {
+                        if let Some(file_name) = path.file_name() {
+                            ext_dir.join(file_name)
+                        } else {
+                            continue;
+                        }
+                    }
+                    None => continue,
+                };
+                if file.name().ends_with('/') {
+                    std::fs::create_dir_all(&outpath).map_err(|e| e.to_string())?;
+                } else {
+                    let mut outfile = std::fs::File::create(&outpath).map_err(|e| e.to_string())?;
+                    std::io::copy(&mut file, &mut outfile).map_err(|e| e.to_string())?;
+                }
+            }
+            let _ = std::fs::remove_file(temp_zip_path);
+        } else {
+            let _ = app_handle.emit("extension-progress", serde_json::json!({
+                "ext_type": "stt",
+                "percent": 20,
+                "downloaded": 0,
+                "total": 100
+            }));
+        }
+
+        if !ffmpeg_exe.exists() {
+            // Шаг 2: Скачиваем ffmpeg.exe (50 MB) -> Прогресс 20% - 50%
+            let ffmpeg_url = "https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/ffmpeg.exe";
+            let ffmpeg_path = ext_dir.join("ffmpeg.exe");
+            download_file_with_progress(&app_handle, &client, ffmpeg_url, &ffmpeg_path, "stt", 0.20, 0.30).await?;
+        } else {
+            let _ = app_handle.emit("extension-progress", serde_json::json!({
+                "ext_type": "stt",
+                "percent": 50,
+                "downloaded": 0,
+                "total": 100
+            }));
+        }
+
+        // Шаг 3: Скачиваем выбранную модель Whisper -> Прогресс 50% - 100%
+        let model_url = format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{}", model_id);
+        let model_path = ext_dir.join(&model_id);
+        if !model_path.exists() {
+            download_file_with_progress(&app_handle, &client, &model_url, &model_path, "stt", 0.50, 0.50).await?;
+        } else {
+            let _ = app_handle.emit("extension-progress", serde_json::json!({
+                "ext_type": "stt",
+                "percent": 100,
+                "downloaded": 0,
+                "total": 100
+            }));
+        }
+
+        // Сохраняем в конфигурацию
+        if let Ok(mut config) = load_config_internal(&app_handle) {
+            config.stt_local_model = model_id;
+            if let Ok(config_dir) = app_handle.path().app_config_dir() {
+                let _ = std::fs::write(config_dir.join("config.json"), serde_json::to_string_pretty(&config).unwrap_or_default());
+            }
+        }
+
+    } else if ext_type == "tts" {
+        let piper_exe = ext_dir.join("piper.exe");
+        let espeak_data_dir = ext_dir.join("espeak-ng-data");
+
+        println!("[TTS INSTALL] piper_exe exists: {}, espeak_data_dir exists: {}", piper_exe.exists(), espeak_data_dir.exists());
+
+        if !piper_exe.exists() || !espeak_data_dir.exists() {
+            // Шаг 1: Скачиваем piper_windows_amd64.zip (15 MB) -> Прогресс 0% - 40%
+            let zip_url = "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip";
+            let temp_zip_path = ext_dir.join("temp.zip");
+            println!("[TTS INSTALL] Starting download of piper zip from: {}", zip_url);
+            let dl_res = download_file_with_progress(&app_handle, &client, zip_url, &temp_zip_path, "tts", 0.0, 0.4).await;
+            println!("[TTS INSTALL] Download piper zip result: {:?}", dl_res);
+            dl_res?;
+
+            // Распаковка ZIP-архива -> Прогресс 40% - 50%
+            let _ = app_handle.emit("extension-progress", serde_json::json!({
+                "ext_type": "tts",
+                "percent": 40,
+                "downloaded": 0,
+                "total": 100
+            }));
+
+            let zip_file = std::fs::File::open(&temp_zip_path).map_err(|e| e.to_string())?;
+            let mut archive = zip::ZipArchive::new(zip_file).map_err(|e| e.to_string())?;
+            for i in 0..archive.len() {
+                let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
+                let filepath = file.name();
+                let clean_path = if filepath.starts_with("piper/") {
+                    &filepath[6..]
+                } else {
+                    filepath
+                };
+                if clean_path.is_empty() {
+                    continue;
+                }
+                let outpath = ext_dir.join(clean_path);
+                
+                if filepath.ends_with('/') {
+                    std::fs::create_dir_all(&outpath).map_err(|e| e.to_string())?;
+                } else {
+                    if let Some(p) = outpath.parent() {
+                        if !p.exists() {
+                            std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+                        }
+                    }
+                    let mut outfile = std::fs::File::create(&outpath).map_err(|e| e.to_string())?;
+                    std::io::copy(&mut file, &mut outfile).map_err(|e| e.to_string())?;
+                }
+            }
+            let _ = std::fs::remove_file(temp_zip_path);
+        } else {
+            let _ = app_handle.emit("extension-progress", serde_json::json!({
+                "ext_type": "tts",
+                "percent": 50,
+                "downloaded": 0,
+                "total": 100
+            }));
+        }
+
+        // Шаг 2: Скачиваем выбранный ONNX голос -> Прогресс 50% - 90%
+        let speaker = if model_id.contains("dmitri") { "dmitri" } else { "irina" };
+        let voice_url = format!("https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/ru/ru_RU/{}/medium/{}", speaker, model_id);
+        let voice_path = ext_dir.join(&model_id);
+        let config_path = ext_dir.join(format!("{}.json", model_id));
+
+        println!("[TTS INSTALL] voice_path exists: {} ({:?})", voice_path.exists(), voice_path);
+        println!("[TTS INSTALL] config_path exists: {} ({:?})", config_path.exists(), config_path);
+
+        if !voice_path.exists() {
+            println!("[TTS INSTALL] Downloading voice from: {}", voice_url);
+            let dl_res = download_file_with_progress(&app_handle, &client, &voice_url, &voice_path, "tts", 0.50, 0.40).await;
+            println!("[TTS INSTALL] Download voice result: {:?}", dl_res);
+            dl_res?;
+        }
+        if !config_path.exists() {
+            let config_url = format!("{}.json", voice_url);
+            println!("[TTS INSTALL] Downloading config from: {}", config_url);
+            let dl_res = download_file_with_progress(&app_handle, &client, &config_url, &config_path, "tts", 0.90, 0.10).await;
+            println!("[TTS INSTALL] Download config result: {:?}", dl_res);
+            dl_res?;
+        }
+
+        let _ = app_handle.emit("extension-progress", serde_json::json!({
+            "ext_type": "tts",
+            "percent": 100,
+            "downloaded": 0,
+            "total": 100
+        }));
+
+        // Сохраняем в конфигурацию
+        if let Ok(mut config) = load_config_internal(&app_handle) {
+            config.tts_local_voice = model_id;
+            if let Ok(config_dir) = app_handle.path().app_config_dir() {
+                let _ = std::fs::write(config_dir.join("config.json"), serde_json::to_string_pretty(&config).unwrap_or_default());
+            }
+        }
+    } else {
+        return Err("Неизвестный тип расширения".to_string());
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn uninstall_model(app_handle: tauri::AppHandle, ext_type: String, model_id: String) -> Result<(), String> {
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let ext_dir = app_data_dir.join("extensions").join(&ext_type);
+
+    let model_path = ext_dir.join(&model_id);
+    if model_path.exists() {
+        let _ = std::fs::remove_file(&model_path);
+    }
+
+    if ext_type == "tts" {
+        let config_path = ext_dir.join(format!("{}.json", model_id));
+        if config_path.exists() {
+            let _ = std::fs::remove_file(&config_path);
+        }
+    }
+
+    // Проверяем, остались ли еще файлы моделей
+    let mut has_other_models = false;
+    if let Ok(entries) = std::fs::read_dir(&ext_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if (ext_type == "tts" && ext == "onnx") || (ext_type == "stt" && ext == "bin") {
+                        has_other_models = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if !has_other_models {
+        let _ = std::fs::remove_dir_all(&ext_dir);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn uninstall_extension(app_handle: tauri::AppHandle, ext_type: String) -> Result<(), String> {
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+
+    let ext_dir = app_data_dir.join("extensions").join(&ext_type);
+    if ext_dir.exists() {
+        std::fs::remove_dir_all(&ext_dir).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -1332,6 +1919,193 @@ fn append_audio_chunk(bytes: Vec<u8>) -> Result<(), String> {
     Ok(())
 }
 
+async fn run_local_stt(app_handle: &tauri::AppHandle, audio_path: &str) -> Result<String, String> {
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let ext_dir = app_data_dir.join("extensions").join("stt");
+
+    let whisper_exe = ext_dir.join("whisper-cli.exe");
+    let config = load_config_internal(app_handle).unwrap_or_else(|_| AppConfig::default());
+
+    let model_file = if config.stt_local_model.is_empty() {
+        "ggml-base.bin".to_string()
+    } else {
+        config.stt_local_model.clone()
+    };
+    let model_path = ext_dir.join(&model_file);
+    let ffmpeg_exe = ext_dir.join("ffmpeg.exe");
+
+    if !whisper_exe.exists() || !model_path.exists() || !ffmpeg_exe.exists() {
+        return Err("Локальный модуль STT или его компоненты не найдены. Пожалуйста, выполните установку повторно.".to_string());
+    }
+
+    // Создаем временный WAV-файл для конвертации
+    let temp_wav_path = ext_dir.join("temp_input_16k.wav");
+
+    // Конвертируем с помощью ffmpeg в 16kHz mono PCM 16bit WAV
+    let ffmpeg_output = tokio::process::Command::new(&ffmpeg_exe)
+        .arg("-y")
+        .arg("-i")
+        .arg(audio_path)
+        .arg("-ar")
+        .arg("16000")
+        .arg("-ac")
+        .arg("1")
+        .arg("-c:a")
+        .arg("pcm_s16le")
+        .arg(&temp_wav_path)
+        .output()
+        .await
+        .map_err(|e| format!("Не удалось запустить конвертацию звука: {}", e))?;
+
+    if !ffmpeg_output.status.success() {
+        let err_msg = String::from_utf8_lossy(&ffmpeg_output.stderr).to_string();
+        return Err(format!("Ошибка конвертации звука через ffmpeg: {}", err_msg));
+    }
+
+    // Запускаем whisper-cli
+    let output = tokio::process::Command::new(&whisper_exe)
+        .arg("-m")
+        .arg(&model_path)
+        .arg("-f")
+        .arg(&temp_wav_path)
+        .arg("--no-timestamps")
+        .arg("--language")
+        .arg("ru")
+        .output()
+        .await
+        .map_err(|e| format!("Не удалось запустить whisper-cli: {}", e))?;
+
+    // Чистим за собой временный wav-файл
+    let _ = std::fs::remove_file(&temp_wav_path);
+
+    if !output.status.success() {
+        let err_msg = String::from_utf8_lossy(&output.stderr).to_string();
+        return Err(format!("Ошибка распознавания (код {}): {}", output.status.code().unwrap_or(-1), err_msg));
+    }
+
+    let result_text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if result_text.is_empty() {
+        return Err("Локальный STT вернул пустой текст".to_string());
+    }
+
+    Ok(result_text)
+}
+
+async fn run_local_llm_fallback(
+    config: &AppConfig,
+    prompt: &str,
+) -> Result<(String, String), String> {
+    // 1. Пытаемся вызвать локальные серверы из конфига
+    for server in &config.ai_servers {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        match call_local_llm(&client, server, prompt).await {
+            Ok(res) => {
+                let used_model = format!("{} ({}) (Offline Fallback)", server.name, server.model);
+                return Ok((res, used_model));
+            }
+            Err(e) => {
+                log_tts_error("Local AI server fallback error", &format!("Server: {}, Error: {}", server.name, e));
+            }
+        }
+    }
+
+    // 2. Если ничего не сработало, пробуем стандартный Ollama по списку моделей
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let models = vec!["gemma2:9b", "gemma2", "llama3", "qwen2.5", "mistral"];
+    let mut last_err = String::new();
+
+    for model in models {
+        let payload = serde_json::json!({
+            "model": model,
+            "prompt": prompt,
+            "stream": false
+        });
+
+        match client.post("http://localhost:11434/api/generate")
+            .json(&payload)
+            .send()
+            .await 
+        {
+            Ok(res) => {
+                let status = res.status();
+                if status.is_success() {
+                    if let Ok(json_res) = res.json::<serde_json::Value>().await {
+                        if let Some(response_text) = json_res.get("response").and_then(|v| v.as_str()) {
+                            let used_model = format!("Ollama Local ({}) (Offline Fallback)", model);
+                            return Ok((response_text.trim().to_string(), used_model));
+                        }
+                    }
+                }
+                last_err = format!("Ollama returned status {}", status);
+            }
+            Err(e) => {
+                last_err = e.to_string();
+            }
+        }
+    }
+
+    Err(format!("Не удалось выполнить обработку через локальный ИИ. Убедитесь, что Ollama или ваш локальный сервер запущены. Детали: {}", last_err))
+}
+
+async fn run_local_llm_postprocess(transcript: &str, user_preset_prompt: &str) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let combined_prompt = format!(
+        "Выполни постобработку текста по правилу: \"{}\". \
+         Верни только итоговый обработанный текст, без комментариев и без кавычек.\n\n\
+         Текст для обработки:\n{}",
+        user_preset_prompt, transcript
+    );
+
+    // Пробуем несколько возможных имен моделей в Ollama
+    let models = vec!["gemma2:9b", "gemma2", "llama3", "qwen2.5", "mistral"];
+    let mut last_err = String::new();
+
+    for model in models {
+        let payload = serde_json::json!({
+            "model": model,
+            "prompt": combined_prompt,
+            "stream": false
+        });
+
+        match client.post("http://localhost:11434/api/generate")
+            .json(&payload)
+            .send()
+            .await 
+        {
+            Ok(res) => {
+                let status = res.status();
+                if status.is_success() {
+                    if let Ok(json_res) = res.json::<serde_json::Value>().await {
+                        if let Some(response_text) = json_res.get("response").and_then(|v| v.as_str()) {
+                            return Ok(response_text.trim().to_string());
+                        }
+                    }
+                }
+                last_err = format!("Ollama returned status {}", status);
+            }
+            Err(e) => {
+                last_err = e.to_string();
+            }
+        }
+    }
+
+    Err(format!("Не удалось обработать текст через локальную LLM (Ollama). Убедитесь, что Ollama запущена и модель установлена. Детали: {}", last_err))
+}
+
 #[tauri::command]
 async fn save_audio(
     app_handle: tauri::AppHandle,
@@ -1361,6 +2135,8 @@ async fn save_audio(
             preset_label: String::new(),
             ai_results: vec![],
             audio_path: String::new(),
+            stt_model: String::new(),
+            llm_model: String::new(),
         });
     }
 
@@ -1388,6 +2164,8 @@ async fn save_audio(
     std::fs::write(&file_path, &bytes).map_err(|e| e.to_string())?;
 
     let timestamp = Local::now().format("%d.%m.%Y • %H:%M").to_string();
+    let mut used_stt_model = String::new();
+    let mut used_llm_model = String::new();
 
     // Если запись отменена пользователем — сохраняем в историю без Gemini (для Escape отмен)
     if is_cancelled.unwrap_or(false) {
@@ -1401,6 +2179,8 @@ async fn save_audio(
             preset_label: "Отменено".to_string(),
             ai_results: vec![],
             audio_path: file_path.to_string_lossy().to_string(),
+            stt_model: used_stt_model.clone(),
+            llm_model: used_llm_model.clone(),
         };
         save_to_history_internal(&app_handle, entry.clone())?;
         let _ = app_handle.emit("history-updated", entry.clone());
@@ -1426,6 +2206,8 @@ async fn save_audio(
                 timestamp: ts_clone,
             }],
             audio_path: file_path.to_string_lossy().to_string(),
+            stt_model: used_stt_model.clone(),
+            llm_model: used_llm_model.clone(),
         };
         save_to_history_internal(&app_handle, entry.clone())?;
         let _ = app_handle.emit("history-updated", entry.clone());
@@ -1452,6 +2234,339 @@ async fn save_audio(
         let (p, l) = get_preset_prompt_and_label(&preset);
         (p.to_string(), l.to_string())
     };
+
+    used_stt_model = if config.stt_engine == "local" {
+        format!("Whisper Local ({})", config.stt_local_model)
+    } else {
+        "Gemini Cloud (Audio)".to_string()
+    };
+
+    if preset == "none" {
+        let (raw_transcript, is_error) = if config.stt_engine == "local" {
+            match run_local_stt(&app_handle, &file_path.to_string_lossy()).await {
+                Ok(t) => (t, false),
+                Err(e) => (format!("[Ошибка локального STT: {}]", e), true)
+            }
+        } else {
+            if config.api_key.trim().is_empty() {
+                ("[Ошибка: API-ключ Gemini не настроен]".to_string(), true)
+            } else {
+                let combined_prompt = "Сделай дословную транскрипцию аудиозаписи на русском языке. Запиши речь точно так, как она звучит, без комментариев и постобработки.";
+                let request_payload = serde_json::json!({
+                    "contents": [{
+                        "parts": [
+                            {"inlineData": {"mimeType": "audio/webm", "data": base64_audio}},
+                            {"text": combined_prompt}
+                        ]
+                    }],
+                    "generationConfig": {
+                        "temperature": 0.1
+                    }
+                });
+
+                let mut gemini_text: Option<String> = None;
+                let mut last_err = String::new();
+                
+                let mut primary_model = if config.ai_model.is_empty() || config.ai_model.starts_with("local_") {
+                    "gemini-2.5-flash-lite".to_string()
+                } else {
+                    config.ai_model.clone()
+                };
+                if primary_model.contains("tts-preview") {
+                    primary_model = "gemini-2.0-flash".to_string();
+                }
+                let fallback_models = vec![
+                    primary_model.clone(),
+                    "gemini-3.1-flash-lite".to_string(),
+                    "gemini-2.5-flash".to_string(),
+                    "gemini-2.5-flash-lite".to_string(),
+                    "gemini-2.0-flash".to_string(),
+                ];
+                let mut seen = std::collections::HashSet::new();
+                let fallback_models: Vec<String> = fallback_models
+                    .into_iter()
+                    .filter(|m| seen.insert(m.clone()))
+                    .collect();
+
+                let client = reqwest::Client::builder()
+                    .timeout(Duration::from_secs(20))
+                    .build()
+                    .unwrap_or_else(|_| reqwest::Client::new());
+                let api_key = config.api_key.trim().to_string();
+
+                for model in &fallback_models {
+                    let url = format!(
+                        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+                        model, api_key
+                    );
+                    match client.post(&url).json(&request_payload).send().await {
+                        Ok(res) => {
+                            if res.status().is_success() {
+                                if let Ok(gr) = res.json::<GeminiResponse>().await {
+                                    if let Some(text) = gr.candidates
+                                        .and_then(|c| c.into_iter().next())
+                                        .and_then(|c| c.content)
+                                        .and_then(|c| c.parts)
+                                        .and_then(|p| p.into_iter().next())
+                                        .and_then(|p| p.text)
+                                    {
+                                        gemini_text = Some(text);
+                                        used_stt_model = format!("Gemini Cloud ({})", model);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            last_err = e.to_string();
+                        }
+                    }
+                }
+
+                match gemini_text {
+                    Some(t) => (t, false),
+                    None => {
+                        log_tts_error("Gemini failed entirely", &format!("Attempting local STT fallback. Gemini error: {}", last_err));
+                        match run_local_stt(&app_handle, &file_path.to_string_lossy()).await {
+                            Ok(t) => {
+                                used_stt_model = format!("Whisper Local ({}) (Offline Fallback)", config.stt_local_model);
+                                (t, false)
+                            }
+                            Err(local_err) => {
+                                (format!("[Ошибка распознавания (облако и локально): {}; {}]", last_err, local_err), true)
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        let entry = HistoryEntry {
+            id: id.clone(),
+            timestamp,
+            duration_secs,
+            raw_transcript: raw_transcript.clone(),
+            transcript: raw_transcript.clone(),
+            preset: "transcript".to_string(),
+            preset_label: "Транскрипция".to_string(),
+            ai_results: vec![],
+            audio_path: file_path.to_string_lossy().to_string(),
+            stt_model: used_stt_model,
+            llm_model: "Нет (чистая транскрипция)".to_string(),
+        };
+
+        save_to_history_internal(&app_handle, entry.clone())?;
+        let _ = app_handle.emit("history-updated", entry.clone());
+        return Ok(entry);
+    }
+
+    // Если выбран локальный STT
+    if config.stt_engine == "local" {
+        let local_transcript = match run_local_stt(&app_handle, &file_path.to_string_lossy()).await {
+            Ok(t) => t,
+            Err(e) => {
+                let ts_clone = timestamp.clone();
+                let entry = HistoryEntry {
+                    id: id.clone(),
+                    timestamp,
+                    duration_secs,
+                    raw_transcript: format!("[Ошибка локального STT: {}]", e),
+                    transcript: String::new(),
+                    preset: preset.clone(),
+                    preset_label: preset_label_str.clone(),
+                    ai_results: vec![AiResult {
+                        preset: preset.clone(),
+                        preset_label: preset_label_str.clone(),
+                        text: format!("Ошибка запуска локального ASR: {}. Убедитесь, что модуль установлен.", e),
+                        timestamp: ts_clone,
+                    }],
+                    audio_path: file_path.to_string_lossy().to_string(),
+                    stt_model: used_stt_model.clone(),
+                    llm_model: used_llm_model.clone(),
+                };
+                let _ = save_to_history_internal(&app_handle, entry.clone());
+                let _ = app_handle.emit("history-updated", entry.clone());
+                return Ok(entry);
+            }
+        };
+
+        let (raw_transcript, ai_result_text, is_error) = if config.ai_model.starts_with("local_") {
+            if let Some(server) = config.ai_servers.iter().find(|s| s.id == config.ai_model) {
+                let combined_prompt = format!(
+                    "Выполни постобработку текста по правилу: \"{}\". \
+                     Верни только итоговый обработанный текст, без комментариев и без кавычек.\n\n\
+                     Текст для обработки:\n{}",
+                    user_preset_prompt, local_transcript
+                );
+                
+                let client = reqwest::Client::builder()
+                    .timeout(Duration::from_secs(120))
+                    .build()
+                    .unwrap_or_else(|_| reqwest::Client::new());
+
+                match call_local_llm(&client, server, &combined_prompt).await {
+                    Ok(processed) => {
+                        used_llm_model = format!("{} ({})", server.name, server.model);
+                        (local_transcript.clone(), processed, false)
+                    }
+                    Err(e) => {
+                        (local_transcript.clone(), format!("[Ошибка локальной LLM: {}]", e), true)
+                    }
+                }
+            } else {
+                (local_transcript.clone(), "[Ошибка: локальный сервер LLM не найден]".to_string(), true)
+            }
+        } else if !config.api_key.trim().is_empty() {
+            let text_prompt = format!(
+                r#"Ответь СТРОГО в формате JSON без markdown, без пояснений, без ```json, только чистый JSON:
+{{"transcript":"...","ai_result":"..."}}
+
+Правила:
+- В поле "transcript" впиши этот текст без изменений: "{}"
+- В поле "ai_result" выполни следующее задание по отношению к этому тексту: {}
+
+В JSON-строках экранируй кавычки через \" и переносы строк через \n."#,
+                local_transcript.replace('"', "\\\"").replace('\n', "\\n"),
+                user_preset_prompt
+            );
+
+            let request_payload = serde_json::json!({
+                "contents": [{
+                    "parts": [
+                        {"text": text_prompt}
+                    ]
+                }],
+                "generationConfig": {
+                    "temperature": 0.2,
+                    "responseMimeType": "application/json"
+                }
+            });
+
+            let mut gemini_text: Option<String> = None;
+            let mut last_err = String::new();
+            
+            // Получаем HTTP клиент
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(20))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new());
+            let api_key = config.api_key.trim().to_string();
+
+            // Fallback цепочка моделей
+            let mut primary_model = if config.ai_model.is_empty() {
+                "gemini-2.5-flash-lite".to_string()
+            } else {
+                config.ai_model.clone()
+            };
+            if primary_model.contains("tts-preview") {
+                primary_model = "gemini-2.0-flash".to_string();
+            }
+            let fallback_models = vec![
+                primary_model.clone(),
+                "gemini-3.1-flash-lite".to_string(),
+                "gemini-2.5-flash".to_string(),
+                "gemini-3.5-flash".to_string(),
+                "gemini-2.5-flash-lite".to_string(),
+                "gemini-2.0-flash".to_string(),
+                "gemini-2.0-flash-lite".to_string(),
+                "gemini-2.5-pro".to_string(),
+            ];
+            let mut seen = std::collections::HashSet::new();
+            let fallback_models: Vec<String> = fallback_models
+                .into_iter()
+                .filter(|m| seen.insert(m.clone()))
+                .collect();
+
+            for model in &fallback_models {
+                if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+                    last_err = "Запрос отменен пользователем".to_string();
+                    break;
+                }
+                let url = format!(
+                    "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+                    model, api_key
+                );
+                match client.post(&url).json(&request_payload).send().await {
+                    Err(e) => {
+                        last_err = e.to_string();
+                        continue;
+                    }
+                    Ok(res) => {
+                        if !res.status().is_success() {
+                            last_err = format!("Status {}", res.status());
+                            continue;
+                        }
+                        if let Ok(resp_struct) = res.json::<GeminiResponse>().await {
+                            if let Some(candidates) = resp_struct.candidates {
+                                if let Some(first) = candidates.first() {
+                                    if let Some(ref content) = first.content {
+                                        if let Some(ref parts) = content.parts {
+                                            if let Some(first_part) = parts.first() {
+                                                if let Some(ref text) = first_part.text {
+                                                    gemini_text = Some(text.clone());
+                                                    used_llm_model = format!("Gemini Cloud ({})", model);
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            match gemini_text {
+                Some(text) => {
+                    let cleaned = text.trim_matches(|c| c == '`' || c == ' ' || c == '\n').replace("json", "");
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&cleaned) {
+                        let t = parsed.get("transcript").and_then(|v| v.as_str()).unwrap_or(&local_transcript).to_string();
+                        let a = parsed.get("ai_result").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        (t, a, false)
+                    } else {
+                        (local_transcript.clone(), cleaned, false)
+                    }
+                }
+                None => {
+                    used_llm_model = "Ollama Local (Offline Fallback)".to_string();
+                    match run_local_llm_postprocess(&local_transcript, &user_preset_prompt).await {
+                        Ok(processed) => (local_transcript.clone(), processed, false),
+                        Err(e) => (local_transcript.clone(), format!("[Ошибка постобработки: {}]", e), true)
+                    }
+                }
+            }
+        } else {
+            used_llm_model = "Ollama Local (Offline Fallback)".to_string();
+            match run_local_llm_postprocess(&local_transcript, &user_preset_prompt).await {
+                Ok(processed) => (local_transcript.clone(), processed, false),
+                Err(e) => (local_transcript.clone(), format!("[Ошибка постобработки: {}]", e), true)
+            }
+        };
+
+        let entry = HistoryEntry {
+            id: id.clone(),
+            timestamp: timestamp.clone(),
+            duration_secs,
+            raw_transcript: raw_transcript.clone(),
+            transcript: raw_transcript.clone(),
+            preset: preset.clone(),
+            preset_label: preset_label_str.clone(),
+            ai_results: vec![AiResult {
+                preset: preset.clone(),
+                preset_label: preset_label_str.clone(),
+                text: ai_result_text,
+                timestamp: timestamp.clone(),
+            }],
+            audio_path: file_path.to_string_lossy().to_string(),
+            stt_model: used_stt_model.clone(),
+            llm_model: used_llm_model.clone(),
+        };
+
+        let _ = save_to_history_internal(&app_handle, entry.clone());
+        let _ = app_handle.emit("history-updated", entry.clone());
+        return Ok(entry);
+    }
 
     // Единый JSON-промпт: транскрипция + AI-результат в одном запросе
     let combined_prompt = format!(
@@ -1480,7 +2595,7 @@ async fn save_audio(
     });
 
     // Fallback цепочка моделей: расширяем до максимальной отказоустойчивости на бесплатном тарифе
-    let mut primary_model = if config.ai_model.is_empty() {
+    let mut primary_model = if config.ai_model.is_empty() || config.ai_model.starts_with("local_") {
         "gemini-2.5-flash-lite".to_string()
     } else {
         config.ai_model.clone()
@@ -1600,6 +2715,8 @@ async fn save_audio(
                             }
 
                             gemini_text = Some(text);
+                            used_stt_model = format!("Gemini Cloud ({})", model);
+                            used_llm_model = format!("Gemini Cloud ({})", model);
                             break;
                         } else {
                             last_err = format!("Пустой ответ от {}", model);
@@ -1617,9 +2734,31 @@ async fn save_audio(
             if last_err == "Запрос отменен пользователем" {
                 ("[Запрос отменен пользователем]".to_string(), String::new(), true)
             } else {
-                let err_msg = format!("[Ошибка: все модели недоступны. {}]", last_err);
-                log_tts_error("Gemini call failed entirely", &err_msg);
-                (err_msg, String::new(), true)
+                log_tts_error("Gemini failed entirely", &format!("Attempting local STT + LLM fallback. Gemini error: {}", last_err));
+                match run_local_stt(&app_handle, &file_path.to_string_lossy()).await {
+                    Ok(local_tr) => {
+                        used_stt_model = format!("Whisper Local ({}) (Offline Fallback)", config.stt_local_model);
+                        let combined_prompt = format!(
+                            "Выполни постобработку текста по правилу: \"{}\". \
+                             Верни только итоговый обработанный текст, без комментариев и без кавычек.\n\n\
+                             Текст для обработки:\n{}",
+                            user_preset_prompt, local_tr
+                        );
+                        match run_local_llm_fallback(&config, &combined_prompt).await {
+                            Ok((processed_text, model_name)) => {
+                                used_llm_model = model_name;
+                                (local_tr, processed_text, false)
+                            }
+                            Err(e) => {
+                                used_llm_model = "None (Fallback Failed)".to_string();
+                                (local_tr, format!("[Ошибка локального ИИ: {}]", e), true)
+                            }
+                        }
+                    }
+                    Err(local_err) => {
+                        (format!("[Ошибка распознавания (облако и локально): {}; {}]", last_err, local_err), String::new(), true)
+                    }
+                }
             }
         }
         Some(raw_json) => {
@@ -1722,12 +2861,51 @@ async fn save_audio(
         preset_label: if is_error { "Ошибка".to_string() } else { preset_label_str },
         ai_results,
         audio_path: file_path.to_string_lossy().to_string(),
+        stt_model: used_stt_model,
+        llm_model: used_llm_model,
     };
 
     save_to_history_internal(&app_handle, entry.clone())?;
     let _ = app_handle.emit("history-updated", entry.clone());
 
     Ok(entry)
+}
+
+async fn call_local_llm(
+    client: &reqwest::Client,
+    server: &LocalAiServer,
+    prompt: &str,
+) -> Result<String, String> {
+    let url = format!("{}/v1/chat/completions", server.url.trim_end_matches('/'));
+    let payload = serde_json::json!({
+        "model": server.model,
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.3
+    });
+
+    let resp = client.post(&url)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("Не удалось отправить запрос на локальный сервер LLM: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let err_text = resp.text().await.unwrap_or_default();
+        return Err(format!("Локальный LLM сервер вернул ошибку {}: {}", status, err_text));
+    }
+
+    let json_resp: serde_json::Value = resp.json()
+        .await
+        .map_err(|e| format!("Не удалось распарсить ответ локального сервера: {}", e))?;
+
+    let text = json_resp["choices"][0]["message"]["content"]
+        .as_str()
+        .ok_or_else(|| "Не удалось извлечь текст ответа из choices[0].message.content".to_string())?;
+
+    Ok(text.to_string())
 }
 
 #[tauri::command]
@@ -1749,7 +2927,13 @@ async fn process_ai_request(
 
     // 2. Получаем конфиг
     let config = load_config_internal(&app_handle)?;
-    if config.api_key.trim().is_empty() {
+    let local_server = if config.ai_model.starts_with("local_") {
+        config.ai_servers.iter().find(|s| s.id == config.ai_model)
+    } else {
+        None
+    };
+
+    if local_server.is_none() && config.api_key.trim().is_empty() {
         return Err("API ключ Gemini не настроен. Укажите его в Настройках.".to_string());
     }
 
@@ -1762,6 +2946,58 @@ async fn process_ai_request(
 
     if prompt_essence.trim().is_empty() {
         return Err("Промпт не может быть пустым".to_string());
+    }
+
+    // Обработка через локальную LLM
+    if let Some(server) = local_server {
+        use tauri::Emitter;
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
+        let transcribed_text = if source_type == "audio" {
+            let audio_path = history[entry_idx].audio_path.clone();
+            if audio_path.is_empty() {
+                return Err("Аудиофайл не найден для этой записи".to_string());
+            }
+            run_local_stt(&app_handle, &audio_path).await?
+        } else {
+            source_text.clone()
+        };
+
+        let combined_prompt = if source_type == "audio" {
+            format!(
+                "Прослушана аудиозапись. Вот расшифрованный текст:\n---\n{}\n---\nВыполни следующую задачу: {}\nОтветь на русском языке.",
+                transcribed_text, prompt_essence
+            )
+        } else {
+            format!(
+                "Вот исходный текст:\n---\n{}\n---\nВыполни следующую задачу с этим текстом:\n{}\nОтветь на русском языке.",
+                transcribed_text, prompt_essence
+            )
+        };
+
+        let ai_result_text = call_local_llm(&client, server, &combined_prompt).await?;
+
+        // Сохраняем результат
+        let timestamp = chrono::Local::now().format("%d.%m.%Y %H:%M").to_string();
+        let preset_key = if preset == "custom" { "custom".to_string() } else { preset.clone() };
+
+        let ai_results = vec![AiResult {
+            preset: preset_key,
+            preset_label: result_label.clone(),
+            text: ai_result_text,
+            timestamp: timestamp.clone(),
+        }];
+
+        history[entry_idx].ai_results.extend(ai_results);
+        history[entry_idx].llm_model = format!("{} ({})", server.name, server.model);
+
+        save_to_history_internal(&app_handle, history[entry_idx].clone())?;
+        let _ = app_handle.emit("history-updated", history[entry_idx].clone());
+
+        return Ok(history);
     }
 
     let request_payload = if source_type == "audio" {
@@ -1850,6 +3086,7 @@ async fn process_ai_request(
 
     let mut last_err = String::new();
     let mut gemini_text: Option<String> = None;
+    let mut used_model = String::new();
 
     for model in &fallback_models {
         if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
@@ -1926,6 +3163,7 @@ async fn process_ai_request(
                             .and_then(|p| p.text)
                         {
                             gemini_text = Some(text);
+                            used_model = model.clone();
                             break;
                         } else {
                             last_err = format!("Пустой ответ от {}", model);
@@ -1937,12 +3175,52 @@ async fn process_ai_request(
         }
     }
 
+    let mut used_llm_model = format!("Gemini Cloud ({})", used_model);
+
     let ai_result_text = match gemini_text {
         None => {
-            return Err(format!("Ошибка обработки Gemini: {}", last_err));
+            log_tts_error("Gemini failed entirely in process_ai_request", &format!("Attempting local fallback. Gemini error: {}", last_err));
+            let transcribed_text = if source_type == "audio" {
+                let audio_path = history[entry_idx].audio_path.clone();
+                if audio_path.is_empty() {
+                    return Err("Аудиофайл не найден для этой записи".to_string());
+                }
+                match run_local_stt(&app_handle, &audio_path).await {
+                    Ok(t) => {
+                        history[entry_idx].raw_transcript = t.clone();
+                        history[entry_idx].transcript = t.clone();
+                        history[entry_idx].stt_model = format!("Whisper Local ({}) (Offline Fallback)", config.stt_local_model);
+                        t
+                    }
+                    Err(e) => return Err(format!("Ошибка облачной и локальной транскрибации: {} / {}", last_err, e))
+                }
+            } else {
+                source_text.clone()
+            };
+
+            let combined_prompt = if source_type == "audio" {
+                format!(
+                    "Прослушана аудиозапись. Вот расшифрованный текст:\n---\n{}\n---\nВыполни следующую задачу: {}\nОтветь на русском языке.",
+                    transcribed_text, prompt_essence
+                )
+            } else {
+                format!(
+                    "Вот исходный текст:\n---\n{}\n---\nВыполни следующую задачу с этим текстом:\n{}\nОтветь на русском языке.",
+                    transcribed_text, prompt_essence
+                )
+            };
+
+            match run_local_llm_fallback(&config, &combined_prompt).await {
+                Ok((processed_text, model_name)) => {
+                    used_llm_model = model_name;
+                    processed_text
+                }
+                Err(e) => {
+                    return Err(format!("Ошибка Gemini и локальной LLM: {} / {}", last_err, e));
+                }
+            }
         }
         Some(t) => {
-            // Если ответ содержит JSON разметку ```json ... ```, очистим его
             let mut cleaned = t.trim();
             if cleaned.starts_with("```json") && cleaned.ends_with("```") {
                 cleaned = &cleaned[7..cleaned.len() - 3].trim();
@@ -1962,6 +3240,10 @@ async fn process_ai_request(
     };
 
     history[entry_idx].ai_results.push(new_result);
+    history[entry_idx].llm_model = used_llm_model;
+    if history[entry_idx].stt_model.is_empty() {
+        history[entry_idx].stt_model = "Gemini Cloud (Audio)".to_string();
+    }
     save_history_internal(&app_handle, &history)?;
 
     let _ = app_handle.emit("history-updated", ());
@@ -5332,24 +6614,7 @@ pub fn run() {
 
             // Загружаем конфигурацию
             let app_handle = app.handle();
-            let config = load_config_internal(app_handle).unwrap_or_else(|_| AppConfig {
-                ui_lang: "ru".to_string(),
-                dictation_lang: "auto".to_string(),
-                api_key: "".to_string(),
-                yandex_api_key: "".to_string(),
-                ai_model: "gemini-2.0-flash".to_string(),
-                ocr_mode: "text".to_string(),
-                capsule_mode: 2,
-                widget_mode: 2,
-                ocr_mode_switch: 0,
-                layout_converter_mode: 2,
-                capsule_magnet: true,
-                tts_speed: 1.0,
-                tts_voice: "ru-RU-SvetlanaNeural".to_string(),
-                tts_translate: false,
-                layout_hotkey_modifier: "Ctrl".to_string(),
-                layout_hotkey_key: "Pause".to_string(),
-            });
+            let config = load_config_internal(app_handle).unwrap_or_else(|_| AppConfig::default());
 
             // Синхронизируем глобальные атомики
             CAPSULE_ENABLED.store(config.capsule_mode, std::sync::atomic::Ordering::SeqCst);
@@ -5501,6 +6766,13 @@ pub fn run() {
             load_config,
             save_config,
             update_config_fields,
+            get_installed_voices,
+            get_installed_stt_models,
+            ping_ai_server,
+            check_extension_status,
+            install_extension,
+            uninstall_extension,
+            uninstall_model,
             fetch_gemini_models,
             set_module_mode,
             load_history,

@@ -162,7 +162,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Виджет-контейнер: w-[500px], панель h-[52px]
   // ======================================================================
 
-  const WIN_WIDTH = 560;
+  const WIN_WIDTH = 580;
   const WIN_HEIGHT_COLLAPSED = 100; // 52px панель + 16px padding-top + 32px тень снизу
   const WIN_HEIGHT_EXPANDED = 480;
 
@@ -170,7 +170,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let isDropdownOpen = false;
 
   async function updateWindowHeight() {
-    // Больше не изменяем физический размер окна Tauri (всегда 560x380) для предотвращения сброса DWM стилей и появления нативной рамки
+    // Больше не изменяем физический размер окна Tauri (всегда 580x380) для предотвращения сброса DWM стилей и появления нативной рамки
   }
 
   // ======================================================================
@@ -185,15 +185,19 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       let w, h, x, y;
 
-      // Контейнер виджета w=500px, отцентрован по горизонтали в окне 560px -> x = (560 - 500) / 2 = 30px
-      // Даем максимальный запас по бокам для тени: x = 2px, w = 556px (оставляем 2px зазора по бокам).
+      // Контейнер виджета w=500px, отцентрован по горизонтали в окне 580px -> x = (580 - 500) / 2 = 40px
+      // Даем максимальный запас по бокам для тени: x = 2px, w = 576px (оставляем 2px зазора по бокам).
       // Внутренний отступ сверху: padding-top: 32px.
       // Зададим y = 30px для сохранения верхней тени и гарантированного отсечения Titlebar (y < 30px).
       x = 2;
       y = 30;
-      w = 556;
+      w = 576;
 
-      if (state === 'collapsed') {
+      if (state === 'hover_collapsed') {
+        x = 2;
+        w = 210;
+        h = 118;
+      } else if (state === 'collapsed') {
         h = 118; // 52px панель + 66px запас для плавного затухания нижней тени
       } else if (state === 'expanded') {
         h = 165; // 52px панель + 45px второй ряд + 68px запас для тени
@@ -212,9 +216,66 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  if (widgetContainer) {
+    widgetContainer.classList.add('hover-collapsed');
+    
+    const expandWidget = () => {
+      if (widgetContainer.classList.contains('hover-collapsed')) {
+        widgetContainer.classList.remove('hover-collapsed');
+        updateClickRegion(isDropdownOpen ? 'dropdown' : (isRowExpanded ? 'expanded' : 'collapsed'));
+      }
+    };
+
+    const collapseWidget = () => {
+      if (!widgetContainer.classList.contains('hover-collapsed')) {
+        if (root && typeof root.closeMenus === 'function') {
+          root.closeMenus();
+        }
+        isDropdownOpen = false;
+
+        // Сворачиваем второй ряд и сбрасываем кнопку expand
+        if (expandedRow) {
+          expandedRow.classList.remove('flex');
+          expandedRow.classList.add('hidden');
+        }
+        if (expandIcon) {
+          expandIcon.textContent = 'open_in_full';
+        }
+        isRowExpanded = false;
+
+        widgetContainer.classList.add('hover-collapsed');
+        
+        // Откладываем применение узкого WinAPI хитбокса до завершения CSS анимации сжатия (350мс),
+        // чтобы правая часть виджета не срезалась во время движения.
+        setTimeout(() => {
+          if (widgetContainer.classList.contains('hover-collapsed')) {
+            updateClickRegion('hover_collapsed');
+          }
+        }, 350);
+      }
+    };
+
+    const playStopWrapper = root.querySelector('#tts-play-stop-wrapper');
+    const extraContent = root.querySelector('.tts-extra-content');
+    const dragHandle = root.querySelector('#tts-widget-drag');
+
+    if (playStopWrapper) {
+      playStopWrapper.addEventListener('mouseenter', expandWidget);
+    }
+    if (extraContent) {
+      extraContent.addEventListener('mouseenter', expandWidget);
+    }
+
+    if (dragHandle) {
+      dragHandle.addEventListener('mouseenter', collapseWidget);
+    }
+
+    widgetContainer.addEventListener('mouseleave', collapseWidget);
+  }
+
   // При старте — свернутый режим
   updateWindowHeight();
-  updateClickRegion('collapsed');
+  updateClickRegion('hover_collapsed');
 
   if (btnExpand && expandedRow) {
     btnExpand.addEventListener('click', (e) => {
@@ -249,12 +310,24 @@ document.addEventListener('DOMContentLoaded', () => {
     const { invoke } = window.__TAURI__.core;
     const { listen, emit } = window.__TAURI__.event;
 
+    // Сразу запрашиваем установленные голоса при загрузке
+    invoke('get_installed_voices').then((voices) => {
+      if (root && root.updateState) {
+        root.updateState({ installedVoices: voices });
+      }
+    }).catch(()=>{});
+
     // При показе окна принудительно переприменяем регион кликов после завершения анимаций DWM
     listen('widget-shown', () => {
       emit('widget-mode-changed', 2);
       setTimeout(() => {
         const isRowVisible = expandedRow && !expandedRow.classList.contains('hidden');
-        updateClickRegion(isRowVisible ? 'expanded' : 'collapsed');
+        const isCollapsed = widgetContainer && widgetContainer.classList.contains('hover-collapsed');
+        if (isCollapsed) {
+          updateClickRegion('hover_collapsed');
+        } else {
+          updateClickRegion(isRowVisible ? 'expanded' : 'collapsed');
+        }
       }, 100);
     });
 
@@ -291,6 +364,8 @@ document.addEventListener('DOMContentLoaded', () => {
           root.updateState({ isPlaying: false, isPaused: true });
         } else if (p.action === 'stop') {
           root.updateState({ isPlaying: false, isPaused: false });
+        } else if (p.action === 'progress') {
+          root.updateState({ percentBuffered: p.percentBuffered, percentPlayed: p.percentPlayed });
         } else if (p.action === 'settings' || p.action === 'setting') {
           root.updateState(p.settings || p);
         }

@@ -15,8 +15,9 @@
         width: 100vw; height: 100vh;
         display: flex; 
         align-items: flex-start; /* Примагничиваем к верху */
-        justify-content: center;
+        justify-content: flex-start; /* Раскрытие вправо */
         padding-top: 32px; /* Запас сверху для отображения тени и отсечения системной рамки */
+        padding-left: 30px; /* Запас слева для сохранения тени */
       }
       .play-pulse { animation: pulse-glow 1.5s infinite; }
       @keyframes pulse-glow {
@@ -31,7 +32,29 @@
         border: 1px solid rgba(142, 82, 255, 0.28);
         box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 15px rgba(142, 82, 255, 0.15), inset 0 0 15px rgba(255, 255, 255, 0.03) !important;
         border-radius: 24px;
-        transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+        transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1) !important;
+      }
+      
+      /* Сворачивание плавающего виджета */
+      #widget-container.hover-collapsed {
+        width: 114px !important;
+      }
+      
+      #widget-container.hover-collapsed .tts-extra-content {
+        max-width: 0 !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+        overflow: hidden !important;
+      }
+      
+      .tts-extra-content {
+        transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        max-width: 450px;
+        opacity: 1;
       }
       
       button, .voice-item, .speed-item {
@@ -48,7 +71,7 @@
          id="widget-container">
       
       <!-- Контейнер для единого компонента -->
-      <div id="tts-widget-root" class="flex justify-center w-full"></div>
+      <div id="tts-widget-root" class="flex justify-start w-full"></div>
 
       <!-- ВТОРОЙ РЯД (дополнительные настройки) -->
       <div class="hidden border-t border-[#4a4455]/30 px-4 py-2 gap-3 items-center justify-between rounded-b-[26px]" id="expanded-row">

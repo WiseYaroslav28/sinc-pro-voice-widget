@@ -307,8 +307,14 @@
               </div>
 
               <!-- Текст сводки — занимает всё свободное место -->
-              <div class="flex-1 relative overflow-hidden">
-                <div class="p-5 h-full overflow-y-auto">
+              <div class="flex-1 relative overflow-hidden flex flex-col">
+                <!-- Тонкая аккуратная плашка с моделью -->
+                <div id="model-chain-info" class="hidden px-5 py-1.5 bg-[#1b1b20]/40 border-b border-[#4a4455]/10 text-[10px] text-[#b3a8c4]/80 items-center gap-1.5 font-medium select-none flex-shrink-0">
+                  <span class="material-symbols-outlined text-[12px] text-[#d2bbff]">neurology</span>
+                  <span id="model-chain-text">STT: ... ➔ LLM: ...</span>
+                </div>
+
+                <div class="p-5 h-full overflow-y-auto flex-1">
                   <p class="text-[13px] leading-[1.7] text-[#ccc3d8] whitespace-pre-wrap" id="summary-text" style="user-select: text; -webkit-user-select: text;">Нет данных. Создайте первую запись через капсулу (Ctrl+Win).</p>
                 </div>
                 <div class="absolute bottom-0 left-0 w-full h-10 pointer-events-none" style="background: linear-gradient(to top, #1f1f24, transparent);"></div>
@@ -449,6 +455,112 @@
                     <option value="local">Локальный (Без ИИ / Полностью оффлайн)</option>
                   </select>
                 </div>
+              </div>
+            </div>
+
+            <!-- Блок: Локальные / Внешние LLM серверы -->
+            <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-5 mt-4">
+              <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-4">Локальные / Внешние LLM</h3>
+              <div class="flex flex-col gap-4">
+                
+                <!-- Список серверов -->
+                <div class="flex flex-col gap-2" id="local-ai-servers-list">
+                  <!-- Рендерится динамически в JS -->
+                </div>
+
+                <!-- Форма добавления нового сервера -->
+                <div class="flex flex-col gap-2 p-3 bg-[#13131a] rounded-lg border border-[#4a4455]/15">
+                  <div class="text-[11px] font-bold text-[#e4e1e9]">Добавить LLM-сервер (llama.cpp / OpenAI)</div>
+                  
+                  <div class="flex flex-col gap-1 mt-1">
+                    <input type="text" id="add-server-name" placeholder="Название (например: Gemma 12B)" class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-md p-1.5 text-[11px] focus:outline-none focus:border-[#d2bbff]" />
+                  </div>
+                  
+                  <div class="flex flex-col gap-1">
+                    <input type="text" id="add-server-url" placeholder="URL (например: http://127.0.0.1:8080)" class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-md p-1.5 text-[11px] focus:outline-none focus:border-[#d2bbff]" />
+                  </div>
+                  
+                  <div class="flex flex-col gap-1">
+                    <input type="text" id="add-server-model" placeholder="Идентификатор модели (например: gemma)" class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-md p-1.5 text-[11px] focus:outline-none focus:border-[#d2bbff]" />
+                  </div>
+                  
+                  <button class="bg-[#1b1b20] text-[#ccc3d8] hover:text-white border border-[#4a4455]/30 rounded-md py-1.5 text-[11px] font-semibold cursor-pointer transition-colors mt-2" id="btn-add-ai-server">
+                    Добавить сервер
+                  </button>
+                </div>
+
+              </div>
+            </div>
+
+            <!-- Блок: Локальные модули (Оффлайн) -->
+            <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-5">
+              <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-4">Локальные модули (Оффлайн)</h3>
+              <div class="flex flex-col gap-4">
+                
+                <!-- Модуль STT -->
+                <div class="flex flex-col gap-2 p-3 bg-[#13131a] rounded-lg border border-[#4a4455]/15">
+                  <div>
+                    <div class="text-[13px] text-[#e4e1e9] font-medium">Распознавание речи (STT) <span class="text-[11px] text-[#d2bbff] font-normal">(Whisper.cpp)</span></div>
+                    <div class="text-[11px] text-[#ccc3d8] mt-0.5" id="ext-stt-status">Статус: Проверка...</div>
+                  </div>
+                  <!-- Выбор модели перед установкой -->
+                  <div class="flex items-center justify-between gap-2 mt-1">
+                    <label class="text-[11px] text-[#ccc3d8]">Размер модели:</label>
+                    <div class="flex items-center gap-2">
+                      <select class="bg-[#0e0e13] border border-[#4a4455]/30 text-[#e4e1e9] rounded-md px-2 py-1 text-[11px] focus:outline-none focus:border-[#d2bbff] cursor-pointer" id="setting-stt-local-model">
+                        <option value="ggml-base.bin">Whisper Base (Быстрая, ~140 МБ)</option>
+                        <option value="ggml-tiny.bin">Whisper Tiny (Самая быстрая, ~75 МБ)</option>
+                        <option value="ggml-small.bin">Whisper Small (Высокая точность, ~460 МБ)</option>
+                      </select>
+                      <button class="bg-[#1b1b20] text-[#ccc3d8] hover:text-white border border-[#4a4455]/30 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold cursor-pointer transition-colors" id="btn-install-stt">
+                        Установить
+                      </button>
+                    </div>
+                  </div>
+                  <!-- Прогресс-бар скачивания -->
+                  <div id="ext-stt-progress-container" class="w-full bg-[#0e0e13] rounded-full h-1.5 mt-2 hidden border border-[#4a4455]/10 relative overflow-hidden">
+                    <div id="ext-stt-progress-bar" class="bg-[#d2bbff] h-full rounded-full w-0 transition-all duration-300"></div>
+                  </div>
+                  <!-- Выбор активного движка -->
+                  <div class="flex items-center justify-between mt-2 pt-2 border-t border-[#4a4455]/10">
+                    <label class="text-[11px] text-[#ccc3d8]">Использовать для диктовки:</label>
+                    <select class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-md px-2 py-1 text-[11px] focus:outline-none focus:border-[#d2bbff] cursor-pointer" id="setting-stt-engine">
+                      <option value="gemini">Облако (Gemini)</option>
+                      <option value="local" disabled id="opt-stt-local">Локально (Не установлено)</option>
+                    </select>
+                  </div>
+                </div>
+ 
+                <!-- Модуль TTS -->
+                <div class="flex flex-col gap-2 p-3 bg-[#13131a] rounded-lg border border-[#4a4455]/15">
+                  <div>
+                    <div class="text-[13px] text-[#e4e1e9] font-medium">Озвучка текста (TTS) <span class="text-[11px] text-[#d2bbff] font-normal">(Piper)</span></div>
+                    <div class="text-[11px] text-[#ccc3d8] mt-0.5" id="ext-tts-status">Статус: Проверка...</div>
+                  </div>
+                  <!-- Выбор модели перед установкой -->
+                  <div class="flex items-center justify-between gap-2 mt-1">
+                    <label class="text-[11px] text-[#ccc3d8]">Голос спикера:</label>
+                    <div class="flex items-center gap-2">
+                      <select class="bg-[#0e0e13] border border-[#4a4455]/30 text-[#e4e1e9] rounded-md px-2 py-1 text-[11px] focus:outline-none focus:border-[#d2bbff] cursor-pointer" id="setting-tts-local-voice">
+                        <option value="ru_RU-dmitri-medium.onnx">Дмитрий (Мужской, ~15 МБ)</option>
+                        <option value="ru_RU-irina-medium.onnx">Ирина (Женский, ~15 МБ)</option>
+                      </select>
+                      <button class="bg-[#1b1b20] text-[#ccc3d8] hover:text-white border border-[#4a4455]/30 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold cursor-pointer transition-colors" id="btn-install-tts">
+                        Установить
+                      </button>
+                    </div>
+                  </div>
+                  <!-- Прогресс-бар скачивания -->
+                  <div id="ext-tts-progress-container" class="w-full bg-[#0e0e13] rounded-full h-1.5 mt-2 hidden border border-[#4a4455]/10 relative overflow-hidden">
+                    <div id="ext-tts-progress-bar" class="bg-[#d2bbff] h-full rounded-full w-0 transition-all duration-300"></div>
+                  </div>
+                  <!-- Выбор активного движка (скрыт, так как переключается выбором голоса в плеере) -->
+                  <select class="hidden" id="setting-tts-engine">
+                    <option value="edge">Облако</option>
+                    <option value="local">Локально</option>
+                  </select>
+                </div>
+
               </div>
             </div>
 
@@ -772,7 +884,18 @@
             document.getElementById('setting-layout-modifier').value = config.layout_hotkey_modifier || 'Ctrl';
             document.getElementById('setting-layout-key').value = config.layout_hotkey_key || 'Pause';
             
-            // Восстанавливаем состояние магнита капсулы
+            // Проверяем статус установленных локальных плагинов для динамического наполнения селекторов
+            await updateExtensionsStatus();
+
+            if (config.stt_engine === 'local') {
+              document.getElementById('setting-stt-engine').value = `local_${config.stt_local_model}`;
+            } else {
+              document.getElementById('setting-stt-engine').value = 'gemini';
+            }
+            document.getElementById('setting-tts-engine').value = config.tts_engine || 'edge';
+
+            document.getElementById('setting-stt-local-model').value = config.stt_local_model || 'ggml-base.bin';
+            document.getElementById('setting-tts-local-voice').value = config.tts_local_voice || 'ru_RU-dmitri-medium.onnx';
             const magnetToggle = document.getElementById('setting-capsule-magnet');
             if (magnetToggle) {
               const magnetVal = config.capsule_magnet !== undefined ? config.capsule_magnet : true;
@@ -780,9 +903,13 @@
               syncMagnetToggleUI(magnetVal);
             }
 
+            localAiServers = config.ai_servers || [];
+            renderAiServersList();
+
             // Сначала грузим модели, потом восстанавливаем выбор
             await fetchAndPopulateModels(config.api_key, config.ai_model);
             updateApiStatus(config.api_key);
+            
           } catch (err) {
             console.error('Ошибка загрузки настроек:', err);
           }
@@ -797,6 +924,15 @@
 
       async function saveConfig() {
         if (invoke) {
+          const sttEngineVal = document.getElementById('setting-stt-engine').value;
+          let sttEngine = 'gemini';
+          let sttLocalModel = document.getElementById('setting-stt-local-model').value;
+
+          if (sttEngineVal.startsWith('local_')) {
+            sttEngine = 'local';
+            sttLocalModel = sttEngineVal.substring(6);
+          }
+
           const fields = {
             ui_lang: document.getElementById('setting-ui-lang').value,
             dictation_lang: document.getElementById('setting-dictation-lang').value,
@@ -805,16 +941,147 @@
             ai_model: document.getElementById('setting-ai-model').value,
             ocr_mode: document.getElementById('setting-ocr-mode').value,
             layout_hotkey_modifier: document.getElementById('setting-layout-modifier').value,
-            layout_hotkey_key: document.getElementById('setting-layout-key').value
+            layout_hotkey_key: document.getElementById('setting-layout-key').value,
+            stt_engine: sttEngine,
+            tts_engine: document.getElementById('setting-tts-engine').value,
+            stt_local_model: sttLocalModel,
+            tts_local_voice: document.getElementById('setting-tts-local-voice').value,
+            ai_servers: localAiServers
           };
           try {
             await invoke('update_config_fields', { fields });
             updateApiStatus(fields.api_key);
             localStorage.setItem('apiKey', fields.api_key || '');
             console.log("Настройки сохранены:", fields);
+            
+            // Синхронизируем VoiceCore
+            if (window.__TAURI__) {
+              await window.__TAURI__.event.emit('tts-state-sync', {
+                action: 'settings',
+                settings: {
+                  tts_engine: fields.tts_engine,
+                  tts_local_voice: fields.tts_local_voice
+                }
+              });
+            }
+            await updateExtensionsStatus();
           } catch (err) {
             console.error("Ошибка сохранения настроек:", err);
           }
+        }
+      }
+
+      async function updateExtensionsStatus() {
+        if (!invoke) return;
+        try {
+          // Получаем списки установленных файлов с диска
+          const installedSttModels = await invoke('get_installed_stt_models').catch(() => []);
+          const installedTtsVoices = await invoke('get_installed_voices').catch(() => []);
+
+          // 1. Проверяем STT
+          const selectedSttModel = document.getElementById('setting-stt-local-model').value;
+          const isSttInstalled = installedSttModels.includes(selectedSttModel);
+
+          const sttStatusText = document.getElementById('ext-stt-status');
+          const sttBtn = document.getElementById('btn-install-stt');
+          const sttSelect = document.getElementById('setting-stt-engine');
+
+          // Сохраняем текущее выбранное значение селектора
+          const currentSttValue = sttSelect.value;
+
+          // Строим опции селектора
+          sttSelect.innerHTML = '<option value="gemini">Облако (Gemini)</option>';
+          if (installedSttModels.length > 0) {
+            installedSttModels.forEach(model => {
+              const opt = document.createElement('option');
+              opt.value = `local_${model}`;
+              let display = model;
+              if (model === 'ggml-tiny.bin') display = 'Whisper Tiny (Самая быстрая)';
+              else if (model === 'ggml-base.bin') display = 'Whisper Base (Быстрая)';
+              else if (model === 'ggml-small.bin') display = 'Whisper Small (Точная)';
+              opt.textContent = `Локально: ${display}`;
+              sttSelect.appendChild(opt);
+            });
+          } else {
+            const opt = document.createElement('option');
+            opt.value = 'local';
+            opt.disabled = true;
+            opt.textContent = 'Локально (Не установлено)';
+            sttSelect.appendChild(opt);
+          }
+
+          // Восстанавливаем значение
+          if (sttSelect.querySelector(`option[value="${currentSttValue}"]`)) {
+            sttSelect.value = currentSttValue;
+          } else {
+            sttSelect.value = 'gemini';
+          }
+
+          // Проверяем наличие самого исполняемого файла whisper-cli.exe
+          const whisperStatus = await invoke('check_extension_status', { extType: 'stt' });
+
+          if (whisperStatus === 'Installed' && installedSttModels.length > 0) {
+            sttStatusText.innerText = `Установлено моделей: ${installedSttModels.length}`;
+            sttStatusText.className = 'text-[11px] text-[#7bd6d1] mt-0.5';
+          } else {
+            sttStatusText.innerText = 'Статус: Не установлено';
+            sttStatusText.className = 'text-[11px] text-[#ccc3d8] mt-0.5';
+            if (sttSelect.value.startsWith('local_')) {
+              sttSelect.value = 'gemini';
+              await saveConfig();
+            }
+          }
+
+          if (isSttInstalled) {
+            sttBtn.innerText = 'Удалить';
+            sttBtn.className = 'bg-[#ff4f4f]/10 text-[#ff4f4f] hover:bg-[#ff4f4f]/20 border border-[#ff4f4f]/30 rounded-lg px-2.5 py-1 text-[11px] font-semibold cursor-pointer transition-colors';
+          } else {
+            sttBtn.innerText = 'Установить';
+            sttBtn.className = 'bg-[#1b1b20] text-[#ccc3d8] hover:text-white border border-[#4a4455]/30 rounded-lg px-2.5 py-1 text-[11px] font-semibold cursor-pointer transition-colors';
+          }
+
+          // 2. Проверяем TTS
+          const selectedTtsVoice = document.getElementById('setting-tts-local-voice').value;
+          const isTtsInstalled = installedTtsVoices.includes(selectedTtsVoice);
+
+          const ttsStatusText = document.getElementById('ext-tts-status');
+          const ttsBtn = document.getElementById('btn-install-tts');
+
+          // Проверяем наличие самого исполняемого файла piper.exe
+          const piperStatus = await invoke('check_extension_status', { extType: 'tts' });
+
+          if (piperStatus === 'Installed' && installedTtsVoices.length > 0) {
+            ttsStatusText.innerText = `Установлено голосов: ${installedTtsVoices.length}`;
+            ttsStatusText.className = 'text-[11px] text-[#7bd6d1] mt-0.5';
+          } else {
+            ttsStatusText.innerText = 'Статус: Не установлено';
+            ttsStatusText.className = 'text-[11px] text-[#ccc3d8] mt-0.5';
+            
+            const ttsSelect = document.getElementById('setting-tts-engine');
+            if (ttsSelect.value === 'local') {
+              ttsSelect.value = 'edge';
+              await saveConfig();
+            }
+          }
+
+          if (isTtsInstalled) {
+            ttsBtn.innerText = 'Удалить';
+            ttsBtn.className = 'bg-[#ff4f4f]/10 text-[#ff4f4f] hover:bg-[#ff4f4f]/20 border border-[#ff4f4f]/30 rounded-lg px-2.5 py-1 text-[11px] font-semibold cursor-pointer transition-colors';
+          } else {
+            ttsBtn.innerText = 'Установить';
+            ttsBtn.className = 'bg-[#1b1b20] text-[#ccc3d8] hover:text-white border border-[#4a4455]/30 rounded-lg px-2.5 py-1 text-[11px] font-semibold cursor-pointer transition-colors';
+          }
+
+          // Отсылаем список установленных голосов в виджет озвучки
+          if (window.__TAURI__) {
+            await window.__TAURI__.event.emit('tts-state-sync', {
+              action: 'settings',
+              settings: { installedVoices: installedTtsVoices }
+            });
+          }
+
+        } catch (err) {
+          console.error('Ошибка проверки статуса расширений:', err);
         }
       }
 
@@ -853,92 +1120,95 @@
       };
 
       async function fetchAndPopulateModels(apiKey, savedModel) {
-        if (!apiKey || apiKey.trim().length < 10) return;
-
         const select = document.getElementById('setting-ai-model');
         const loadingBadge = document.getElementById('models-loading-badge');
         const refreshBtn = document.getElementById('btn-refresh-models');
         const infoBox = document.getElementById('model-info-box');
 
-        // Показываем индикатор загрузки
-        loadingBadge.classList.remove('hidden');
-        refreshBtn.classList.add('hidden');
-        select.disabled = true;
+        let models = [];
 
-        try {
-          let data;
-          if (invoke) {
-            data = await invoke('fetch_gemini_models', { apiKey: apiKey.trim() });
-          } else {
-            const resp = await fetch(
-              `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.trim()}&pageSize=100`
-            );
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            data = await resp.json();
+        if (apiKey && apiKey.trim().length >= 10) {
+          // Показываем индикатор загрузки
+          loadingBadge.classList.remove('hidden');
+          refreshBtn.classList.add('hidden');
+          select.disabled = true;
+
+          try {
+            let data;
+            if (invoke) {
+              data = await invoke('fetch_gemini_models', { apiKey: apiKey.trim() });
+            } else {
+              const resp = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.trim()}&pageSize=100`
+              );
+              if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+              data = await resp.json();
+            }
+
+            // Фильтруем только generateContent модели
+            models = (data.models || []).filter(m =>
+              m.supportedGenerationMethods?.includes('generateContent') &&
+              !m.name.includes('embedding') &&
+              !m.name.includes('aqa')
+            ).map(m => {
+              const id = m.name.replace('models/', '');
+              const display = m.displayName || id;
+              const limits = MODEL_LIMITS_KNOWN[id];
+              let label = display;
+              if (limits) label += ` — ${limits.rpd} зап/день, ${limits.rpm} RPM`;
+              return { id, label };
+            });
+
+            // Сортируем: сначала новее
+            models.sort((a, b) => b.label.localeCompare(a.label));
+          } catch (err) {
+            console.error('Ошибка загрузки моделей Gemini:', err);
+            models = [{ id: 'gemini-2.0-flash', label: 'gemini-2.0-flash (офлайн-фолбек)' }];
           }
+        }
 
-          // Фильтруем только generateContent модели
-          const models = (data.models || []).filter(m =>
-            m.supportedGenerationMethods?.includes('generateContent') &&
-            !m.name.includes('embedding') &&
-            !m.name.includes('aqa')
-          );
+        // Подмешиваем локальные серверы
+        localAiServers.forEach(server => {
+          models.push({
+            id: server.id,
+            label: `${server.name} (Local LLM / ${server.model})`
+          });
+        });
 
-          // Сортируем: сначала новее
-          models.sort((a, b) => b.name.localeCompare(a.name));
-
-          select.innerHTML = '';
+        // Заполняем селектор
+        select.innerHTML = '';
+        if (models.length === 0) {
+          select.innerHTML = '<option value="">— Укажите ключ Gemini или добавьте локальную LLM —</option>';
+        } else {
           models.forEach(m => {
-            const id = m.name.replace('models/', '');
-            const display = m.displayName || id;
-            const limits = MODEL_LIMITS_KNOWN[id];
-            let label = display;
-            if (limits) label += ` — ${limits.rpd} зап/день, ${limits.rpm} RPM`;
             const opt = document.createElement('option');
-            opt.value = id;
-            opt.textContent = label;
+            opt.value = m.id;
+            opt.textContent = m.label;
             select.appendChild(opt);
           });
-
-          // Восстанавливаем сохранённую модель
-          if (savedModel && select.querySelector(`option[value="${savedModel}"]`)) {
-            select.value = savedModel;
-          } else if (select.options.length > 0) {
-            // Автовыбор: предпочитаем gemini-3.5-flash
-            const preferred = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-3.1-flash-lite', 'gemini-2.0-flash'];
-            for (const p of preferred) {
-              if (select.querySelector(`option[value="${p}"]`)) { select.value = p; break; }
-            }
-          }
-
-          // Обновляем инфо-блок под селектором
-          updateModelInfo(select.value);
-          loadingBadge.classList.add('hidden');
-          refreshBtn.classList.remove('hidden');
-
-          // Статус API → Активен
-          const statusText = document.getElementById('api-status-text');
-          const statusDot = document.getElementById('api-status-dot');
-          if (statusText) {
-            statusText.textContent = 'Активен';
-            statusText.className = 'text-[10px] text-[#7bd6d1] font-semibold';
-            statusDot.className = 'w-2 h-2 rounded-full bg-[#7bd6d1]';
-            statusDot.style.boxShadow = '0 0 6px rgba(123,214,209,0.6)';
-          }
-
-        } catch (err) {
-          select.innerHTML = '<option value="gemini-2.0-flash">gemini-2.0-flash (офлайн-фолбек)</option>';
-          loadingBadge.classList.add('hidden');
-          refreshBtn.classList.remove('hidden');
-          const statusText = document.getElementById('api-status-text');
-          if (statusText) {
-            statusText.textContent = 'Ошибка ключа';
-            statusText.className = 'text-[10px] text-[#ffb4ab] font-semibold';
-          }
-          console.error('[Models] Ошибка загрузки моделей:', err);
-        } finally {
-          select.disabled = false;
         }
+
+        select.disabled = false;
+        loadingBadge.classList.add('hidden');
+        refreshBtn.classList.remove('hidden');
+
+        // Восстанавливаем сохранённую модель
+        if (savedModel && select.querySelector(`option[value="${savedModel}"]`)) {
+          select.value = savedModel;
+        } else if (select.options.length > 0) {
+          // Автовыбор
+          const preferred = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-3.1-flash-lite', 'gemini-2.0-flash'];
+          let set = false;
+          for (const p of preferred) {
+            if (select.querySelector(`option[value="${p}"]`)) { select.value = p; set = true; break; }
+          }
+          if (!set && select.options[0].value) {
+            select.value = select.options[0].value;
+          }
+        }
+
+        // Обновляем инфо-блок под селектором
+        updateModelInfo(select.value);
       }
 
       function updateModelInfo(modelId) {
@@ -970,6 +1240,10 @@
       document.getElementById('setting-ui-lang').addEventListener('change', saveConfig);
       document.getElementById('setting-dictation-lang').addEventListener('change', saveConfig);
       document.getElementById('setting-ocr-mode').addEventListener('change', saveConfig);
+      document.getElementById('setting-stt-engine').addEventListener('change', saveConfig);
+      document.getElementById('setting-tts-engine').addEventListener('change', saveConfig);
+      document.getElementById('setting-stt-local-model').addEventListener('change', saveConfig);
+      document.getElementById('setting-tts-local-voice').addEventListener('change', saveConfig);
       document.getElementById('setting-layout-modifier').addEventListener('change', saveConfig);
       document.getElementById('setting-layout-key').addEventListener('change', saveConfig);
       document.getElementById('setting-api-key').addEventListener('input', debounce(async () => {
@@ -992,6 +1266,180 @@
         const currentModel = document.getElementById('setting-ai-model').value;
         fetchAndPopulateModels(key, currentModel);
       });
+
+      // Логика установки/удаления локальных модулей
+      async function handleExtensionAction(type) {
+        if (!invoke) return;
+        const btn = document.getElementById(`btn-install-${type}`);
+        const statusText = document.getElementById(`ext-${type}-status`);
+        const progressContainer = document.getElementById(`ext-${type}-progress-container`);
+        const progressBar = document.getElementById(`ext-${type}-progress-bar`);
+
+        const currentText = btn.innerText;
+
+        if (currentText === 'Установить') {
+          btn.disabled = true;
+          btn.innerText = 'Установка...';
+          statusText.innerText = 'Статус: Скачивание и распаковка...';
+          progressContainer.classList.remove('hidden');
+          progressBar.style.width = '0%';
+
+          try {
+            const modelSelectId = type === 'stt' ? 'setting-stt-local-model' : 'setting-tts-local-voice';
+            const modelId = document.getElementById(modelSelectId).value;
+            await invoke('install_extension', { extType: type, modelId: modelId });
+            btn.disabled = false;
+            progressContainer.classList.add('hidden');
+            await updateExtensionsStatus();
+          } catch (err) {
+            console.error(`Ошибка установки модуля ${type}:`, err);
+            statusText.innerText = `Статус: Ошибка установки (${err})`;
+            statusText.className = 'text-[11px] text-[#ff4f4f] mt-0.5';
+            btn.disabled = false;
+            btn.innerText = 'Установить';
+            progressContainer.classList.add('hidden');
+          }
+        } else if (currentText === 'Удалить') {
+          btn.disabled = true;
+          btn.innerText = 'Удаление...';
+          try {
+            const modelSelectId = type === 'stt' ? 'setting-stt-local-model' : 'setting-tts-local-voice';
+            const modelId = document.getElementById(modelSelectId).value;
+            await invoke('uninstall_model', { extType: type, modelId: modelId });
+            btn.disabled = false;
+            await updateExtensionsStatus();
+          } catch (err) {
+            console.error(`Ошибка удаления модели ${type}:`, err);
+            btn.disabled = false;
+            btn.innerText = 'Удалить';
+          }
+        }
+      }
+
+      document.getElementById('btn-install-stt').addEventListener('click', () => handleExtensionAction('stt'));
+      document.getElementById('btn-install-tts').addEventListener('click', () => handleExtensionAction('tts'));
+
+      // Функции управления локальными LLM-серверами
+      window.removeAiServer = async function(id) {
+        localAiServers = localAiServers.filter(s => s.id !== id);
+        renderAiServersList();
+        
+        // Перепопулируем список моделей ИИ
+        const key = document.getElementById('setting-api-key').value;
+        const select = document.getElementById('setting-ai-model');
+        const currentModel = select.value === id ? 'gemini-2.0-flash' : select.value;
+        await fetchAndPopulateModels(key, currentModel);
+        
+        await saveConfig();
+      };
+
+      async function checkServerHeartbeat(id, url) {
+        const dot = document.getElementById(`server-status-${id}`);
+        if (!dot) return;
+        try {
+          const status = await invoke('ping_ai_server', { url });
+          if (status === 'online') {
+            dot.className = 'w-2.5 h-2.5 rounded-full bg-[#7bd6d1]';
+            dot.style.boxShadow = '0 0 6px rgba(123,214,209,0.6)';
+            dot.title = 'Доступен (Online)';
+          } else {
+            dot.className = 'w-2.5 h-2.5 rounded-full bg-[#ffb4ab]';
+            dot.style.boxShadow = '0 0 6px rgba(255,180,171,0.6)';
+            dot.title = 'Недоступен (Offline)';
+          }
+        } catch (_) {
+          dot.className = 'w-2.5 h-2.5 rounded-full bg-[#ffb4ab]';
+          dot.style.boxShadow = '0 0 6px rgba(255,180,171,0.6)';
+          dot.title = 'Недоступен (Offline)';
+        }
+      }
+
+      function renderAiServersList() {
+        const container = document.getElementById('local-ai-servers-list');
+        if (!container) return;
+        if (localAiServers.length === 0) {
+          container.innerHTML = `<div class="text-[11px] text-[#ccc3d8]/50 italic text-center py-2">Нет добавленных локальных серверов</div>`;
+          return;
+        }
+        container.innerHTML = localAiServers.map(server => `
+          <div class="flex items-center justify-between p-2 bg-[#13131a] rounded-lg border border-[#4a4455]/15 text-[11px]">
+            <div class="flex flex-col">
+              <div class="flex items-center gap-1.5">
+                <span class="w-2.5 h-2.5 rounded-full bg-gray-500 shadow-sm transition-all" id="server-status-${server.id}" title="Проверка статуса..."></span>
+                <span class="text-[#e4e1e9] font-medium">${server.name}</span>
+                <span class="text-[#ccc3d8]/60 font-mono text-[9px]">(${server.model})</span>
+              </div>
+              <span class="text-[#ccc3d8]/60 text-[9px] mt-0.5 ml-4 font-mono">${server.url}</span>
+            </div>
+            <button class="bg-transparent text-[#ff4f4f] hover:text-white border-none cursor-pointer flex items-center justify-center p-1 rounded transition-colors" onclick="removeAiServer('${server.id}')" title="Удалить сервер">
+              <span class="material-symbols-outlined text-[14px]">delete</span>
+            </button>
+          </div>
+        `).join('');
+
+        localAiServers.forEach(server => {
+          checkServerHeartbeat(server.id, server.url);
+        });
+      }
+
+      document.getElementById('btn-add-ai-server').addEventListener('click', async () => {
+        const nameInput = document.getElementById('add-server-name');
+        const urlInput = document.getElementById('add-server-url');
+        const modelInput = document.getElementById('add-server-model');
+
+        const name = nameInput.value.trim();
+        const url = urlInput.value.trim();
+        const model = modelInput.value.trim();
+
+        if (!name || !url || !model) {
+          alert('Заполните все поля для добавления сервера.');
+          return;
+        }
+
+        const id = `local_${Date.now()}`;
+        localAiServers.push({ id, name, url, model });
+
+        nameInput.value = '';
+        urlInput.value = '';
+        modelInput.value = '';
+
+        renderAiServersList();
+
+        // Обновляем селектор моделей ИИ
+        const key = document.getElementById('setting-api-key').value;
+        const select = document.getElementById('setting-ai-model');
+        await fetchAndPopulateModels(key, select.value);
+
+        await saveConfig();
+      });
+
+      // Периодический heartbeat серверов раз в 15 секунд
+      setInterval(() => {
+        if (localAiServers && localAiServers.length > 0) {
+          localAiServers.forEach(server => {
+            checkServerHeartbeat(server.id, server.url);
+          });
+        }
+      }, 15000);
+
+      // Слушаем прогресс установки от Tauri
+      if (window.__TAURI__) {
+        window.__TAURI__.event.listen('extension-progress', (event) => {
+          const payload = event.payload;
+          const type = payload.ext_type;
+          const percent = payload.percent;
+          
+          const progressBar = document.getElementById(`ext-${type}-progress-bar`);
+          const statusText = document.getElementById(`ext-${type}-status`);
+
+          if (progressBar) {
+            progressBar.style.width = `${percent}%`;
+          }
+          if (statusText) {
+            statusText.innerText = `Статус: Загрузка (${percent}%)`;
+          }
+        });
+      }
 
       function debounce(func, wait) {
         let timeout;
@@ -1605,10 +2053,31 @@
         const spoilerContent = document.getElementById('spoiler-content');
         const spoilerToggle = document.getElementById('spoiler-toggle');
 
+        const modelChainInfo = document.getElementById('model-chain-info');
+        const modelChainText = document.getElementById('model-chain-text');
+
         if (!entry) {
           if (summaryText) summaryText.textContent = 'Нет данных. Создайте первую запись через капсулу (Ctrl+Win).';
           if (activityTime) activityTime.textContent = '—';
+          if (modelChainInfo) {
+            modelChainInfo.classList.add('hidden');
+            modelChainInfo.classList.remove('flex');
+          }
           return;
+        }
+
+        if (modelChainInfo && modelChainText) {
+          if (entry.stt_model || entry.llm_model) {
+            const parts = [];
+            if (entry.stt_model) parts.push(`STT: ${entry.stt_model}`);
+            if (entry.llm_model) parts.push(`LLM: ${entry.llm_model}`);
+            modelChainText.textContent = parts.join(' ➔ ');
+            modelChainInfo.classList.remove('hidden');
+            modelChainInfo.classList.add('flex');
+          } else {
+            modelChainInfo.classList.add('hidden');
+            modelChainInfo.classList.remove('flex');
+          }
         }
 
         // Обновляем Combo Box главной карточки

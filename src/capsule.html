@@ -733,10 +733,14 @@
           if (preset === 'custom') {
             openCustomPromptWindow();
           } else {
-            currentPreset = preset;
-            localStorage.setItem('capsulePreset', preset);
+            if (currentPreset === preset) {
+              currentPreset = 'none';
+            } else {
+              currentPreset = preset;
+            }
+            localStorage.setItem('capsulePreset', currentPreset);
             syncPresetUI(currentPreset);
-            if (onSelect) onSelect(preset);
+            if (onSelect) onSelect(currentPreset);
           }
         });
       }

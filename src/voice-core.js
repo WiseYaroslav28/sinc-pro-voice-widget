@@ -122,15 +122,23 @@ class VoiceCore {
         this.settings = {
             voice: 'ru-RU-SvetlanaNeural',
             speed: 1.0,
-            translate: false
+            translate: false,
+            tts_engine: 'edge',
+            tts_local_voice: 'ru_RU-dmitri-medium.onnx'
         };
 
         if (window.__TAURI__) {
             const { invoke } = window.__TAURI__.core;
-            invoke('load_config').then((config) => {
+            Promise.all([
+                invoke('load_config'),
+                invoke('get_installed_voices').catch(() => [])
+            ]).then(([config, voices]) => {
                 if (config.tts_voice) this.settings.voice = config.tts_voice;
                 if (config.tts_speed) this.settings.speed = config.tts_speed;
                 if (config.tts_translate !== undefined) this.settings.translate = config.tts_translate;
+                if (config.tts_engine) this.settings.tts_engine = config.tts_engine;
+                if (config.tts_local_voice) this.settings.tts_local_voice = config.tts_local_voice;
+                this.settings.installedVoices = voices;
                 this.audioElement.playbackRate = this.settings.speed;
                 if (this.onSettingsSync) this.onSettingsSync(this.settings);
                 this.broadcastState('settings', this.settings);
@@ -140,7 +148,9 @@ class VoiceCore {
             this.settings = {
                 voice: savedSettings.voice || 'ru-RU-SvetlanaNeural',
                 speed: savedSettings.speed || 1.0,
-                translate: savedSettings.translate || false
+                translate: savedSettings.translate || false,
+                tts_engine: savedSettings.tts_engine || 'edge',
+                tts_local_voice: savedSettings.tts_local_voice || 'ru_RU-dmitri-medium.onnx'
             };
         }
 
@@ -346,7 +356,10 @@ class VoiceCore {
         this.currentlyLoading.add(i);
 
         try {
-            const voiceKey = this.settings.voice || 'ru-RU-SvetlanaNeural';
+            const isLocal = this.settings.tts_engine === 'local';
+            const voiceKey = isLocal 
+                ? (this.settings.tts_local_voice || 'ru_RU-dmitri-medium.onnx')
+                : (this.settings.voice || 'ru-RU-SvetlanaNeural');
             
             // 1. Проверяем IndexedDB кэш (мгновенно, без задержек)
             const cachedAudio = await this.cache.get(voiceKey, this.sentences[i]);
@@ -669,6 +682,9 @@ class VoiceCore {
                         if (p.speed !== undefined) this.settings.speed = p.speed;
                         if (p.voice !== undefined) this.settings.voice = p.voice;
                         if (p.translate !== undefined) this.settings.translate = p.translate;
+                        if (p.tts_engine !== undefined) this.settings.tts_engine = p.tts_engine;
+                        if (p.tts_local_voice !== undefined) this.settings.tts_local_voice = p.tts_local_voice;
+                        if (p.installedVoices !== undefined) this.settings.installedVoices = p.installedVoices;
                     }
                     if (this.isPlaying && p.speed !== undefined) {
                         this.audioElement.playbackRate = this.settings.speed;
@@ -679,7 +695,9 @@ class VoiceCore {
                         invoke('update_config_fields', { fields: {
                             tts_voice: this.settings.voice,
                             tts_speed: this.settings.speed,
-                            tts_translate: this.settings.translate
+                            tts_translate: this.settings.translate,
+                            tts_engine: this.settings.tts_engine,
+                            tts_local_voice: this.settings.tts_local_voice
                         }}).catch(()=>{});
                     }
                     if (this.onSettingsSync) this.onSettingsSync(this.settings);
@@ -707,7 +725,7 @@ class VoiceCore {
     }
 
     updateProgress() {
-        if (!this.onProgress || this.sentences.length === 0) return;
+        if (this.sentences.length === 0) return;
         
         let totalChars = this.currentText.length;
         if (totalChars === 0) return;
@@ -736,7 +754,17 @@ class VoiceCore {
         const playedChars = playedCharsBeforeCurrent + (currentSentenceChars * currentAudioProgress);
         const percentPlayed = (playedChars / totalChars) * 100;
 
-        this.onProgress(percentBuffered, percentPlayed);
+        if (this.onProgress) {
+            this.onProgress(percentBuffered, percentPlayed);
+        }
+
+        if (window.__TAURI__) {
+            window.__TAURI__.event.emit('tts-state-sync', {
+                action: 'progress',
+                percentBuffered,
+                percentPlayed
+            });
+        }
     }
 }
 

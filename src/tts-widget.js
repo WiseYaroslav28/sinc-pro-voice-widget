@@ -91,51 +91,21 @@ window.renderTtsWidget = function(container, isMain = false) {
       <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
       `}
 
-      <!-- 🔊 Голос -->
-      <div class="relative w-[160px] flex-shrink-0" id="tts-voice-wrapper">
-        <button class="bg-transparent text-[#e4e1e9] border-none flex items-center justify-center gap-1.5 px-3 py-1 rounded-full text-[11px] cursor-pointer transition-all hover:bg-[#3a3545] w-full" id="tts-btn-voice" title="Выбор голоса">
-          <span class="material-symbols-outlined text-[14px] text-[#ccc3d8]/60" style="font-variation-settings:'FILL' 1;">volume_up</span>
-          <span id="tts-selected-voice-label" class="flex-1 text-left truncate">Загрузка...</span>
-          <span class="material-symbols-outlined text-[14px] text-[#4a4455]">expand_more</span>
-        </button>
-        <div class="absolute top-[calc(100%+8px)] left-0 bg-[#1b1b22]/95 border border-[#8e52ff]/35 rounded-[12px] p-1.5 hidden flex-col gap-[2px] shadow-[0_12px_32px_rgba(0,0,0,0.7)] backdrop-blur-md max-h-[280px] overflow-y-auto z-50 w-full" id="tts-voice-menu">
-          <div class="text-[9px] uppercase tracking-widest text-[#8e52ff] px-2 mb-1 opacity-70">Голоса</div>
-          <!-- Заполняется динамически -->
-        </div>
-      </div>
-
-      <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
-
-      <!-- ⚡ Скорость -->
-      <div class="relative w-[72px] flex-shrink-0" id="tts-speed-wrapper">
-        <button class="bg-transparent text-[#e4e1e9] border-none flex items-center justify-center gap-1 w-full px-1 py-1 rounded-full text-[11px] cursor-pointer transition-all hover:bg-[#3a3545]" id="tts-btn-speed" title="Скорость воспроизведения">
-          <span class="material-symbols-outlined text-[14px] text-[#45a29e]">bolt</span>
-          <span id="tts-selected-speed-label">1.0x</span>
-        </button>
-        <!-- Выпадающее меню скорости -->
-        <div class="absolute top-[calc(100%+8px)] left-1/2 -translate-x-1/2 bg-[#1b1b22]/95 border border-[#8e52ff]/35 rounded-[12px] p-2 w-[80px] hidden flex-col shadow-[0_12px_32px_rgba(0,0,0,0.7)] backdrop-blur-md z-50" id="tts-speed-menu">
-          <div class="text-[9px] uppercase tracking-widest text-[#8e52ff] px-2 mb-2 opacity-70">Скорость</div>
-          <div class="flex flex-row relative">
-            <div class="flex flex-col flex-1 gap-1" id="tts-speed-list">
-              <!-- Заполняется динамически -->
-            </div>
-            <div class="relative w-6 ml-1 flex flex-col items-center justify-center">
-              <input type="range" id="tts-speed-slider" min="0.5" max="3.0" step="0.05" value="1.0" title="Тонкая настройка скорости"
-                     style="position: absolute; transform: rotate(90deg); width: 240px; height: 4px;">
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
-
-      <!-- ▶ Play/Pause + Hover Stop (справа) -->
+      <!-- ▶ Play/Pause + Hover Stop (в начале) -->
       <div class="relative flex-shrink-0" id="tts-play-stop-wrapper" style="width: 36px; height: 36px;">
         <div class="relative w-9 h-9 flex-shrink-0" id="tts-widget-play-container">
           <button class="flex items-center justify-center w-9 h-9 rounded-full bg-[#8e52ff] text-white hover:bg-[#a377ff] transition-all active:scale-95 shadow-[0_0_12px_rgba(142,82,255,0.4)] flex-shrink-0 cursor-pointer border-0 outline-none"
                   id="tts-widget-play" title="Озвучить / Пауза">
             <span class="material-symbols-outlined text-[20px]" id="tts-widget-play-icon" style="font-variation-settings:'FILL' 1;">play_arrow</span>
           </button>
+          <!-- SVG Прогресс-бар вокруг кнопки -->
+          <svg class="absolute top-0 left-0 w-9 h-9 pointer-events-none -rotate-90 z-10" viewBox="0 0 36 36">
+            <circle cx="18" cy="18" r="17" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="2"/>
+            <circle id="tts-widget-progress-buffered" cx="18" cy="18" r="17" fill="none" stroke="rgba(123, 214, 209, 0.25)" stroke-width="2" 
+                    stroke-dasharray="106.81" stroke-dashoffset="106.81" stroke-linecap="round"/>
+            <circle id="tts-widget-progress-played" cx="18" cy="18" r="17" fill="none" stroke="#7bd6d1" stroke-width="2" 
+                    stroke-dasharray="106.81" stroke-dashoffset="106.81" stroke-linecap="round"/>
+          </svg>
         </div>
 
         <div class="stop-btn-container flex items-center justify-center" style="opacity: 0; pointer-events: none; position: absolute; left: 40px; top: 50%; transform: translateY(-50%) translateX(-10px); width: 28px; height: 28px; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); z-index: 10;">
@@ -145,23 +115,64 @@ window.renderTtsWidget = function(container, isMain = false) {
         </div>
       </div>
 
-      <!-- Пространство перетаскивания и разделения -->
-      <div class="w-4" data-tauri-drag-region></div>
+      <!-- Вся остальная часть, которая в плавающем виджете скрывается при hover-collapsed -->
+      <div class="flex items-center gap-1 tts-extra-content" data-tauri-drag-region>
+        <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
 
-      <!-- Divider перед Translate -->
-      <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
+        <!-- 🔊 Голос -->
+        <div class="relative w-[160px] flex-shrink-0" id="tts-voice-wrapper">
+          <button class="bg-transparent text-[#e4e1e9] border-none flex items-center justify-center gap-1.5 px-3 py-1 rounded-full text-[11px] cursor-pointer transition-all hover:bg-[#3a3545] w-full" id="tts-btn-voice" title="Выбор голоса">
+            <span class="material-symbols-outlined text-[14px] text-[#ccc3d8]/60" style="font-variation-settings:'FILL' 1;">volume_up</span>
+            <span id="tts-selected-voice-label" class="flex-1 text-left truncate">Загрузка...</span>
+            <span class="material-symbols-outlined text-[14px] text-[#4a4455]">expand_more</span>
+          </button>
+          <div class="absolute top-[calc(100%+8px)] left-0 bg-[#1b1b22]/95 border border-[#8e52ff]/35 rounded-[12px] p-1.5 hidden flex-col gap-[2px] shadow-[0_12px_32px_rgba(0,0,0,0.7)] backdrop-blur-md max-h-[280px] overflow-y-auto z-50 w-full" id="tts-voice-menu">
+            <div class="text-[9px] uppercase tracking-widest text-[#8e52ff] px-2 mb-1 opacity-70">Голоса</div>
+            <!-- Заполняется динамически -->
+          </div>
+        </div>
 
-      <!-- 文A Перевод -->
-      <button class="bg-transparent text-[#ccc3d8] border-none flex items-center justify-center w-7 h-7 rounded-md cursor-pointer transition-all hover:bg-[#3a3545] hover:text-[#7bd6d1] outline-none ${isMain ? 'mx-3' : 'mx-1'}" id="tts-btn-translate" title="Переводить перед чтением">
-        <span class="material-symbols-outlined text-[18px]">translate</span>
-      </button>
+        <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
 
-      ${isMain ? '' : `
-      <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
-      <button class="bg-transparent text-[#ccc3d8] border-none flex items-center justify-center w-7 h-7 rounded-md cursor-pointer transition-all hover:bg-[#3a3545] hover:text-white outline-none" id="tts-btn-expand" title="Дополнительно">
-        <span class="material-symbols-outlined text-[18px]" id="tts-expand-icon">open_in_full</span>
-      </button>
-      `}
+        <!-- ⚡ Скорость -->
+        <div class="relative w-[72px] flex-shrink-0" id="tts-speed-wrapper">
+          <button class="bg-transparent text-[#e4e1e9] border-none flex items-center justify-center gap-1 w-full px-1 py-1 rounded-full text-[11px] cursor-pointer transition-all hover:bg-[#3a3545]" id="tts-btn-speed" title="Скорость воспроизведения">
+            <span class="material-symbols-outlined text-[14px] text-[#45a29e]">bolt</span>
+            <span id="tts-selected-speed-label">1.0x</span>
+          </button>
+          <!-- Выпадающее меню скорости -->
+          <div class="absolute top-[calc(100%+8px)] left-1/2 -translate-x-1/2 bg-[#1b1b22]/95 border border-[#8e52ff]/35 rounded-[12px] p-2 w-[80px] hidden flex-col shadow-[0_12px_32px_rgba(0,0,0,0.7)] backdrop-blur-md z-50" id="tts-speed-menu">
+            <div class="text-[9px] uppercase tracking-widest text-[#8e52ff] px-2 mb-2 opacity-70">Скорость</div>
+            <div class="flex flex-row relative">
+              <div class="flex flex-col flex-1 gap-1" id="tts-speed-list">
+                <!-- Заполняется динамически -->
+              </div>
+              <div class="relative w-6 ml-1 flex flex-col items-center justify-center">
+                <input type="range" id="tts-speed-slider" min="0.5" max="3.0" step="0.05" value="1.0" title="Тонкая настройка скорости"
+                       style="position: absolute; transform: rotate(90deg); width: 240px; height: 4px;">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Пространство перетаскивания и разделения -->
+        <div class="w-4" data-tauri-drag-region></div>
+
+        <!-- Divider перед Translate -->
+        <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
+
+        <!-- 文A Перевод -->
+        <button class="bg-transparent text-[#ccc3d8] border-none flex items-center justify-center w-7 h-7 rounded-md cursor-pointer transition-all hover:bg-[#3a3545] hover:text-[#7bd6d1] outline-none ${isMain ? 'mx-3' : 'mx-1'}" id="tts-btn-translate" title="Переводить перед чтением">
+          <span class="material-symbols-outlined text-[18px]">translate</span>
+        </button>
+
+        ${isMain ? '' : `
+        <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
+        <button class="bg-transparent text-[#ccc3d8] border-none flex items-center justify-center w-7 h-7 rounded-md cursor-pointer transition-all hover:bg-[#3a3545] hover:text-white outline-none" id="tts-btn-expand" title="Дополнительно">
+          <span class="material-symbols-outlined text-[18px]" id="tts-expand-icon">open_in_full</span>
+        </button>
+        `}
+      </div>
     </div>
   `;
 
@@ -171,15 +182,15 @@ window.renderTtsWidget = function(container, isMain = false) {
 
 function initTtsWidgetLogic(container, isMain) {
   const PREFERRED_VOICES = [
-    { label: 'Светлана (RU)', lang: 'ru', edgeId: 'ru-RU-SvetlanaNeural' },
-    { label: 'Дмитрий (RU)',  lang: 'ru', edgeId: 'ru-RU-DmitryNeural'   },
-    { label: 'Guy (EN)',       lang: 'en', edgeId: 'en-US-GuyNeural'       },
-    { label: 'Aria (EN)',      lang: 'en', edgeId: 'en-US-AriaNeural'      },
-    { label: 'Jenny (EN)',     lang: 'en', edgeId: 'en-US-JennyNeural'     },
-    { label: 'Katja (DE)',     lang: 'de', edgeId: 'de-DE-KatjaNeural'     },
-    { label: 'Denise (FR)',    lang: 'fr', edgeId: 'fr-FR-DeniseNeural'    },
-    { label: 'Alvaro (ES)',    lang: 'es', edgeId: 'es-ES-AlvaroNeural'    },
-    { label: 'Xiaoxiao (CN)', lang: 'zh', edgeId: 'zh-CN-XiaoxiaoNeural'  },
+    { label: 'Светлана (RU, Online)', lang: 'ru', edgeId: 'ru-RU-SvetlanaNeural' },
+    { label: 'Дмитрий (RU, Online)',  lang: 'ru', edgeId: 'ru-RU-DmitryNeural'   },
+    { label: 'Guy (EN, Online)',       lang: 'en', edgeId: 'en-US-GuyNeural'       },
+    { label: 'Aria (EN, Online)',      lang: 'en', edgeId: 'en-US-AriaNeural'      },
+    { label: 'Jenny (EN, Online)',     lang: 'en', edgeId: 'en-US-JennyNeural'     },
+    { label: 'Katja (DE, Online)',     lang: 'de', edgeId: 'de-DE-KatjaNeural'     },
+    { label: 'Denise (FR, Online)',    lang: 'fr', edgeId: 'fr-FR-DeniseNeural'    },
+    { label: 'Alvaro (ES, Online)',    lang: 'es', edgeId: 'es-ES-AlvaroNeural'    },
+    { label: 'Xiaoxiao (CN, Online)', lang: 'zh', edgeId: 'zh-CN-XiaoxiaoNeural'  },
   ];
 
   // 0.5 на самом верху, 3.0 в самом низу
@@ -207,12 +218,64 @@ function initTtsWidgetLogic(container, isMain) {
   let isPlaying = false;
   let isPaused = false;
 
-  // Render Voices
-  voiceMenu.innerHTML += PREFERRED_VOICES.map(v => 
-    `<div class="px-2 py-1.5 text-[11px] cursor-pointer hover:bg-[#8e52ff]/20 rounded-md transition-colors voice-item" data-id="${v.edgeId}" data-label="${v.label}">${v.label}</div>`
-  ).join('');
+  let currentInstalledVoices = [];
 
-  voiceLabel.textContent = PREFERRED_VOICES[0].label;
+  function rebuildVoicesMenu(installedVoices) {
+    if (installedVoices !== undefined) {
+      currentInstalledVoices = installedVoices;
+    }
+    let html = PREFERRED_VOICES.map(v => 
+      `<div class="px-2 py-1.5 text-[11px] cursor-pointer hover:bg-[#8e52ff]/20 rounded-md transition-colors voice-item" data-id="${v.edgeId}" data-label="${v.label}">${v.label}</div>`
+    ).join('');
+
+    currentInstalledVoices.forEach(voiceFile => {
+      let label = voiceFile;
+      if (voiceFile === 'ru_RU-dmitri-medium.onnx') {
+        label = 'Дмитрий (RU, Local)';
+      } else if (voiceFile === 'ru_RU-irina-medium.onnx') {
+        label = 'Ирина (RU, Local)';
+      } else {
+        label = `${voiceFile.replace('.onnx', '')} (Local)`;
+      }
+      html += `<div class="px-2 py-1.5 text-[11px] cursor-pointer hover:bg-[#8e52ff]/20 rounded-md transition-colors voice-item" data-id="${voiceFile}" data-label="${label}">${label}</div>`;
+    });
+
+    voiceMenu.innerHTML = html;
+
+    voiceMenu.querySelectorAll('.voice-item').forEach(item => {
+      item.addEventListener('click', () => {
+        voiceMenu.querySelectorAll('.voice-item').forEach(i => {
+          i.classList.remove('bg-[#8e52ff]/20', 'text-[#8e52ff]');
+        });
+        item.classList.add('bg-[#8e52ff]/20', 'text-[#8e52ff]');
+        currentVoice = item.dataset.id;
+        voiceLabel.textContent = item.dataset.label;
+        closeAllMenus();
+
+        const isLocal = currentVoice.endsWith('.onnx');
+        notifyChange('setting', {
+          voice: currentVoice,
+          tts_engine: isLocal ? 'local' : 'edge',
+          tts_local_voice: isLocal ? currentVoice : undefined
+        });
+      });
+    });
+
+    // Подсвечиваем активный голос
+    let found = false;
+    voiceMenu.querySelectorAll('.voice-item').forEach(i => {
+      if (i.dataset.id === currentVoice) {
+        i.classList.add('bg-[#8e52ff]/20', 'text-[#8e52ff]');
+        voiceLabel.textContent = i.dataset.label;
+        found = true;
+      }
+    });
+    if (!found && PREFERRED_VOICES.length > 0) {
+      voiceLabel.textContent = PREFERRED_VOICES[0].label;
+    }
+  }
+
+  rebuildVoicesMenu([]);
 
   // Render Speeds
   speedList.innerHTML += SPEEDS.map(s => 
@@ -240,6 +303,8 @@ function initTtsWidgetLogic(container, isMain) {
     btnSpeed.classList.remove('bg-[#3a3545]');
     if (wasOpen) setWindowExpanded(false);
   }
+
+  container.closeMenus = closeAllMenus;
 
   document.addEventListener('click', closeAllMenus);
 
@@ -276,19 +341,7 @@ function initTtsWidgetLogic(container, isMain) {
     }));
   }
 
-  // Voice Select
-  voiceMenu.querySelectorAll('.voice-item').forEach(item => {
-    item.addEventListener('click', () => {
-      voiceMenu.querySelectorAll('.voice-item').forEach(i => {
-        i.classList.remove('bg-[#8e52ff]/20', 'text-[#8e52ff]');
-      });
-      item.classList.add('bg-[#8e52ff]/20', 'text-[#8e52ff]');
-      currentVoice = item.dataset.id;
-      voiceLabel.textContent = item.dataset.label;
-      closeAllMenus();
-      notifyChange('setting', { voice: currentVoice });
-    });
-  });
+
 
   // Speed Select
   function updateSpeedUI(val) {
@@ -340,6 +393,9 @@ function initTtsWidgetLogic(container, isMain) {
 
   // Export API to update state from outside
   container.updateState = function(state) {
+    if (state.installedVoices !== undefined) {
+      rebuildVoicesMenu(state.installedVoices);
+    }
     if (state.isPlaying !== undefined) {
       isPlaying = state.isPlaying;
       if (isPlaying) isPaused = false;
@@ -347,6 +403,24 @@ function initTtsWidgetLogic(container, isMain) {
     }
     if (state.isPaused !== undefined) {
       isPaused = state.isPaused;
+    }
+
+    // Управление прогресс-баром
+    const progressBufferedCircle = container.querySelector('#tts-widget-progress-buffered');
+    const progressPlayedCircle = container.querySelector('#tts-widget-progress-played');
+
+    if (isPlaying === false && isPaused === false) {
+      if (progressBufferedCircle) progressBufferedCircle.style.strokeDashoffset = 106.81;
+      if (progressPlayedCircle) progressPlayedCircle.style.strokeDashoffset = 106.81;
+    }
+
+    if (state.percentBuffered !== undefined && progressBufferedCircle) {
+      const offset = 106.81 - (state.percentBuffered / 100) * 106.81;
+      progressBufferedCircle.style.strokeDashoffset = offset;
+    }
+    if (state.percentPlayed !== undefined && progressPlayedCircle) {
+      const offset = 106.81 - (state.percentPlayed / 100) * 106.81;
+      progressPlayedCircle.style.strokeDashoffset = offset;
     }
 
     // Управляем пульсацией кнопки Play
