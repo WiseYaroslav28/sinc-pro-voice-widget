@@ -817,6 +817,7 @@
 
       let activePresetsTimer = null;
       function showActivePresets() {
+        if (currentState !== 'recording' && currentState !== 'pause') return;
         if (activePresetsTimer) { clearTimeout(activePresetsTimer); activePresetsTimer = null; }
         activePresetsFan.classList.remove('opacity-0', 'pointer-events-none');
         activePresetsFan.classList.add('opacity-100', 'pointer-events-auto');
@@ -946,6 +947,17 @@
 
       async function switchState(state) {
         currentState = state;
+
+        if (state !== 'recording' && state !== 'pause') {
+          if (activePresetsFan) {
+            activePresetsFan.classList.remove('opacity-100', 'pointer-events-auto');
+            activePresetsFan.classList.add('opacity-0', 'pointer-events-none');
+          }
+          if (activePresetsTimer) {
+            clearTimeout(activePresetsTimer);
+            activePresetsTimer = null;
+          }
+        }
 
         // Физически меняем позицию окна (размер теперь фиксирован)
         await resizeToState(state);
