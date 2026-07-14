@@ -1,11 +1,11 @@
 {
-  "version": "3.5.10",
-  "notes": "Версия 3.5.10 — Автоматический релиз",
-  "pub_date": "2026-07-14T04:05:15Z",
+  "version": "3.5.11",
+  "notes": "Версия 3.5.11 — Автоматический релиз",
+  "pub_date": "2026-07-14T04:27:09Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSTVJBcmZnL2cySDZ1MnZGL0dRVnF2L3Q1ZFg0RkZXUDBYZEd6Z3RiM0xWT1Z5dFEzeGdBMlBEZHJ5MnN3eVh3SGZPc0kzSUJUMS9OVTVVQ1ZQQWNKU1VkTzdaV3IvN1FJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MDAxODk4CWZpbGU6dGF1cmktYXBwXzMuNS4xMF94NjRfZW4tVVMubXNpCnRUY3Z1T1U0ak51T2hnNVYwR3k5Skk0SW9Bb0tUaXdsS21tZ1BBdUhpU0wyQ1Nadm1sQ3V4aFEvMzVrSGEzc0NBak5sbmtueUl4N2RtbkZ5THVvNkFBPT0K",
-      "url": "https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/download/v3.5.10/tauri-app_3.5.10_x64_en-US.msi"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSTVJBcmZnL2cySDZaVWF1NUVJMFpabDNvd3Z2SEJoVjRQOXRENkxTQjNxMWFHdGRobjBxenJzNGlmYmo2aFMxM1FxbG9wSy9vdEhpOGMrdFRNL1cwaXFqbTVCVVRlUmcwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg0MDAzMjI1CWZpbGU6dGF1cmktYXBwXzMuNS4xMV94NjRfZW4tVVMubXNpCm9zUGVzMkd6UmpmMUM4YlJxZ2E0VjRzYmFIU0xGUi95RE9EZjhOVVVmRERMZ1dDeWF5RXBWUUN0MjQ2RDczZGFhUTZWNWlCRzRsUURNZ0s4NHpOY0FBPT0K",
+      "url": "https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/download/v3.5.11/tauri-app_3.5.11_x64_en-US.msi"
     }
   }
 }
