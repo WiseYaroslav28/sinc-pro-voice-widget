@@ -77,7 +77,8 @@ jobs:
           # Преобразуем обратно в JSON без экранирования кириллицы
           $json = ConvertTo-Json $updater -Depth 100
           # Сохраняем в UTF-8 без BOM для чистого коммита
-          [System.IO.File]::WriteAllText($updaterPath, $json, [System.Text.Encoding]::UTF8)
+          $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+          [System.IO.File]::WriteAllText($updaterPath, $json, $utf8NoBom)
           
           # Настраиваем git и пушим изменения
           git config --global user.name "github-actions[bot]"
