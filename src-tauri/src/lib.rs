@@ -2885,14 +2885,14 @@ async fn save_audio(
                     }
                 }
                 fallback_models.push(primary_model.clone());
-                fallback_models.push("gemini-3.5-flash".to_string());
-                fallback_models.push("gemini-3.1-flash-lite".to_string());
-                fallback_models.push("gemini-2.5-flash-native-audio-latest".to_string());
-                fallback_models.push("gemini-flash-latest".to_string());
                 fallback_models.push("gemini-2.0-flash-lite".to_string());
+                fallback_models.push("gemini-flash-latest".to_string());
                 fallback_models.push("gemini-2.0-flash".to_string());
+                fallback_models.push("gemini-3.1-flash-lite".to_string());
+                fallback_models.push("gemini-3.5-flash".to_string());
                 fallback_models.push("gemini-2.5-flash-lite".to_string());
                 fallback_models.push("gemini-2.5-flash".to_string());
+                fallback_models.push("gemini-2.5-flash-native-audio-latest".to_string());
                 fallback_models.push("gemini-pro-latest".to_string());
                 fallback_models.push("gemini-2.5-pro".to_string());
 
@@ -2919,6 +2919,16 @@ async fn save_audio(
                         }
                     }
 
+                    // Проверяем локальные лимиты RPM/RPD перед запросом
+                    let (rpm, rpd) = match check_and_record_rate_limit(model) {
+                        Ok((rpm, rpd)) => (rpm, rpd),
+                        Err(limit_err) => {
+                            last_err = format!("Модель {} пропущена: {}", model, limit_err);
+                            log_tts_error("Gemini local limit skipped", &last_err);
+                            continue;
+                        }
+                    };
+
                     let url = format!(
                         "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
                         model, api_key
@@ -2939,14 +2949,14 @@ async fn save_audio(
                                             *last_model_lock = Some(model.clone());
                                         }
                                         gemini_text = Some(text);
-                                        used_stt_model = format!("Gemini Cloud ({})", model);
+                                        used_stt_model = format!("Gemini Cloud ({}) (RPM: {})", model, rpm);
                                         break;
                                     }
                                 }
                             } else {
                                 let err_text = res.text().await.unwrap_or_default();
                                 if status.as_u16() == 429 || err_text.contains("RESOURCE_EXHAUSTED") {
-                                    let unlock_time = std::time::Instant::now() + std::time::Duration::from_secs(600); // Блокируем на 10 минут
+                                    let unlock_time = std::time::Instant::now() + std::time::Duration::from_secs(90); // Блокируем на 90 секунд
                                     if let Ok(mut locks) = MODEL_LOCKS.lock() {
                                         locks.insert(model.clone(), unlock_time);
                                     }
@@ -3255,14 +3265,14 @@ async fn save_audio(
         }
     }
     fallback_models.push(primary_model.clone());
-    fallback_models.push("gemini-3.5-flash".to_string());
-    fallback_models.push("gemini-3.1-flash-lite".to_string());
-    fallback_models.push("gemini-2.5-flash-native-audio-latest".to_string());
-    fallback_models.push("gemini-flash-latest".to_string());
     fallback_models.push("gemini-2.0-flash-lite".to_string());
+    fallback_models.push("gemini-flash-latest".to_string());
     fallback_models.push("gemini-2.0-flash".to_string());
+    fallback_models.push("gemini-3.1-flash-lite".to_string());
+    fallback_models.push("gemini-3.5-flash".to_string());
     fallback_models.push("gemini-2.5-flash-lite".to_string());
     fallback_models.push("gemini-2.5-flash".to_string());
+    fallback_models.push("gemini-2.5-flash-native-audio-latest".to_string());
     fallback_models.push("gemini-pro-latest".to_string());
     fallback_models.push("gemini-2.5-pro".to_string());
     // Убираем дубли, сохраняем порядок
@@ -3297,6 +3307,16 @@ async fn save_audio(
             }
         }
 
+        // Проверяем локальные лимиты RPM/RPD перед запросом
+        let (rpm, rpd) = match check_and_record_rate_limit(model) {
+            Ok((rpm, rpd)) => (rpm, rpd),
+            Err(limit_err) => {
+                last_err = format!("Модель {} пропущена: {}", model, limit_err);
+                log_tts_error("Gemini local limit skipped", &last_err);
+                continue;
+            }
+        };
+
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
             model, api_key
@@ -3311,7 +3331,7 @@ async fn save_audio(
                 let status = res.status();
                 if status.as_u16() == 429 {
                     let err_text = res.text().await.unwrap_or_default();
-                    let delay = parse_retry_delay(&err_text).unwrap_or(Duration::from_secs(60));
+                    let delay = parse_retry_delay(&err_text).unwrap_or(Duration::from_secs(90)); // Кулдаун 90 секунд по умолчанию
                     let unlock_time = Instant::now() + delay;
                     {
                         let mut locks = MODEL_LOCKS.lock().unwrap();
@@ -3332,7 +3352,7 @@ async fn save_audio(
                     last_err = format!("Ошибка {} ({}): {}", status, model, err_text);
                     log_tts_error("Gemini API error status", &last_err);
                     if err_text.contains("RESOURCE_EXHAUSTED") || err_text.contains("quota") {
-                        let unlock_time = Instant::now() + Duration::from_secs(3600);
+                        let unlock_time = Instant::now() + Duration::from_secs(90); // Блокируем на 90 секунд
                         {
                             let mut locks = MODEL_LOCKS.lock().unwrap();
                             locks.insert(model.clone(), unlock_time);
@@ -3374,7 +3394,7 @@ async fn save_audio(
                                 *last_model_lock = Some(model.clone());
                             }
                             gemini_text = Some(text);
-                            used_stt_model = format!("Gemini Cloud ({})", model);
+                            used_stt_model = format!("Gemini Cloud ({}) (RPM: {})", model, rpm);
                             used_llm_model = format!("Gemini Cloud ({})", model);
                             break;
                         } else {
@@ -3726,11 +3746,11 @@ async fn process_ai_request(
     let fallback_models = vec![
         primary_model.clone(),
         "antigravity-preview-05-2026".to_string(),
-        "gemini-3.5-flash".to_string(),
-        "gemini-3.1-flash-lite".to_string(),
-        "gemini-flash-latest".to_string(),
         "gemini-2.0-flash-lite".to_string(),
+        "gemini-flash-latest".to_string(),
         "gemini-2.0-flash".to_string(),
+        "gemini-3.1-flash-lite".to_string(),
+        "gemini-3.5-flash".to_string(),
         "gemini-2.5-flash-lite".to_string(),
         "gemini-2.5-flash".to_string(),
         "gemini-pro-latest".to_string(),
@@ -4579,11 +4599,11 @@ async fn process_ocr_vision(
     
     let fallback_models = vec![
         primary_model.clone(),
-        "gemini-3.5-flash".to_string(),
-        "gemini-3.1-flash-lite".to_string(),
-        "gemini-flash-latest".to_string(),
         "gemini-2.0-flash-lite".to_string(),
+        "gemini-flash-latest".to_string(),
         "gemini-2.0-flash".to_string(),
+        "gemini-3.1-flash-lite".to_string(),
+        "gemini-3.5-flash".to_string(),
         "gemini-2.5-flash-lite".to_string(),
         "gemini-2.5-flash".to_string(),
         "gemini-pro-latest".to_string(),
@@ -5169,11 +5189,11 @@ async fn process_ocr_hybrid(
     let fallback_models = vec![
         primary_model.clone(),
         "antigravity-preview-05-2026".to_string(),
-        "gemini-3.5-flash".to_string(),
-        "gemini-3.1-flash-lite".to_string(),
-        "gemini-flash-latest".to_string(),
         "gemini-2.0-flash-lite".to_string(),
+        "gemini-flash-latest".to_string(),
         "gemini-2.0-flash".to_string(),
+        "gemini-3.1-flash-lite".to_string(),
+        "gemini-3.5-flash".to_string(),
         "gemini-2.5-flash-lite".to_string(),
         "gemini-2.5-flash".to_string(),
         "gemini-pro-latest".to_string(),
@@ -5321,11 +5341,11 @@ async fn call_gemini_text_api(
     }
     fallback_models.push(primary_model.to_string());
     fallback_models.push("antigravity-preview-05-2026".to_string());
-    fallback_models.push("gemini-3.5-flash".to_string());
-    fallback_models.push("gemini-3.1-flash-lite".to_string());
-    fallback_models.push("gemini-flash-latest".to_string());
     fallback_models.push("gemini-2.0-flash-lite".to_string());
+    fallback_models.push("gemini-flash-latest".to_string());
     fallback_models.push("gemini-2.0-flash".to_string());
+    fallback_models.push("gemini-3.1-flash-lite".to_string());
+    fallback_models.push("gemini-3.5-flash".to_string());
     fallback_models.push("gemini-2.5-flash-lite".to_string());
     fallback_models.push("gemini-2.5-flash".to_string());
     fallback_models.push("gemini-pro-latest".to_string());
@@ -5526,11 +5546,11 @@ async fn call_gemini_vision_api(
         }
     }
     fallback_models.push(primary_model.to_string());
-    fallback_models.push("gemini-3.5-flash".to_string());
-    fallback_models.push("gemini-3.1-flash-lite".to_string());
-    fallback_models.push("gemini-flash-latest".to_string());
     fallback_models.push("gemini-2.0-flash-lite".to_string());
+    fallback_models.push("gemini-flash-latest".to_string());
     fallback_models.push("gemini-2.0-flash".to_string());
+    fallback_models.push("gemini-3.1-flash-lite".to_string());
+    fallback_models.push("gemini-3.5-flash".to_string());
     fallback_models.push("gemini-2.5-flash-lite".to_string());
     fallback_models.push("gemini-2.5-flash".to_string());
     fallback_models.push("gemini-pro-latest".to_string());
