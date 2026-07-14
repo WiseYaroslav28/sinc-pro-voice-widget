@@ -2878,17 +2878,24 @@ async fn save_audio(
                 if primary_model.contains("tts-preview") {
                     primary_model = "gemini-2.0-flash".to_string();
                 }
-                let fallback_models = vec![
-                    primary_model.clone(),
-                    "gemini-3.5-flash".to_string(),
-                    "gemini-3.1-flash-lite".to_string(),
-                    "gemini-2.5-flash-native-audio-latest".to_string(),
-                    "gemini-flash-latest".to_string(),
-                    "gemini-2.0-flash-lite".to_string(),
-                    "gemini-2.0-flash".to_string(),
-                    "gemini-2.5-flash-lite".to_string(),
-                    "gemini-2.5-flash".to_string(),
-                ];
+                let mut fallback_models = Vec::new();
+                if let Ok(last_model_lock) = LAST_WORKING_MODEL.lock() {
+                    if let Some(ref last_model) = *last_model_lock {
+                        fallback_models.push(last_model.clone());
+                    }
+                }
+                fallback_models.push(primary_model.clone());
+                fallback_models.push("gemini-3.5-flash".to_string());
+                fallback_models.push("gemini-3.1-flash-lite".to_string());
+                fallback_models.push("gemini-2.5-flash-native-audio-latest".to_string());
+                fallback_models.push("gemini-flash-latest".to_string());
+                fallback_models.push("gemini-2.0-flash-lite".to_string());
+                fallback_models.push("gemini-2.0-flash".to_string());
+                fallback_models.push("gemini-2.5-flash-lite".to_string());
+                fallback_models.push("gemini-2.5-flash".to_string());
+                fallback_models.push("gemini-pro-latest".to_string());
+                fallback_models.push("gemini-2.5-pro".to_string());
+
                 let mut seen = std::collections::HashSet::new();
                 let fallback_models: Vec<String> = fallback_models
                     .into_iter()
@@ -2902,6 +2909,16 @@ async fn save_audio(
                 let api_key = config.api_key.trim().to_string();
 
                 for model in &fallback_models {
+                    // Проверяем блокировку модели
+                    {
+                        let locks = MODEL_LOCKS.lock().unwrap();
+                        if let Some(unlock_time) = locks.get(model) {
+                            if std::time::Instant::now() < *unlock_time {
+                                continue;
+                            }
+                        }
+                    }
+
                     let url = format!(
                         "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
                         model, api_key
@@ -2918,6 +2935,9 @@ async fn save_audio(
                                         .and_then(|p| p.into_iter().next())
                                         .and_then(|p| p.text)
                                     {
+                                        if let Ok(mut last_model_lock) = LAST_WORKING_MODEL.lock() {
+                                            *last_model_lock = Some(model.clone());
+                                        }
                                         gemini_text = Some(text);
                                         used_stt_model = format!("Gemini Cloud ({})", model);
                                         break;
@@ -2925,6 +2945,13 @@ async fn save_audio(
                                 }
                             } else {
                                 let err_text = res.text().await.unwrap_or_default();
+                                if status.as_u16() == 429 || err_text.contains("RESOURCE_EXHAUSTED") {
+                                    let unlock_time = std::time::Instant::now() + std::time::Duration::from_secs(600); // Блокируем на 10 минут
+                                    if let Ok(mut locks) = MODEL_LOCKS.lock() {
+                                        locks.insert(model.clone(), unlock_time);
+                                    }
+                                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                                }
                                 last_err = format!("Ошибка {} ({}): {}", status, model, err_text);
                                 log_tts_error("Gemini STT API error status", &last_err);
                             }
@@ -3221,19 +3248,23 @@ async fn save_audio(
     if primary_model.contains("tts-preview") {
         primary_model = "gemini-2.0-flash".to_string();
     }
-    let fallback_models = vec![
-        primary_model.clone(),
-        "gemini-3.5-flash".to_string(),
-        "gemini-3.1-flash-lite".to_string(),
-        "gemini-2.5-flash-native-audio-latest".to_string(),
-        "gemini-flash-latest".to_string(),
-        "gemini-2.0-flash-lite".to_string(),
-        "gemini-2.0-flash".to_string(),
-        "gemini-2.5-flash-lite".to_string(),
-        "gemini-2.5-flash".to_string(),
-        "gemini-pro-latest".to_string(),
-        "gemini-2.5-pro".to_string(),
-    ];
+    let mut fallback_models = Vec::new();
+    if let Ok(last_model_lock) = LAST_WORKING_MODEL.lock() {
+        if let Some(ref last_model) = *last_model_lock {
+            fallback_models.push(last_model.clone());
+        }
+    }
+    fallback_models.push(primary_model.clone());
+    fallback_models.push("gemini-3.5-flash".to_string());
+    fallback_models.push("gemini-3.1-flash-lite".to_string());
+    fallback_models.push("gemini-2.5-flash-native-audio-latest".to_string());
+    fallback_models.push("gemini-flash-latest".to_string());
+    fallback_models.push("gemini-2.0-flash-lite".to_string());
+    fallback_models.push("gemini-2.0-flash".to_string());
+    fallback_models.push("gemini-2.5-flash-lite".to_string());
+    fallback_models.push("gemini-2.5-flash".to_string());
+    fallback_models.push("gemini-pro-latest".to_string());
+    fallback_models.push("gemini-2.5-pro".to_string());
     // Убираем дубли, сохраняем порядок
     let mut seen = std::collections::HashSet::new();
     let fallback_models: Vec<String> = fallback_models
@@ -3288,6 +3319,7 @@ async fn save_audio(
                     }
                     last_err = format!("Модель {} заблокирована (429) на {:?}", model, delay);
                     log_tts_error("Gemini rate limit 429", &last_err);
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                     continue;
                 }
                 if status.as_u16() == 503 {
@@ -3301,8 +3333,11 @@ async fn save_audio(
                     log_tts_error("Gemini API error status", &last_err);
                     if err_text.contains("RESOURCE_EXHAUSTED") || err_text.contains("quota") {
                         let unlock_time = Instant::now() + Duration::from_secs(3600);
-                        let mut locks = MODEL_LOCKS.lock().unwrap();
-                        locks.insert(model.clone(), unlock_time);
+                        {
+                            let mut locks = MODEL_LOCKS.lock().unwrap();
+                            locks.insert(model.clone(), unlock_time);
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                     }
                     continue;
                 }
@@ -3335,6 +3370,9 @@ async fn save_audio(
                                 continue;
                             }
 
+                            if let Ok(mut last_model_lock) = LAST_WORKING_MODEL.lock() {
+                                *last_model_lock = Some(model.clone());
+                            }
                             gemini_text = Some(text);
                             used_stt_model = format!("Gemini Cloud ({})", model);
                             used_llm_model = format!("Gemini Cloud ({})", model);
