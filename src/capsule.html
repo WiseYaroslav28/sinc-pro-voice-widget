@@ -1902,6 +1902,10 @@
           }
         });
 
+        window.__TAURI__.event.listen('stt-fallback', (event) => {
+          showToast(event.payload, false);
+        });
+
         // Настройка Магнита — переключение из дашборда
         window.__TAURI__.event.listen('capsule-magnet-changed', (event) => {
           isMagnetEnabled = !!event.payload;

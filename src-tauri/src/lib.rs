@@ -1,4 +1,6 @@
 mod translator;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
@@ -165,6 +167,8 @@ async fn speak_local_tts(app_handle: &tauri::AppHandle, text: String, _voice: St
     // Запускаем piper.exe
     use tokio::io::AsyncWriteExt;
     let mut cmd = tokio::process::Command::new(&piper_exe);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     cmd.current_dir(&ext_dir);
 
     let path_key = if std::env::var_os("Path").is_some() { "Path" } else { "PATH" };
@@ -1259,7 +1263,10 @@ fn set_autostart_enabled(enabled: bool) -> Result<(), String> {
         
         if enabled {
             let val_data = format!("\"{}\" --minimized", exe_str);
-            let status = std::process::Command::new("reg")
+            let mut cmd = std::process::Command::new("reg");
+            #[cfg(target_os = "windows")]
+            cmd.creation_flags(0x08000000);
+            let status = cmd
                 .args(&["add", run_key_path, "/v", val_name, "/t", "REG_SZ", "/d", &val_data, "/f"])
                 .status()
                 .map_err(|e| format!("Не удалось выполнить reg add: {}", e))?;
@@ -1268,7 +1275,10 @@ fn set_autostart_enabled(enabled: bool) -> Result<(), String> {
                 return Err("Ошибка reg add при записи автозапуска".to_string());
             }
         } else {
-            let _ = std::process::Command::new("reg")
+            let mut cmd = std::process::Command::new("reg");
+            #[cfg(target_os = "windows")]
+            cmd.creation_flags(0x08000000);
+            let _ = cmd
                 .args(&["delete", run_key_path, "/v", val_name, "/f"])
                 .status();
         }
@@ -1287,7 +1297,10 @@ fn is_autostart_enabled() -> Result<bool, String> {
         let run_key_path = r#"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"#;
         let val_name = "SincPro";
         
-        let output = std::process::Command::new("reg")
+        let mut cmd = std::process::Command::new("reg");
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(0x08000000);
+        let output = cmd
             .args(&["query", run_key_path, "/v", val_name])
             .output()
             .map_err(|e| format!("Не удалось выполнить reg query: {}", e))?;
@@ -1691,6 +1704,25 @@ fn sync_layout_config(config: &AppConfig) {
     }
 }
 
+fn clean_gemini_error(err: &str) -> String {
+    if err.contains("RESOURCE_EXHAUSTED") || err.contains("quota") || err.contains("429") {
+        "Превышена квота запросов (429 Rate Limit)".to_string()
+    } else if err.contains("API_KEY_INVALID") || err.contains("API key not valid") || (err.contains("400") && err.contains("key")) {
+        "Неверный API-ключ Gemini".to_string()
+    } else if err.contains("503") || err.contains("Service Unavailable") {
+        "Сервис Gemini временно недоступен (503)".to_string()
+    } else if err.contains("404") || err.contains("not found") {
+        "Модель Gemini не найдена (404)".to_string()
+    } else {
+        let clean = err.replace('\n', " ").replace('\r', "");
+        if clean.len() > 80 {
+            format!("{}...", &clean[..80])
+        } else {
+            clean
+        }
+    }
+}
+
 fn load_config_internal(app_handle: &tauri::AppHandle) -> Result<AppConfig, String> {
     let config_dir = app_handle
         .path()
@@ -1971,7 +2003,10 @@ async fn download_file_with_progress(
         5_000
     };
 
-    let mut child = tokio::process::Command::new("curl")
+    let mut cmd = tokio::process::Command::new("curl");
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let mut child = cmd
         .arg("-L")
         .arg("-s")
         .arg("-o")
@@ -2507,7 +2542,10 @@ async fn run_local_stt(app_handle: &tauri::AppHandle, audio_path: &str) -> Resul
     let temp_wav_path = ext_dir.join("temp_input_16k.wav");
 
     // Конвертируем с помощью ffmpeg в 16kHz mono PCM 16bit WAV
-    let ffmpeg_output = tokio::process::Command::new(&ffmpeg_exe)
+    let mut ffmpeg_cmd = tokio::process::Command::new(&ffmpeg_exe);
+    #[cfg(target_os = "windows")]
+    ffmpeg_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let ffmpeg_output = ffmpeg_cmd
         .arg("-y")
         .arg("-i")
         .arg(audio_path)
@@ -2528,7 +2566,10 @@ async fn run_local_stt(app_handle: &tauri::AppHandle, audio_path: &str) -> Resul
     }
 
     // Запускаем whisper-cli
-    let output = tokio::process::Command::new(&whisper_exe)
+    let mut whisper_cmd = tokio::process::Command::new(&whisper_exe);
+    #[cfg(target_os = "windows")]
+    whisper_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    let output = whisper_cmd
         .arg("-m")
         .arg(&model_path)
         .arg("-f")
@@ -2839,10 +2880,14 @@ async fn save_audio(
                 }
                 let fallback_models = vec![
                     primary_model.clone(),
+                    "gemini-3.5-flash".to_string(),
                     "gemini-3.1-flash-lite".to_string(),
-                    "gemini-2.5-flash".to_string(),
-                    "gemini-2.5-flash-lite".to_string(),
+                    "gemini-2.5-flash-native-audio-latest".to_string(),
+                    "gemini-flash-latest".to_string(),
+                    "gemini-2.0-flash-lite".to_string(),
                     "gemini-2.0-flash".to_string(),
+                    "gemini-2.5-flash-lite".to_string(),
+                    "gemini-2.5-flash".to_string(),
                 ];
                 let mut seen = std::collections::HashSet::new();
                 let fallback_models: Vec<String> = fallback_models
@@ -2863,7 +2908,8 @@ async fn save_audio(
                     );
                     match client.post(&url).json(&request_payload).send().await {
                         Ok(res) => {
-                            if res.status().is_success() {
+                            let status = res.status();
+                            if status.is_success() {
                                 if let Ok(gr) = res.json::<GeminiResponse>().await {
                                     if let Some(text) = gr.candidates
                                         .and_then(|c| c.into_iter().next())
@@ -2877,10 +2923,15 @@ async fn save_audio(
                                         break;
                                     }
                                 }
+                            } else {
+                                let err_text = res.text().await.unwrap_or_default();
+                                last_err = format!("Ошибка {} ({}): {}", status, model, err_text);
+                                log_tts_error("Gemini STT API error status", &last_err);
                             }
                         }
                         Err(e) => {
-                            last_err = e.to_string();
+                            last_err = format!("Сетевая ошибка ({}): {}", model, e);
+                            log_tts_error("Gemini STT network error", &last_err);
                         }
                     }
                 }
@@ -2889,6 +2940,8 @@ async fn save_audio(
                     Some(t) => (t, false),
                     None => {
                         log_tts_error("Gemini failed entirely", &format!("Attempting local STT fallback. Gemini error: {}", last_err));
+                        let friendly_err = clean_gemini_error(&last_err);
+                        let _ = app_handle.emit("stt-fallback", format!("Сбой Gemini ({friendly_err}). Включен локальный Whisper."));
                         match run_local_stt(&app_handle, &file_path.to_string_lossy()).await {
                             Ok(t) => {
                                 used_stt_model = format!("Whisper Local ({}) (Offline Fallback)", config.stt_local_model);
@@ -3025,12 +3078,15 @@ async fn save_audio(
             }
             let fallback_models = vec![
                 primary_model.clone(),
-                "gemini-3.1-flash-lite".to_string(),
-                "gemini-2.5-flash".to_string(),
+                "antigravity-preview-05-2026".to_string(),
                 "gemini-3.5-flash".to_string(),
-                "gemini-2.5-flash-lite".to_string(),
-                "gemini-2.0-flash".to_string(),
+                "gemini-3.1-flash-lite".to_string(),
+                "gemini-flash-latest".to_string(),
                 "gemini-2.0-flash-lite".to_string(),
+                "gemini-2.0-flash".to_string(),
+                "gemini-2.5-flash-lite".to_string(),
+                "gemini-2.5-flash".to_string(),
+                "gemini-pro-latest".to_string(),
                 "gemini-2.5-pro".to_string(),
             ];
             let mut seen = std::collections::HashSet::new();
@@ -3167,12 +3223,15 @@ async fn save_audio(
     }
     let fallback_models = vec![
         primary_model.clone(),
-        "gemini-3.1-flash-lite".to_string(),
-        "gemini-2.5-flash".to_string(),
         "gemini-3.5-flash".to_string(),
-        "gemini-2.5-flash-lite".to_string(),
-        "gemini-2.0-flash".to_string(),
+        "gemini-3.1-flash-lite".to_string(),
+        "gemini-2.5-flash-native-audio-latest".to_string(),
+        "gemini-flash-latest".to_string(),
         "gemini-2.0-flash-lite".to_string(),
+        "gemini-2.0-flash".to_string(),
+        "gemini-2.5-flash-lite".to_string(),
+        "gemini-2.5-flash".to_string(),
+        "gemini-pro-latest".to_string(),
         "gemini-2.5-pro".to_string(),
     ];
     // Убираем дубли, сохраняем порядок
@@ -3297,6 +3356,8 @@ async fn save_audio(
                 ("[Запрос отменен пользователем]".to_string(), String::new(), true)
             } else {
                 log_tts_error("Gemini failed entirely", &format!("Attempting local STT + LLM fallback. Gemini error: {}", last_err));
+                let friendly_err = clean_gemini_error(&last_err);
+                let _ = app_handle.emit("stt-fallback", format!("Сбой Gemini ({friendly_err}). Включен локальный Whisper."));
                 match run_local_stt(&app_handle, &file_path.to_string_lossy()).await {
                     Ok(local_tr) => {
                         used_stt_model = format!("Whisper Local ({}) (Offline Fallback)", config.stt_local_model);
@@ -3626,12 +3687,15 @@ async fn process_ai_request(
     }
     let fallback_models = vec![
         primary_model.clone(),
-        "gemini-3.1-flash-lite".to_string(),
-        "gemini-2.5-flash".to_string(),
+        "antigravity-preview-05-2026".to_string(),
         "gemini-3.5-flash".to_string(),
-        "gemini-2.5-flash-lite".to_string(),
-        "gemini-2.0-flash".to_string(),
+        "gemini-3.1-flash-lite".to_string(),
+        "gemini-flash-latest".to_string(),
         "gemini-2.0-flash-lite".to_string(),
+        "gemini-2.0-flash".to_string(),
+        "gemini-2.5-flash-lite".to_string(),
+        "gemini-2.5-flash".to_string(),
+        "gemini-pro-latest".to_string(),
         "gemini-2.5-pro".to_string(),
     ];
     let mut seen = std::collections::HashSet::new();
@@ -4477,12 +4541,14 @@ async fn process_ocr_vision(
     
     let fallback_models = vec![
         primary_model.clone(),
-        "gemini-3.1-flash-lite".to_string(),
-        "gemini-2.5-flash".to_string(),
         "gemini-3.5-flash".to_string(),
-        "gemini-2.5-flash-lite".to_string(),
-        "gemini-2.0-flash".to_string(),
+        "gemini-3.1-flash-lite".to_string(),
+        "gemini-flash-latest".to_string(),
         "gemini-2.0-flash-lite".to_string(),
+        "gemini-2.0-flash".to_string(),
+        "gemini-2.5-flash-lite".to_string(),
+        "gemini-2.5-flash".to_string(),
+        "gemini-pro-latest".to_string(),
         "gemini-2.5-pro".to_string(),
     ];
     
@@ -5064,12 +5130,15 @@ async fn process_ocr_hybrid(
     
     let fallback_models = vec![
         primary_model.clone(),
-        "gemini-3.1-flash-lite".to_string(),
-        "gemini-2.5-flash".to_string(),
+        "antigravity-preview-05-2026".to_string(),
         "gemini-3.5-flash".to_string(),
-        "gemini-2.5-flash-lite".to_string(),
-        "gemini-2.0-flash".to_string(),
+        "gemini-3.1-flash-lite".to_string(),
+        "gemini-flash-latest".to_string(),
         "gemini-2.0-flash-lite".to_string(),
+        "gemini-2.0-flash".to_string(),
+        "gemini-2.5-flash-lite".to_string(),
+        "gemini-2.5-flash".to_string(),
+        "gemini-pro-latest".to_string(),
         "gemini-2.5-pro".to_string(),
     ];
     
@@ -5213,13 +5282,16 @@ async fn call_gemini_text_api(
         }
     }
     fallback_models.push(primary_model.to_string());
-    fallback_models.push("gemini-3.1-flash-lite".to_string());
+    fallback_models.push("antigravity-preview-05-2026".to_string());
     fallback_models.push("gemini-3.5-flash".to_string());
-    fallback_models.push("gemini-3-flash".to_string());
-    fallback_models.push("gemini-2.5-flash-lite".to_string());
-    fallback_models.push("gemini-2.5-flash".to_string());
+    fallback_models.push("gemini-3.1-flash-lite".to_string());
+    fallback_models.push("gemini-flash-latest".to_string());
     fallback_models.push("gemini-2.0-flash-lite".to_string());
     fallback_models.push("gemini-2.0-flash".to_string());
+    fallback_models.push("gemini-2.5-flash-lite".to_string());
+    fallback_models.push("gemini-2.5-flash".to_string());
+    fallback_models.push("gemini-pro-latest".to_string());
+    fallback_models.push("gemini-2.5-pro".to_string());
     fallback_models.push("gemma-4-31b-it".to_string());
     fallback_models.push("gemma-4-26b-a4b-it".to_string());
     
@@ -5416,12 +5488,14 @@ async fn call_gemini_vision_api(
         }
     }
     fallback_models.push(primary_model.to_string());
-    fallback_models.push("gemini-3.1-flash-lite".to_string());
     fallback_models.push("gemini-3.5-flash".to_string());
-    fallback_models.push("gemini-3-flash".to_string());
-    fallback_models.push("gemini-2.5-flash".to_string());
+    fallback_models.push("gemini-3.1-flash-lite".to_string());
+    fallback_models.push("gemini-flash-latest".to_string());
+    fallback_models.push("gemini-2.0-flash-lite".to_string());
     fallback_models.push("gemini-2.0-flash".to_string());
-    fallback_models.push("gemini-1.5-flash".to_string());
+    fallback_models.push("gemini-2.5-flash-lite".to_string());
+    fallback_models.push("gemini-2.5-flash".to_string());
+    fallback_models.push("gemini-pro-latest".to_string());
     fallback_models.push("gemini-2.5-pro".to_string());
     
     let mut seen = std::collections::HashSet::new();
