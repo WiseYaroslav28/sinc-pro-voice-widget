@@ -102,6 +102,7 @@ class TtsCacheDB {
 
 class VoiceCore {
     constructor() {
+        this.instanceId = Math.random().toString(36).substring(2);
         this.currentText = "";
         this.sentences = [];
         this.audioBuffers = []; // Base64 strings for each sentence
@@ -663,6 +664,7 @@ class VoiceCore {
         window.__TAURI__.event.listen('tts-state-sync', (event) => {
             if (event.payload) {
                 const p = event.payload;
+                if (p.sender === this.instanceId) return;
                 if (p.action === 'play') {
                     if (!this.isPlaying) this.play(false);
                 } else if (p.action === 'pause') {
@@ -721,7 +723,7 @@ class VoiceCore {
 
     broadcastState(action, extra = {}) {
         if (!window.__TAURI__) return;
-        window.__TAURI__.event.emit('tts-state-sync', { action, ...extra });
+        window.__TAURI__.event.emit('tts-state-sync', { action, sender: this.instanceId, ...extra });
     }
 
     updateProgress() {
