@@ -217,6 +217,37 @@ document.addEventListener('DOMContentLoaded', () => {
         engine.broadcastState('play');
     }
 
+    function handleAppendText(text) {
+        if (!text || !text.trim()) {
+            console.warn('[TTS] handleAppendText: empty text, skipping');
+            return;
+        }
+        console.log('[TTS] handleAppendText: received text for append, length=' + text.length);
+        if (window.switchTab) window.switchTab('tab-tts');
+        
+        isTextChanged = false;
+        if (contentEditable) {
+            const currentVal = contentEditable.innerText.trim();
+            if (currentVal.length > 0) {
+                contentEditable.innerText = currentVal + "\n\n" + text;
+            } else {
+                contentEditable.innerText = text;
+            }
+        }
+        
+        const wasPlaying = engine.isPlaying;
+        engine.appendText(text);
+        console.log('[TTS] handleAppendText: appendText done, sentences=' + engine.sentences.length);
+        
+        engine.broadcastState('append', { text: text });
+        
+        if (!wasPlaying) {
+            engine.play();
+            console.log('[TTS] handleAppendText: play() called because it was not playing');
+            engine.broadcastState('play');
+        }
+    }
+
     // Слушатель хоткеев из Rust
     if (listen && invoke) {
         // Слушаем изменение текста снаружи (сквозной пайплайн OCR -> TTS)
@@ -276,6 +307,29 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             } catch (e) {
                 console.error("Failed to capture and translate:", e);
+            }
+        });
+
+        listen('tts-action-append', async () => {
+            try {
+                const text = await invoke('capture_clipboard_text', { translate: false });
+                handleAppendText(text);
+                
+                let widgetMode = 2;
+                try {
+                    const config = await invoke('load_config');
+                    if (config.widget_mode !== undefined) {
+                        widgetMode = config.widget_mode;
+                    }
+                } catch (_) {
+                    widgetMode = parseInt(localStorage.getItem('widgetMode') || '2', 10);
+                }
+
+                if (widgetMode === 2) {
+                    await invoke('show_widget_window');
+                }
+            } catch (e) {
+                console.error("Failed to capture and append:", e);
             }
         });
     }

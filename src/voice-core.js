@@ -255,7 +255,7 @@ class VoiceCore {
         processed = processed.replace(/\.\.\./g, "<ELLIPSIS>");
         
         // Разбиваем по концам предложений ИЛИ по символам переноса строки (абзацам \n)
-        let rawSentences = processed.split(/(?<=[.!?])\s+(?=\p{Lu})|\n+/u);
+        let rawSentences = processed.split(/(?<=[.!?])\s+(?=\p{Lu})|(?<=[:;])\s+|\n+/u);
         
         let sentences = [];
         for (let s of rawSentences) {
