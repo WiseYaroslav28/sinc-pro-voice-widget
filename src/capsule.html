@@ -58,8 +58,10 @@
         background: linear-gradient(#45a29e, #8e52ff);
         border-radius: 9999px;
         width: 3px;
-        height: 4px;
-        transition: height 0.05s ease-out;
+        height: 16px;
+        transform: scaleY(0.25);
+        transform-origin: center;
+        transition: transform 0.05s ease-out;
       }
 
       /* Стиль для парящих веерных кнопок пресетов */
@@ -280,8 +282,8 @@
 
       /* Анимация пульсации дыхания для idle полоски */
       @keyframes idle-breath {
-        0%, 100% { box-shadow: 0 4px 10px rgba(0,0,0,0.45), 0 0 4px rgba(142,82,255,0.2); opacity: 0.85; }
-        50% { box-shadow: 0 4px 12px rgba(0,0,0,0.5), 0 0 10px rgba(142,82,255,0.5); opacity: 1; }
+        0%, 100% { opacity: 0.65; }
+        50% { opacity: 1; }
       }
       #state-idle div {
         animation: idle-breath 3s infinite ease-in-out;
@@ -552,7 +554,6 @@
 
       const btnActivePresetsInside = document.getElementById('btn-active-presets-inside');
       const activePresetsFan = document.getElementById('active-presets-fan');
-
       // Кросс-версионное получение текущего окна Tauri 2.0
       let appWindow = null;
       if (window.__TAURI__) {
@@ -563,6 +564,21 @@
         }
       }
 
+      if (appWindow) {
+        // Проактивно включаем микрофон при фокусе окна
+        appWindow.listen('tauri::focus', () => {
+          getMicrophoneStream().catch(console.error);
+        });
+        // Гасим микрофон при размытии окна (уходе из фокуса), если не идет запись
+        appWindow.listen('tauri::blur', () => {
+          setTimeout(() => {
+            if (currentState !== 'recording' && currentState !== 'pause' && currentState !== 'sending') {
+              closeMicrophoneStream();
+            }
+          }, 1500);
+        });
+      }
+
       // ======================================================================
       // СОСТОЯНИЕ
       // ======================================================================
@@ -571,17 +587,58 @@
       let audioChunks = [];
       let globalAudioStream = null;
       
-      async function initAlwaysOnMicrophone() {
-        try {
-          globalAudioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          console.log("SINC PRO: Always-on microphone initialized successfully");
-        } catch (e) {
-          console.error("SINC PRO: Always-on microphone failed:", e);
+      let micTimeout = null;
+
+      // Сброс и перезапуск таймаута неактивности микрофона (2 минуты)
+      function resetMicTimeout() {
+        if (micTimeout) clearTimeout(micTimeout);
+        micTimeout = setTimeout(() => {
+          if (currentState !== 'recording' && currentState !== 'pause' && currentState !== 'sending') {
+            closeMicrophoneStream();
+          } else {
+            resetMicTimeout();
+          }
+        }, 120000); // 2 минуты простоя
+      }
+
+      // Функция получения микрофонного потока (активирует по требованию, продлевает таймаут)
+      async function getMicrophoneStream() {
+        const isStreamValid = globalAudioStream && 
+                              globalAudioStream.active && 
+                              globalAudioStream.getAudioTracks().length > 0 &&
+                              globalAudioStream.getAudioTracks().every(track => track.readyState === 'live');
+        
+        if (isStreamValid) {
+          resetMicTimeout();
+          return globalAudioStream;
+        }
+        
+        console.log("SINC PRO: Requesting microphone stream...");
+        globalAudioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        resetMicTimeout();
+        return globalAudioStream;
+      }
+
+      // Функция явного закрытия микрофона для разгрузки audiodg.exe
+      function closeMicrophoneStream() {
+        if (globalAudioStream) {
+          console.log("SINC PRO: Releasing microphone stream to save CPU");
+          try {
+            globalAudioStream.getTracks().forEach(track => track.stop());
+          } catch (_) {}
+          globalAudioStream = null;
+        }
+        if (micTimeout) {
+          clearTimeout(micTimeout);
+          micTimeout = null;
         }
       }
-      
+
+      // Инициализируем микрофон на старте («горячий старт»), но он сам выключится через 2 минуты простоя
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        initAlwaysOnMicrophone();
+        getMicrophoneStream().catch(err => {
+          console.error("SINC PRO: Initial microphone acquisition failed:", err);
+        });
       }
       let recordingInterval = null;
       let recordSeconds = 0;
@@ -1198,6 +1255,8 @@
 
       container.addEventListener('mouseenter', () => {
         isMouseOver = true;
+        // Проактивно прогреваем микрофон при наведении курсора
+        getMicrophoneStream().catch(console.error);
         if (collapseTimer) { clearTimeout(collapseTimer); collapseTimer = null; }
 
         if (currentState === 'idle') {
@@ -1305,30 +1364,13 @@
 
         if (mediaRecorder && mediaRecorder.state !== 'inactive') return;
         
-        // Мгновенный запуск звукового сигнала старта записи
-        playAudioCue('start');
-        
         try {
           if (invoke) await invoke('start_recording_session');
           recordSeconds = 0;
           activeTimer.textContent = '00:00';
 
-          // Используем постоянно открытый поток с валидацией его жизнеспособности (особенно после сна ОС)
-          const isStreamValid = globalAudioStream && 
-                                globalAudioStream.active && 
-                                globalAudioStream.getAudioTracks().length > 0 &&
-                                globalAudioStream.getAudioTracks().every(track => track.readyState === 'live');
-
-          if (!isStreamValid) {
-            console.log("SINC PRO: Audio stream is invalid or ended (possibly after OS sleep). Re-initializing microphone...");
-            if (globalAudioStream) {
-              try {
-                globalAudioStream.getTracks().forEach(track => track.stop());
-              } catch (_) {}
-            }
-            globalAudioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          }
-          audioStream = globalAudioStream;
+          // Получаем поток микрофона через гибридный менеджер
+          audioStream = await getMicrophoneStream();
           
           let mimeType = 'audio/webm';
           if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
@@ -1352,6 +1394,8 @@
           };
 
           mediaRecorder.onstart = () => {
+            // Играем сигнал старта строго ПОСЛЕ реального старта записи
+            playAudioCue('start');
             switchState('recording');
             startTimer();
             startVisualizer(audioStream);
@@ -1376,7 +1420,8 @@
           mediaRecorder.onstop = () => {
             stopTimer();
             stopVisualizer();
-            // Стрим микрофона остается активным в globalAudioStream
+            // Гасим микрофон для разгрузки audiodg.exe
+            closeMicrophoneStream();
             audioStream = null;
           };
 
@@ -2069,6 +2114,13 @@
           osc.start(t);
           osc.stop(t + 0.3);
         }
+        
+        // Автоматически суспендим контекст после завершения сигнала, если не идет запись
+        setTimeout(() => {
+          if (audioCtx && audioCtx.state === 'running' && !visualizerRafId) {
+            audioCtx.suspend();
+          }
+        }, 600);
       }
 
       function drawVisualizer() {
@@ -2105,12 +2157,12 @@
         for (let i = 0; i < bars.length; i++) {
           const value = dataArray[indices[i]] || 0; // От 0 до 255
           
-          let h = 4; // высота тишины
+          let scale = 0.25; // высота тишины (4px / 16px)
           if (value > 15) {
             // Высокая чувствительность для голоса
-            h = 4 + ((value - 15) / 240) * 12;
+            scale = 0.25 + ((value - 15) / 240) * 0.75;
           }
-          bars[i].style.height = `${Math.max(4, Math.min(16, h))}px`;
+          bars[i].style.transform = `scaleY(${Math.max(0.25, Math.min(1.0, scale))})`;
         }
       }
 
@@ -2131,7 +2183,7 @@
         }
         
         if (currentSource) {
-          currentSource.disconnect();
+          try { currentSource.disconnect(); } catch(_) {}
         }
         currentSource = audioCtx.createMediaStreamSource(stream);
         currentSource.connect(analyser);
@@ -2147,12 +2199,17 @@
         }
         // Сброс всех полос в прямую линию (тишина)
         const bars = document.querySelectorAll('.waveform-bar');
-        bars.forEach(b => b.style.height = '4px');
+        bars.forEach(b => b.style.transform = 'scaleY(0.25)');
 
         // Сброс пульсации Orb
         if (activePill) {
           activePill.style.transform = '';
           activePill.style.boxShadow = '';
+        }
+
+        // Приостанавливаем AudioContext
+        if (audioCtx && audioCtx.state === 'running') {
+          audioCtx.suspend();
         }
       }
 

@@ -1125,6 +1125,38 @@ unsafe extern "system" fn low_level_keyboard_proc(
             return 1;
         }
 
+        // Обработка Alt+Q для OCR (Переводчик) через низкоуровневый хук
+        if vk == 0x51 { // 0x51 это клавиша Q
+            let ctrl = CTRL_PRESSED.load(Ordering::SeqCst);
+            let win = WIN_PRESSED.load(Ordering::SeqCst);
+            let alt = ALT_PRESSED.load(Ordering::SeqCst);
+            let shift = SHIFT_PRESSED.load(Ordering::SeqCst);
+            
+            if alt && !ctrl && !win && !shift {
+                if is_key_down {
+                    if OCR_ENABLED.load(Ordering::SeqCst) > 0 {
+                        if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                            println!("SINC PRO HOTKEY: Alt+Q (OCR) pressed via low-level hook");
+                            let app_clone = app.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let visible = OCR_WINDOW_VISIBLE.load(std::sync::atomic::Ordering::SeqCst);
+                                if visible {
+                                    if let Err(e) = hide_ocr_window(app_clone).await {
+                                        println!("SINC PRO OCR: Global Shortcut hide_ocr_window failed: {}", e);
+                                    }
+                                } else {
+                                    if let Err(e) = show_ocr_window(app_clone).await {
+                                        println!("SINC PRO OCR: Global Shortcut show_ocr_window failed: {}", e);
+                                    }
+                                }
+                            });
+                        }
+                    }
+                }
+                return 1; // блокируем прохождение Alt+Q дальше
+            }
+        }
+
         if vk == VK_TAB {
             let ctrl = CTRL_PRESSED.load(Ordering::SeqCst);
             let win = WIN_PRESSED.load(Ordering::SeqCst);
@@ -7286,47 +7318,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(
-            tauri_plugin_global_shortcut::Builder::new()
-                .with_shortcuts(["alt+q"])
-                .unwrap()
-                .with_handler(|app, shortcut, event| {
-                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                        if shortcut.matches(tauri_plugin_global_shortcut::Modifiers::ALT, tauri_plugin_global_shortcut::Code::KeyQ) {
-                            if OCR_ENABLED.load(std::sync::atomic::Ordering::SeqCst) == 0 {
-                                println!("SINC PRO OCR: OCR mode is disabled, skipping shortcut Alt+Q");
-                                return;
-                            }
-                            println!("SINC PRO OCR: Global Shortcut Alt+Q triggered.");
-                            if let Some(w) = app.get_webview_window("ocr") {
-                                use tauri::Emitter;
-                                let visible = OCR_WINDOW_VISIBLE.load(std::sync::atomic::Ordering::SeqCst);
-                                println!("SINC PRO OCR: OCR_WINDOW_VISIBLE load is={}", visible);
-                                if visible {
-                                    println!("SINC PRO OCR: Global Shortcut Alt+Q calling hide_ocr_window...");
-                                    let app_clone = app.clone();
-                                    tauri::async_runtime::spawn(async move {
-                                        if let Err(e) = hide_ocr_window(app_clone).await {
-                                            println!("SINC PRO OCR: Global Shortcut hide_ocr_window failed: {}", e);
-                                        }
-                                    });
-                                } else {
-                                    println!("SINC PRO OCR: Global Shortcut Alt+Q calling show_ocr_window...");
-                                    let app_clone = app.clone();
-                                    tauri::async_runtime::spawn(async move {
-                                        if let Err(e) = show_ocr_window(app_clone).await {
-                                            println!("SINC PRO OCR: Global Shortcut show_ocr_window failed: {}", e);
-                                        }
-                                    });
-                                }
-                            } else {
-                                println!("SINC PRO OCR: WebviewWindow 'ocr' NOT FOUND when Shortcut triggered!");
-                            }
-                        }
-                    }
-                })
-                .build()
-        )
         .setup(|app| {
             // Сохраняем handle для отправки событий
             *APP_HANDLE.lock().unwrap() = Some(app.handle().clone());
