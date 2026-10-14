@@ -1,7 +1,7 @@
 {
-    "name":  "tauri-app",
+    "name":  "sinc-pro",
     "private":  true,
-    "version": "3.5.13",
+    "version": "3.5.15",
     "type":  "module",
     "scripts":  {
                     "tauri":  "tauri",

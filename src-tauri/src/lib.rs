@@ -17,16 +17,16 @@ use uuid::Uuid;
 
 const EDGE_TTS_ENDPOINT: &str =
     "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4";
+const EDGE_TRUSTED_TOKEN: &str = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
 
 static LAST_SKEW_UPDATE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 static CACHED_SKEW: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 
 lazy_static::lazy_static! {
     static ref SKEW_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
-}
-
-lazy_static::lazy_static! {
     static ref EDGE_TTS_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
+    static ref EDGE_CHROMIUM_VERSION: std::sync::Mutex<String> = std::sync::Mutex::new("143.0.3650.75".to_string());
+    static ref EDGE_GEC_VERSION: std::sync::Mutex<String> = std::sync::Mutex::new("2-143.0.3650.75".to_string());
 }
 
 use std::collections::HashSet;
@@ -47,96 +47,432 @@ lazy_static::lazy_static! {
     static ref EXCLUDED_PROCESSES: std::sync::Mutex<HashSet<String>> = std::sync::Mutex::new(HashSet::new());
 }
 
-async fn get_clock_skew() -> i64 {
+async fn get_clock_skew(force: bool) -> i64 {
     let now = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
         Ok(d) => d.as_secs() as i64,
         Err(_) => 0,
     };
-    let last_update = LAST_SKEW_UPDATE.load(Ordering::Relaxed);
-    
-    // Быстрая проверка без блокировки: если кэш свежий, возвращаем сразу
-    if last_update != 0 && (now - last_update) < 600 {
-        return CACHED_SKEW.load(Ordering::Relaxed);
+    if !force {
+        let last_update = LAST_SKEW_UPDATE.load(Ordering::Relaxed);
+        if last_update != 0 && (now - last_update) < 600 {
+            return CACHED_SKEW.load(Ordering::Relaxed);
+        }
     }
 
-    // Блокируем, чтобы только один поток делал сетевой запрос
     let _guard = SKEW_MUTEX.lock().await;
 
-    // Повторно проверяем после захвата блокировки (double-checked locking)
-    let last_update = LAST_SKEW_UPDATE.load(Ordering::Relaxed);
-    if last_update != 0 && (now - last_update) < 600 {
-        return CACHED_SKEW.load(Ordering::Relaxed);
+    if !force {
+        let last_update = LAST_SKEW_UPDATE.load(Ordering::Relaxed);
+        if last_update != 0 && (now - last_update) < 600 {
+            return CACHED_SKEW.load(Ordering::Relaxed);
+        }
     }
 
-    // Создаем клиент с коротким таймаутом (1.5 секунды), чтобы не вешать озвучку
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(1500))
+        .timeout(Duration::from_millis(2000))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
 
     let url = "https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list?trustedclienttoken=6A5AA1D4EAFF4E9FB37E23D68491D6F4";
     let mut success = false;
 
-    if let Ok(resp) = client.head(url).send().await {
+    if let Ok(resp) = client
+        .get(url)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0")
+        .send()
+        .await
+    {
         if let Some(date_header) = resp.headers().get("date") {
             if let Ok(date_str) = date_header.to_str() {
                 if let Ok(server_time) = chrono::DateTime::parse_from_rfc2822(date_str) {
                     let server_timestamp = server_time.timestamp();
                     let local_timestamp = chrono::Utc::now().timestamp();
                     let skew = server_timestamp - local_timestamp;
-                    println!("SINC PRO TTS: Clock skew adjusted by {} seconds (network update)", skew);
-                    
+                    println!("SincPro TTS: Clock skew adjusted by {} seconds", skew);
                     CACHED_SKEW.store(skew, Ordering::Relaxed);
                     success = true;
                 }
             }
         }
     }
-    
-    // Устанавливаем задержку до следующей попытки: 600 секунд при успехе, 60 секунд при ошибке
+
     let next_retry_delay = if success { 600 } else { 60 };
     LAST_SKEW_UPDATE.store(now - 600 + next_retry_delay, Ordering::Relaxed);
 
     CACHED_SKEW.load(Ordering::Relaxed)
 }
 
+async fn refresh_edge_drm_constants() {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(2500))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+    let url = "https://raw.githubusercontent.com/rany2/edge-tts/master/src/edge_tts/constants.py";
+    if let Ok(resp) = client.get(url).send().await {
+        if let Ok(body) = resp.text().await {
+            let mut found_ver: Option<String> = None;
+            let mut prefix = "2";
+            for line in body.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("CHROMIUM_FULL_VERSION") {
+                    if let Some(start) = trimmed.find('"') {
+                        if let Some(end) = trimmed[start + 1..].find('"') {
+                            let ver = &trimmed[start + 1..start + 1 + end];
+                            if !ver.is_empty() {
+                                found_ver = Some(ver.to_string());
+                            }
+                        }
+                    }
+                } else if trimmed.starts_with("SEC_MS_GEC_VERSION") {
+                    if trimmed.contains("\"1-") || trimmed.contains("'1-") {
+                        prefix = "1";
+                    } else if trimmed.contains("\"2-") || trimmed.contains("'2-") {
+                        prefix = "2";
+                    }
+                }
+            }
+            if let Some(ver) = found_ver {
+                let gec_ver = format!("{}-{}", prefix, ver);
+                println!("SincPro TTS Auto-Heal: Updated Edge DRM version to {}", gec_ver);
+                *EDGE_CHROMIUM_VERSION.lock().unwrap() = ver;
+                *EDGE_GEC_VERSION.lock().unwrap() = gec_ver;
+            }
+        }
+    }
+}
+
+// ─── Алгоритм Sec-MS-GEC v2 (CS64 + модифицированный SHA-256) ────────────────
+const GEC_SHA256_INITIAL: [u32; 8] = [
+    0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A,
+    0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
+];
+const GEC_SHA256_STATE: [u32; 8] = [
+    0xFD9FBEA2, 0x91243CE7, 0xBE499094, 0xCD2E1E0A,
+    0x6C006F49, 0x04BD35AB, 0xFEB0A7E4, 0x03EFFBD2,
+];
+const GEC_SHA256_SCHEDULE: [u32; 14] = [
+    0xEB24BF9E, 0x1558691F, 0xA0C09EE2, 0x0CFA32BA,
+    0xA622EE8C, 0xD1DD9491, 0xC0DD25A0, 0xF9E70AB6,
+    0xF0C31573, 0x7058CE4E, 0x7188E606, 0x00E5AB33,
+    0xD258B060, 0x72766564,
+];
+const GEC_SHA256_ROUND_CONSTANTS: [u32; 64] = [
+    0x428A2F98, 0x71374491, 0xB5C0FBCF, 0xE9B5DBA5, 0x3956C25B, 0x59F111F1, 0x923F82A4, 0xAB1C5ED5,
+    0xD807AA98, 0x12835B01, 0x243185BE, 0x550C7DC3, 0x72BE5D74, 0x80DEB1FE, 0x9BDC06A7, 0xC19BF174,
+    0xE49B69C1, 0xEFBE4786, 0x0FC19DC6, 0x240CA1CC, 0x2DE92C6F, 0x4A7484AA, 0x5CB0A9DC, 0x76F988DA,
+    0x983E5152, 0xA831C66D, 0xB00327C8, 0xBF597FC7, 0xC6E00BF3, 0xD5A79147, 0x06CA6351, 0x14292967,
+    0x27B70A85, 0x2E1B2138, 0x4D2C6DFC, 0x53380D13, 0x650A7354, 0x766A0ABB, 0x81C2C92E, 0x92722C85,
+    0xA2BFE8A1, 0xA81A664B, 0xC24B8B70, 0xC76C51A3, 0xD192E819, 0xD6990624, 0xF40E3585, 0x106AA070,
+    0x19A4C116, 0x1E376C08, 0x2748774C, 0x34B0BCB5, 0x391C0CB3, 0x4ED8AA4A, 0x5B9CCA4F, 0x682E6FF3,
+    0x748F82EE, 0x78A5636F, 0x84C87814, 0x8CC70208, 0x90BEFFFA, 0xA4506CEB, 0xBEF9A3F7, 0xC67178F2,
+];
+const GEC_SHA256_ADJUSTMENT: u32 = 0xC9DC06A7;
+const GEC_SHA256_SIGMA0_ADJ: u32 = 0x059C0B80;
+const GEC_SHA256_SIGMA1_ADJ: u32 = 0x000B92C0;
+
+const GEC_CS64_COEFFS: [(u32, u32); 14] = [
+    (0xE82E91B1, 0xB32700D0),
+    (0x44DE24C6, 0x88DFF51D),
+    (0x3BEB65BC, 0x29514038),
+    (0xC89C5933, 0xB328CBDF),
+    (0x8D1EC211, 0xD405B4D5),
+    (0x314EF5D5, 0x26E55F3C),
+    (0xE92491B1, 0x607801C6),
+    (0xF0A5B9D5, 0x82B2C1FB),
+    (0x06064CF3, 0xFA51A3DA),
+    (0xDA79FA60, 0x207CC464),
+    (0xBED20560, 0x3C3C74F3),
+    (0x89F9C9F8, 0xD2D14B61),
+    (0x35FA38C6, 0xBB04A2C1),
+    (0xCB49E3C6, 0xC5626167),
+];
+const GEC_CS64_FACTOR: u32 = 0x82893933;
+const GEC_CS64_ADJ0: u32 = 0xF2F90B1A;
+const GEC_CS64_ADJ1: u32 = 0x0B1A0000;
+
+#[inline]
+fn gec_sigma0(v: u32) -> u32 {
+    v.rotate_right(7) ^ v.rotate_right(18) ^ (v >> 3)
+}
+
+#[inline]
+fn gec_sigma1(v: u32) -> u32 {
+    v.rotate_right(17) ^ v.rotate_right(19) ^ (v >> 10)
+}
+
+fn gec_expand_schedule(words: &mut Vec<u32>, first_word: usize) {
+    for i in first_word..64 {
+        let s1 = gec_sigma1(words[i - 2]);
+        let s0 = gec_sigma0(words[i - 15]);
+        let w = s1
+            .wrapping_add(words[i - 7])
+            .wrapping_add(s0)
+            .wrapping_add(words[i - 16]);
+        words.push(w);
+    }
+}
+
+fn gec_sha256_rounds(state: [u32; 8], words: &[u32], first_round: usize) -> [u32; 8] {
+    let mut a = state[0];
+    let mut b = state[1];
+    let mut c = state[2];
+    let mut d = state[3];
+    let mut e = state[4];
+    let mut f = state[5];
+    let mut g = state[6];
+    let mut h = state[7];
+
+    for index in first_round..64 {
+        let k = if first_round == 14 && index == 14 {
+            GEC_SHA256_ADJUSTMENT
+        } else {
+            GEC_SHA256_ROUND_CONSTANTS[index]
+        };
+        let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+        let ch = g ^ (e & (f ^ g));
+        let t1 = h
+            .wrapping_add(s1)
+            .wrapping_add(ch)
+            .wrapping_add(k)
+            .wrapping_add(words[index]);
+        let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+        let maj = (a & b) | (c & (a | b));
+        let t2 = s0.wrapping_add(maj);
+
+        h = g;
+        g = f;
+        f = e;
+        e = d.wrapping_add(t1);
+        d = c;
+        c = b;
+        b = a;
+        a = t1.wrapping_add(t2);
+    }
+
+    [a, b, c, d, e, f, g, h]
+}
+
+fn gec_sha256_init(salt7: &[u8]) -> [u32; 8] {
+    let mut words = Vec::with_capacity(64);
+    for _ in 0..14 {
+        words.push(0);
+    }
+    let w14 = ((salt7[0] as u32) << 16) | ((salt7[1] as u32) << 8) | (salt7[2] as u32);
+    let w15 = u32::from_be_bytes([salt7[3], salt7[4], salt7[5], salt7[6]]);
+    words.push(w14);
+    words.push(w15);
+
+    for index in 16..30 {
+        let mut value = GEC_SHA256_SCHEDULE[index - 16];
+        if index - 2 >= 14 {
+            let s1 = if index == 16 {
+                gec_sigma1(words[index - 2]) ^ GEC_SHA256_SIGMA1_ADJ
+            } else {
+                gec_sigma1(words[index - 2])
+            };
+            value = value.wrapping_add(s1);
+        }
+        if index - 7 >= 14 {
+            value = value.wrapping_add(words[index - 7]);
+        }
+        if index - 15 >= 14 {
+            let s0 = if index == 29 {
+                gec_sigma0(words[index - 15]) ^ GEC_SHA256_SIGMA0_ADJ
+            } else {
+                gec_sigma0(words[index - 15])
+            };
+            value = value.wrapping_add(s0);
+        }
+        words.push(value);
+    }
+
+    let w30 = gec_sigma1(words[28])
+        .wrapping_add(words[23])
+        .wrapping_add(gec_sigma0(words[15]))
+        .wrapping_add(words[14])
+        .wrapping_add(GEC_SHA256_ADJUSTMENT)
+        .wrapping_sub(GEC_SHA256_ROUND_CONSTANTS[14]);
+    words.push(w30);
+
+    gec_expand_schedule(&mut words, 31);
+    let working = gec_sha256_rounds(GEC_SHA256_STATE, &words, 14);
+    let mut out = [0u32; 8];
+    for i in 0..8 {
+        out[i] = GEC_SHA256_INITIAL[i].wrapping_add(working[i]);
+    }
+    out
+}
+
+fn gec_sha256_digest(data: &[u8]) -> [u8; 32] {
+    let length = 57 + data.len();
+    let pad_zeros = (55isize - (length as isize)).rem_euclid(64) as usize;
+    let mut padded = Vec::with_capacity(data.len() - 7 + 1 + pad_zeros + 8);
+    padded.extend_from_slice(&data[7..]);
+    padded.push(0x80);
+    padded.resize(padded.len() + pad_zeros, 0);
+    padded.extend_from_slice(&((length as u64) * 8).to_be_bytes());
+
+    let mut state = gec_sha256_init(&data[..7]);
+    for chunk in padded.chunks_exact(64) {
+        let mut words = Vec::with_capacity(64);
+        for w in chunk.chunks_exact(4) {
+            words.push(u32::from_be_bytes([w[0], w[1], w[2], w[3]]));
+        }
+        gec_expand_schedule(&mut words, 16);
+        let working = gec_sha256_rounds(state, &words, 0);
+        for i in 0..8 {
+            state[i] = state[i].wrapping_add(working[i]);
+        }
+    }
+
+    let mut out = [0u8; 32];
+    for (i, &w) in state.iter().enumerate() {
+        out[i * 4..(i + 1) * 4].copy_from_slice(&w.to_be_bytes());
+    }
+    out
+}
+
+fn gec_words_le4_even(data: &[u8]) -> Vec<u32> {
+    let rem = (4 - (data.len() % 4)) % 4;
+    let mut padded = Vec::with_capacity(data.len() + rem);
+    padded.extend_from_slice(data);
+    padded.resize(data.len() + rem, 0);
+    if padded.is_empty() {
+        return Vec::new();
+    }
+    let mut words: Vec<u32> = padded
+        .chunks_exact(4)
+        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+    if words.len() % 2 == 1 {
+        words.push(0);
+    }
+    words
+}
+
+fn gec_cs64_digest(data: &[u8], digest: &[u8; 32]) -> (u32, u32) {
+    let key_a = u32::from_le_bytes([digest[0], digest[1], digest[2], digest[3]]) | 1;
+    let key_b = u32::from_le_bytes([digest[4], digest[5], digest[6], digest[7]]) | 1;
+    let factors = [
+        key_a.wrapping_mul(GEC_CS64_FACTOR),
+        key_b.wrapping_mul(GEC_CS64_FACTOR),
+    ];
+
+    let mut terms: Vec<u32> = GEC_CS64_COEFFS
+        .iter()
+        .enumerate()
+        .map(|(idx, &(coeff, _))| coeff.wrapping_mul(factors[idx % 2]))
+        .collect();
+    let mut offsets: Vec<u32> = GEC_CS64_COEFFS.iter().map(|&(_, off)| off).collect();
+
+    let mut prefixed = Vec::with_capacity(1 + data.len());
+    prefixed.push(0);
+    prefixed.extend_from_slice(data);
+
+    for (index, word) in gec_words_le4_even(&prefixed).into_iter().enumerate() {
+        let mut term = word.wrapping_mul(if index % 2 == 0 { key_a } else { key_b });
+        let mut offset = word
+            .rotate_left(16)
+            .wrapping_mul(if index % 2 == 0 { 0xEF0569FB } else { 0xC31713DB });
+        if index == 0 {
+            term = term.wrapping_add(GEC_CS64_ADJ0.wrapping_mul(factors[0]));
+            offset = offset.wrapping_add(GEC_CS64_ADJ1);
+        }
+        terms.push(term);
+        offsets.push(offset);
+    }
+
+    let mut swap_acc = 0u32;
+    let mut swap_last = 0u32;
+    let mut state = 0u32;
+    let mut acc = 0u32;
+
+    for index in (0..terms.len()).step_by(2) {
+        let x = terms[index];
+        let y = terms[index + 1];
+
+        let t = offsets[index].wrapping_add(x).rotate_left(16);
+        let q = t.wrapping_mul(0x76F50F34);
+        swap_acc = swap_acc.wrapping_add(q.rotate_left(16).wrapping_mul(0xC3EFEA97).wrapping_add(q));
+
+        let t = offsets[index + 1].wrapping_add(y).rotate_left(16);
+        let q = t.wrapping_mul(0x1881CE3C);
+        swap_last = q.rotate_left(16).wrapping_mul(0x35BD1EC9).wrapping_add(q);
+        swap_acc = swap_acc.wrapping_add(swap_last);
+
+        state = state.wrapping_mul(key_a).wrapping_add(x);
+        state = state.rotate_left(16).wrapping_mul(0xCF98B111);
+        state = state.rotate_left(16).wrapping_mul(0x87085B9F);
+        state = state.rotate_left(16).wrapping_mul(0x12CEB96D);
+        state = state.rotate_left(16).wrapping_mul(0x257E1D83);
+        acc = acc.wrapping_add(state);
+
+        let mut t2 = state.wrapping_mul(key_b).wrapping_add(y);
+        t2 = t2.rotate_left(16).wrapping_mul(0xA27416F5);
+        t2 = t2.rotate_left(16).wrapping_mul(0xD38396FF);
+        state = t2
+            .rotate_left(16)
+            .wrapping_mul(0x7C932B89)
+            .rotate_left(16)
+            .wrapping_mul(0xBFA49F69);
+        acc = acc.wrapping_add(state);
+    }
+
+    (swap_last ^ state, swap_acc ^ acc)
+}
+
 fn generate_sec_ms_gec(skew: i64) -> String {
-    use sha2::{Digest, Sha256};
     let win_epoch = 11644473600u64;
     let now_sec = (chrono::Utc::now().timestamp() + skew) as u64;
     let mut ticks = now_sec + win_epoch;
     ticks -= ticks % 300;
     ticks *= 10_000_000;
 
-    let str_to_hash = format!("{}{}", ticks, "6A5AA1D4EAFF4E9FB37E23D68491D6F4");
-    let mut hasher = Sha256::new();
-    hasher.update(str_to_hash.as_bytes());
-    let result = hasher.finalize();
-    format!("{:X}", result)
+    let str_to_hash = format!("{}{}", ticks, EDGE_TRUSTED_TOKEN);
+    let gec_ver = EDGE_GEC_VERSION.lock().unwrap().clone();
+    if gec_ver.starts_with("1-") {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(str_to_hash.as_bytes());
+        return format!("{:X}", hasher.finalize());
+    }
+
+    let data = str_to_hash.as_bytes();
+    let digest = gec_sha256_digest(data);
+    let (cs0, cs1) = gec_cs64_digest(data, &digest);
+    let mut cs_bytes = [0u8; 8];
+    cs_bytes[0..4].copy_from_slice(&cs0.to_le_bytes());
+    cs_bytes[4..8].copy_from_slice(&cs1.to_le_bytes());
+
+    let cs_hex: String = cs_bytes.iter().map(|b| format!("{:02X}", b)).collect();
+    let sha_hex: String = digest.iter().map(|b| format!("{:02X}", b)).collect();
+    format!("{}-{}", cs_hex, sha_hex)
 }
 
 fn log_tts_error(text: &str, err: &str) {
     use std::io::Write;
+    let log_path = "tts_errors.log";
+    if let Ok(meta) = std::fs::metadata(log_path) {
+        if meta.len() > 2 * 1024 * 1024 {
+            let _ = std::fs::write(log_path, "");
+        }
+    }
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open("c:\\Antigravity projects\\voice-server\\tts_errors.log")
+        .open(log_path)
     {
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-        let _ = writeln!(file, "[{}] TEXT: \"{}\" | ERROR: {}", timestamp, text, err);
+        let preview: String = text.chars().take(120).collect();
+        let _ = writeln!(file, "[{}] TEXT: \"{}\" | ERROR: {}", timestamp, preview, err);
     }
 }
 
 #[tauri::command]
 fn write_js_log(log: String) {
-    use std::io::Write;
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("c:\\Antigravity projects\\voice-server\\tts_errors.log")
-    {
-        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-        let _ = writeln!(file, "[JS {}] {}", timestamp, log);
+    // Записываем на диск только реальные ошибки JS, чтобы не раздувать лог и не грузить диск в фоне
+    if log.contains("Error") || log.contains("Rejection") || log.contains("ERROR") {
+        log_tts_error("JS_RUNTIME", &log);
     }
 }
 
@@ -164,7 +500,6 @@ async fn speak_local_tts(app_handle: &tauri::AppHandle, text: String, _voice: St
 
     let espeak_data_dir = ext_dir.join("espeak-ng-data");
 
-    // Запускаем piper.exe
     use tokio::io::AsyncWriteExt;
     let mut cmd = tokio::process::Command::new(&piper_exe);
     #[cfg(target_os = "windows")]
@@ -196,7 +531,6 @@ async fn speak_local_tts(app_handle: &tauri::AppHandle, text: String, _voice: St
         .spawn()
         .map_err(|e| format!("Не удалось запустить piper-cli: {}", e))?;
 
-    // Пишем текст в stdin процесса
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(text.as_bytes()).await.map_err(|e| e.to_string())?;
         stdin.flush().await.map_err(|e| e.to_string())?;
@@ -210,7 +544,6 @@ async fn speak_local_tts(app_handle: &tauri::AppHandle, text: String, _voice: St
         return Err(format!("Ошибка генерации речи: {}", err_msg));
     }
 
-    // Считываем сгенерированный WAV файл
     let audio_bytes = std::fs::read(&temp_wav_path).map_err(|e| e.to_string())?;
     let _ = std::fs::remove_file(&temp_wav_path);
 
@@ -221,6 +554,107 @@ async fn speak_local_tts(app_handle: &tauri::AppHandle, text: String, _voice: St
     Ok(STANDARD.encode(&audio_bytes))
 }
 
+async fn speak_yandex_tts(api_key: &str, text: &str, voice: &str, rate: f32) -> Result<String, String> {
+    if api_key.trim().is_empty() {
+        return Err("Yandex API Key не указан в настройках".to_string());
+    }
+    let speed = rate.clamp(0.3, 3.0).to_string();
+    let ya_voice = if voice.contains("Dmitry") || voice.contains("dmitri") || voice == "filipp" || voice == "ermil" {
+        "filipp"
+    } else if voice == "alena" || voice == "jane" || voice == "marina" {
+        voice
+    } else {
+        "alena"
+    };
+    let has_cyrillic = text.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c));
+    let lang = if has_cyrillic { "ru-RU" } else { "en-US" };
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let form_body = format!(
+        "text={}&lang={}&voice={}&speed={}&format=mp3",
+        urlencoding::encode(text),
+        urlencoding::encode(lang),
+        urlencoding::encode(ya_voice),
+        urlencoding::encode(&speed)
+    );
+
+    let resp = client
+        .post("https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize")
+        .header("Authorization", format!("Api-Key {}", api_key.trim()))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(form_body)
+        .send()
+        .await
+        .map_err(|e| format!("Yandex TTS network error: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Yandex TTS HTTP {}: {}", status, body));
+    }
+
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    if bytes.is_empty() {
+        return Err("Yandex TTS вернул пустой ответ".to_string());
+    }
+    Ok(STANDARD.encode(&bytes))
+}
+
+async fn speak_google_fallback_tts(text: &str, _voice: &str) -> Result<String, String> {
+    let has_cyrillic = text.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c));
+    let tl = if has_cyrillic { "ru" } else { "en" };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    // Разбиваем длинное предложение на куски до 180 символов по пробелам
+    let mut chunks: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        if current.chars().count() + word.chars().count() + 1 > 180 && !current.is_empty() {
+            chunks.push(current.clone());
+            current.clear();
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+
+    let mut combined_mp3: Vec<u8> = Vec::new();
+    for chunk in chunks {
+        let encoded = urlencoding::encode(&chunk);
+        let url = format!(
+            "https://translate.googleapis.com/translate_tts?ie=UTF-8&client=tw-ob&tl={}&q={}",
+            tl, encoded
+        );
+        let resp = client
+            .get(&url)
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            .send()
+            .await
+            .map_err(|e| format!("Fallback TTS error: {}", e))?;
+        if !resp.status().is_success() {
+            return Err(format!("Fallback TTS HTTP {}", resp.status()));
+        }
+        let b = resp.bytes().await.map_err(|e| e.to_string())?;
+        combined_mp3.extend_from_slice(&b);
+    }
+
+    if combined_mp3.is_empty() {
+        return Err("Fallback TTS вернул пустой ответ".to_string());
+    }
+    Ok(STANDARD.encode(&combined_mp3))
+}
+
 #[tauri::command]
 async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: String, rate: f32) -> Result<String, String> {
     let config = load_config_internal(&app_handle).unwrap_or_else(|_| AppConfig::default());
@@ -228,16 +662,53 @@ async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: Strin
     if config.tts_engine == "local" {
         return speak_local_tts(&app_handle, text, voice, rate).await;
     }
+    if config.tts_engine == "yandex" && !config.yandex_api_key.trim().is_empty() {
+        if let Ok(res) = speak_yandex_tts(&config.yandex_api_key, &text, &voice, rate).await {
+            return Ok(res);
+        }
+    }
 
     let _guard = EDGE_TTS_MUTEX.lock().await;
-    let res = speak_edge_tts_internal(text.clone(), voice, rate).await;
-    if let Err(ref e) = res {
-        log_tts_error(&text, e);
+    // Попытка 1: стандартный запрос с Sec-MS-GEC v2
+    match speak_edge_tts_internal(text.clone(), voice.clone(), rate, false).await {
+        Ok(b64) => Ok(b64),
+        Err(first_err) => {
+            println!("SincPro TTS Auto-Heal: Первая попытка не удалась ({}), обновляем профиль и DRM...", first_err);
+            // Уровень 1 и 2 самовосстановления: принудительно обновляем clock skew и DRM-версию с GitHub
+            let _ = get_clock_skew(true).await;
+            if first_err.contains("403") {
+                refresh_edge_drm_constants().await;
+            }
+            match speak_edge_tts_internal(text.clone(), voice.clone(), rate, true).await {
+                Ok(b64) => {
+                    println!("SincPro TTS Auto-Heal: Озвучка успешно восстановлена со второй попытки!");
+                    Ok(b64)
+                }
+                Err(second_err) => {
+                    log_tts_error(&text, &second_err);
+                    // Уровень 3: Автоматический Fallback (Yandex -> Local Piper -> Google TTS)
+                    if !config.yandex_api_key.trim().is_empty() {
+                        if let Ok(ya_b64) = speak_yandex_tts(&config.yandex_api_key, &text, &voice, rate).await {
+                            println!("SincPro TTS Auto-Heal: Использован резервный канал Yandex SpeechKit");
+                            return Ok(ya_b64);
+                        }
+                    }
+                    if let Ok(local_b64) = speak_local_tts(&app_handle, text.clone(), voice.clone(), rate).await {
+                        println!("SincPro TTS Auto-Heal: Использован локальный резервный движок Piper");
+                        return Ok(local_b64);
+                    }
+                    if let Ok(google_b64) = speak_google_fallback_tts(&text, &voice).await {
+                        println!("SincPro TTS Auto-Heal: Использован резервный онлайн-движок");
+                        return Ok(google_b64);
+                    }
+                    Err(second_err)
+                }
+            }
+        }
     }
-    res
 }
 
-async fn speak_edge_tts_internal(text: String, voice: String, rate: f32) -> Result<String, String> {
+async fn speak_edge_tts_internal(text: String, voice: String, rate: f32, force_skew: bool) -> Result<String, String> {
     let rate_pct = (((rate - 1.0) * 100.0).round() as i32).clamp(-50, 100);
     let rate_str = if rate_pct >= 0 {
         format!("+{}%", rate_pct)
@@ -245,9 +716,11 @@ async fn speak_edge_tts_internal(text: String, voice: String, rate: f32) -> Resu
         format!("{}%", rate_pct)
     };
 
-    let skew = get_clock_skew().await;
+    let skew = get_clock_skew(force_skew).await;
     let gec = generate_sec_ms_gec(skew);
-    let gec_version = "1-143.0.3650.75";
+    let gec_version = EDGE_GEC_VERSION.lock().unwrap().clone();
+    let chromium_full = EDGE_CHROMIUM_VERSION.lock().unwrap().clone();
+    let chromium_major = chromium_full.split('.').next().unwrap_or("143").to_string();
 
     let conn_id = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
     let url = format!(
@@ -257,10 +730,14 @@ async fn speak_edge_tts_internal(text: String, voice: String, rate: f32) -> Resu
 
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     let mut request = url.into_client_request().map_err(|e| format!("WebSocket request config failed: {}", e))?;
-    
+
+    let ua = format!(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{major}.0.0.0 Safari/537.36 Edg/{major}.0.0.0",
+        major = chromium_major
+    );
     let headers = request.headers_mut();
     headers.insert("Origin", "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold".parse().unwrap());
-    headers.insert("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0".parse().unwrap());
+    headers.insert("User-Agent", ua.parse().unwrap());
     headers.insert("Accept-Encoding", "gzip, deflate, br, zstd".parse().unwrap());
     headers.insert("Accept-Language", "en-US,en;q=0.9".parse().unwrap());
     headers.insert("Pragma", "no-cache".parse().unwrap());
@@ -268,24 +745,24 @@ async fn speak_edge_tts_internal(text: String, voice: String, rate: f32) -> Resu
 
     let muid = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
     headers.insert("Cookie", format!("muid={};", muid).parse().unwrap());
-    
-    // Задаем таймаут на все сетевое взаимодействие с Edge TTS (10 секунд)
+
+    let adjusted_now = chrono::Utc::now() + chrono::Duration::seconds(skew);
+    let ts_str = adjusted_now.format("%Y-%m-%dT%H:%M:%S.000Z").to_string();
+
     let net_result = tokio::time::timeout(Duration::from_secs(10), async {
-        let (mut ws, _) = tokio_tungstenite::connect_async_tls_with_config(request, None, false, None)
+        let (mut ws, _) = connect_async_tls_with_config(request, None, false, None)
             .await
             .map_err(|e| format!("WebSocket connect failed: {}", e))?;
 
-        // 1. Отправляем конфигурационное сообщение
         let config_msg = format!(
             "X-Timestamp:{ts}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n\
              {{\"context\":{{\"synthesis\":{{\"audio\":{{\"metadataoptions\":{{\"sentenceBoundaryEnabled\":false,\
              \"wordBoundaryEnabled\":false}},\"outputFormat\":\"audio-24khz-48kbitrate-mono-mp3\"}}}}}}}}",
-            ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S.000Z")
+            ts = ts_str
         );
         ws.send(Message::Text(config_msg.into())).await
             .map_err(|e| format!("Send config failed: {}", e))?;
 
-        // 2. SSML синтез
         let request_id = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
         let ssml_text = text
             .replace("&", "&amp;")
@@ -296,8 +773,8 @@ async fn speak_edge_tts_internal(text: String, voice: String, rate: f32) -> Resu
              X-Timestamp:{ts}\r\nPath:ssml\r\n\r\n\
              <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>\
              <voice name='{voice}'><prosody rate='{rate}'>{text}</prosody></voice></speak>",
-            req  = request_id,
-            ts   = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S.000Z"),
+            req = request_id,
+            ts = ts_str,
             voice = voice,
             rate = rate_str,
             text = ssml_text,
@@ -305,7 +782,6 @@ async fn speak_edge_tts_internal(text: String, voice: String, rate: f32) -> Resu
         ws.send(Message::Text(ssml_msg.into())).await
             .map_err(|e| format!("Send SSML failed: {}", e))?;
 
-        // 3. Собираем бинарные чанки MP3
         let mut audio_bytes: Vec<u8> = Vec::new();
         let separator = b"Path:audio\r\n";
 
@@ -409,16 +885,164 @@ static WIN_PRESSED: AtomicBool = AtomicBool::new(false);
 static ALT_PRESSED: AtomicBool = AtomicBool::new(false);
 static SHIFT_PRESSED: AtomicBool = AtomicBool::new(false);
 static SHORTCUT_ACTIVE: AtomicBool = AtomicBool::new(false);
+static RECORD_HOTKEY_ACTIVE: AtomicBool = AtomicBool::new(false);
 static FORCE_SEND_ACTIVE: AtomicBool = AtomicBool::new(false);
 static RECORDING_OR_PAUSED: AtomicBool = AtomicBool::new(false);
 static CAPSULE_ENABLED: AtomicU8 = AtomicU8::new(2);
 static WIDGET_ENABLED: AtomicU8 = AtomicU8::new(2);
 static OCR_ENABLED: AtomicU8 = AtomicU8::new(0); // Выключен по умолчанию при старте
-static LAYOUT_CONVERTER_ENABLED: AtomicU8 = AtomicU8::new(2); // 0 = Выкл, 2 = Вкл
+static LAYOUT_CONVERTER_ENABLED: AtomicU8 = AtomicU8::new(2); // 0 = Выкл, 1 = Только хоткеи, 2 = Автозамена
 static LAYOUT_HOTKEY_MODIFIER: AtomicU8 = AtomicU8::new(1); // 1 = Ctrl, 2 = Alt, 3 = Shift, 4 = Win
 static LAYOUT_HOTKEY_KEY: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x13); // 0x13 = VK_PAUSE
 static LAYOUT_PROCESSING: AtomicBool = AtomicBool::new(false);
 
+// Битовая маска хоткея в u32:
+// bit 16 (0x1_0000) = Ctrl
+// bit 17 (0x2_0000) = Alt
+// bit 18 (0x4_0000) = Shift
+// bit 19 (0x8_0000) = Win
+// bits 0..15 (0xFFFF) = vkCode (0, если комбинация состоит только из модификаторов)
+const MOD_BIT_CTRL: u32 = 0x1_0000;
+const MOD_BIT_ALT: u32 = 0x2_0000;
+const MOD_BIT_SHIFT: u32 = 0x4_0000;
+const MOD_BIT_WIN: u32 = 0x8_0000;
+const MOD_MASK: u32 = 0xF_0000;
+
+static HOTKEY_RECORD_SPEC: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(MOD_BIT_CTRL | MOD_BIT_WIN); // Ctrl+Win
+static HOTKEY_FORCE_SEND_SPEC: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(MOD_BIT_WIN | MOD_BIT_ALT); // Win+Alt
+static HOTKEY_TTS_READ_SPEC: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(MOD_BIT_CTRL | MOD_BIT_SHIFT); // Ctrl+Shift
+static HOTKEY_TTS_TRANSLATE_SPEC: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(MOD_BIT_CTRL | MOD_BIT_ALT); // Ctrl+Alt
+static HOTKEY_TTS_APPEND_SPEC: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(MOD_BIT_CTRL | 0x09); // Ctrl+Tab
+static HOTKEY_OCR_SPEC: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(MOD_BIT_ALT | 0x51); // Alt+Q
+static HOTKEY_LAYOUT_CONVERT_SPEC: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(MOD_BIT_CTRL | 0x13); // Ctrl+Pause
+static HOTKEY_LAYOUT_UNDO_SPEC: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(MOD_BIT_SHIFT | 0x08); // Shift+Backspace
+static HOTKEY_LAYOUT_EXCLUDE_SPEC: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(MOD_BIT_CTRL | MOD_BIT_ALT | MOD_BIT_SHIFT | 0x58); // Ctrl+Alt+Shift+X
+
+lazy_static::lazy_static! {
+    static ref CACHED_FG_PROCESS: Mutex<(isize, Option<String>)> = Mutex::new((0, None));
+}
+
+fn current_modifier_bits() -> u32 {
+    let mut bits = 0u32;
+    if CTRL_PRESSED.load(Ordering::Relaxed) { bits |= MOD_BIT_CTRL; }
+    if ALT_PRESSED.load(Ordering::Relaxed) { bits |= MOD_BIT_ALT; }
+    if SHIFT_PRESSED.load(Ordering::Relaxed) { bits |= MOD_BIT_SHIFT; }
+    if WIN_PRESSED.load(Ordering::Relaxed) { bits |= MOD_BIT_WIN; }
+    bits
+}
+
+fn parse_key_name_to_vk(key: &str) -> u32 {
+    let k = key.trim().to_lowercase();
+    match k.as_str() {
+        "" => 0,
+        "pause" | "break" => 0x13,
+        "tab" => 0x09,
+        "backspace" | "back" => 0x08,
+        "space" | "пробел" => 0x20,
+        "enter" | "return" => 0x0D,
+        "capslock" | "caps" => 0x14,
+        "insert" | "ins" => 0x2D,
+        "delete" | "del" => 0x2E,
+        "home" => 0x24,
+        "end" => 0x23,
+        "pageup" | "pgup" => 0x21,
+        "pagedown" | "pgdn" => 0x22,
+        "scrolllock" | "scroll" => 0x91,
+        "escape" | "esc" => 0x1B,
+        "`" | "~" | "ё" | "backquote" => 0xC0,
+        "[" | "{" | "х" | "bracketleft" => 0xDB,
+        "]" | "}" | "ъ" | "bracketright" => 0xDD,
+        ";" | ":" | "ж" | "semicolon" => 0xBA,
+        "'" | "\"" | "э" | "quote" => 0xDE,
+        "," | "<" | "б" | "comma" => 0xBC,
+        "." | ">" | "ю" | "period" => 0xBE,
+        "/" | "?" | "slash" => 0xBF,
+        "\\" | "|" | "backslash" => 0xDC,
+        "-" | "_" | "minus" => 0xBD,
+        "=" | "+" | "equal" => 0xBB,
+        "f1" => 0x70,
+        "f2" => 0x71,
+        "f3" => 0x72,
+        "f4" => 0x73,
+        "f5" => 0x74,
+        "f6" => 0x75,
+        "f7" => 0x76,
+        "f8" => 0x77,
+        "f9" => 0x78,
+        "f10" => 0x79,
+        "f11" => 0x7A,
+        "f12" => 0x7B,
+        _ => {
+            if k.chars().count() == 1 {
+                let c = k.chars().next().unwrap();
+                if c.is_ascii_alphabetic() {
+                    return c.to_ascii_uppercase() as u32;
+                }
+                if c.is_ascii_digit() {
+                    return c as u32;
+                }
+            }
+            0
+        }
+    }
+}
+
+fn parse_hotkey_spec(combo: &str) -> u32 {
+    let mut bits = 0u32;
+    let mut vk = 0u32;
+    for part in combo.split('+') {
+        let p = part.trim();
+        if p.is_empty() {
+            continue;
+        }
+        match p.to_lowercase().as_str() {
+            "ctrl" | "control" => bits |= MOD_BIT_CTRL,
+            "alt" | "menu" => bits |= MOD_BIT_ALT,
+            "shift" => bits |= MOD_BIT_SHIFT,
+            "win" | "meta" | "super" | "cmd" => bits |= MOD_BIT_WIN,
+            _ => {
+                let parsed_vk = parse_key_name_to_vk(p);
+                if parsed_vk != 0 {
+                    vk = parsed_vk;
+                }
+            }
+        }
+    }
+    bits | (vk & 0xFFFF)
+}
+
+fn matches_key_hotkey(spec: u32, mods: u32, vk: u32, is_key_down: bool) -> bool {
+    if !is_key_down || spec == 0 {
+        return false;
+    }
+    let req_mods = spec & MOD_MASK;
+    let req_vk = spec & 0xFFFF;
+    if req_vk == 0 {
+        return false;
+    }
+    if mods != req_mods {
+        return false;
+    }
+    // Специфика Windows: Ctrl + Pause транслируется в VK_CANCEL (0x03)
+    if req_vk == 0x13 && (req_mods & MOD_BIT_CTRL) != 0 {
+        vk == 0x13 || vk == 0x03
+    } else {
+        vk == req_vk
+    }
+}
+
+fn matches_any_hotkey(spec: u32, mods: u32, vk: u32, is_key_down: bool, state_changed: bool) -> bool {
+    if spec == 0 {
+        return false;
+    }
+    let req_mods = spec & MOD_MASK;
+    let req_vk = spec & 0xFFFF;
+    if req_vk == 0 {
+        state_changed && mods == req_mods
+    } else {
+        matches_key_hotkey(spec, mods, vk, is_key_down)
+    }
+}
 
 #[repr(C)]
 struct POINT {
@@ -565,58 +1189,209 @@ fn map_vk_to_chars(vk: u32) -> Option<(char, char)> {
 }
 
 fn is_invalid_layout_word(word: &str, is_english: bool) -> bool {
-    if word.len() < 2 {
+    if word.chars().count() < 2 {
         return false;
     }
-    
+
     if is_english {
-        let chars: Vec<char> = word.chars().collect();
-        let has_vowel = chars.iter().any(|&c| matches!(c, 'a'|'e'|'i'|'o'|'u'|'y'|'A'|'E'|'I'|'O'|'U'|'Y'));
-        if !has_vowel && word.len() >= 3 {
+        // Убираем завершающий '/' (VK_OEM_2 = '.' в русской раскладке)
+        let trimmed = word.trim_end_matches('/');
+        if trimmed.chars().count() < 2 {
+            return false;
+        }
+
+        // Проверяем наличие спецсимволов, которые в русской раскладке являются буквами (х, ъ, ё, ж, э, б, ю)
+        // 1. Скобки и тильда ([ ] { } ` ~) — никогда не бывают частью английского слова
+        if trimmed.chars().any(|c| matches!(c, '[' | ']' | '{' | '}' | '`' | '~')) {
             return true;
         }
 
+        // 2. Знаки ; : , < . > в начале или середине слова (например vj;yj -> можно, cgfcb,j -> спасибо, k.,jdm -> любовь)
+        let chars: Vec<char> = trimmed.chars().collect();
+        let len = chars.len();
+        for (idx, &c) in chars.iter().enumerate() {
+            if matches!(c, ';' | ':' | ',' | '<' | '.' | '>') && idx + 1 < len {
+                return true;
+            }
+            if c == '\'' || c == '"' {
+                // Разрешаем только валидные английские апострофы ('s, 't, 'm, 'd, 'll, 're, 've)
+                let tail: String = chars[idx..].iter().collect::<String>().to_lowercase();
+                if !matches!(tail.as_str(), "'s" | "'t" | "'m" | "'d" | "'ll" | "'re" | "'ve") {
+                    return true;
+                }
+            }
+        }
+
+        // Для дальнейшего анализа букв отбрасываем одиночный завершающий знак препинания (, . ;)
+        let stem = trimmed.trim_end_matches(|c| matches!(c, ',' | '.' | ';' | ':'));
+        let stem_lower = stem.to_lowercase();
+        let stem_chars: Vec<char> = stem_lower.chars().collect();
+        if stem_chars.len() < 2 {
+            return false;
+        }
+
+        // Белый список частых английских тех-аббревиатур и сокращений без гласных
+        const VALID_ENG_ABBR: &[&str] = &[
+            "http", "https", "html", "scss", "grpc", "glfw", "llvm", "std", "src", "pkg",
+            "npm", "npx", "pnpm", "git", "ssh", "ssl", "tls", "tcp", "udp", "utf", "rgb",
+            "rgba", "hsl", "svg", "png", "jpg", "webp", "gif", "mp3", "mp4", "mkv", "pdf",
+            "txt", "docx", "xlsx", "csv", "xml", "sql", "jwt", "sdk", "cli", "cpu", "gpu",
+            "ssd", "hdd", "usb", "hdmi", "ctrl", "shift", "hwnd", "wnd", "msg", "ptr", "str",
+            "vec", "fmt", "cfg", "tmp", "usr", "bin", "dll", "cmd", "ps1", "sync", "lynx",
+            "myth", "hymn", "rhythm", "crypt", "nymph", "gym", "dry", "fly", "sky", "try",
+            "cry", "shy", "why", "spy", "fry", "ply", "pry", "wry", "nth", "mrs", "ms", "mr", "dr", "st",
+        ];
+        if VALID_ENG_ABBR.contains(&stem_lower.as_str()) {
+            return false;
+        }
+
+        // Частые короткие русские слова на английской раскладке, которые содержат 'e'/'y'/'a'/'u'/'i'/'o'
+        const COMMON_RU_ON_EN: &[&str] = &[
+            "ytn", "nen", "cjy", "ujl", "tot", "rfr", "xnj", "rnj", "ult", "djn", "nfr",
+            "nfv", "dct", "lkz", "vjq", "ndjq", "cdjq", "jyf", "jyb", "jyj", "vyjuj",
+            "nfrjq", "rfrjq", "ɷnj", "pyf", "pyftn", "pyf.n", "pyf.t", "vtyz", "nt,z",
+            "ct,z", "åuj", "tuj", "tt", "b[", "yfc", "dfc", "bv", "bvb", "ytv", "ytq",
+            "kexit", "gjnjp", "gjnjv", "ctqxfc", "pltcm", "njulf", "rjulf", "dcerlf",
+            "ybкогда", "ybrjulf", "jxtym", "ghjcnj", "njkmrj", "ctujlyz", "rjytxyj",
+            "ybxtuj", "ghbdtn", "chfpe", "ckeifnm", "lfnm", "pfnm", "pyfnm", "crfpfnm",
+            "ltfnm", "ltkfnm", "hf,jnfnm", "levfnm", "gjybvfnm", "ujdjhbnm", "cvjnhtnm",
+            "dbltnm", "[jntnm", "vjxm", "blnb", "t[fnm", "cnjznm", "cbltnm", "kt;fnm",
+            "cgfnm", ";bnm", ",snm", "cnfnm", "dpznm", "gjkexbnm", "yfqnb", "gecnbnm",
+        ];
+        if COMMON_RU_ON_EN.contains(&stem_lower.as_str()) {
+            return true;
+        }
+
+        let has_vowel = stem_chars.iter().any(|&c| matches!(c, 'a'|'e'|'i'|'o'|'u'|'y'));
+        if !has_vowel && stem_chars.len() >= 3 {
+            return true;
+        }
+
+        // Считаем подряд идущие согласные (в английском до 5 согласных легальны: strength, prompts, background, lengths)
         let mut consecutive_consonants = 0;
-        for &c in &chars {
-            if c.is_alphabetic() && !matches!(c, 'a'|'e'|'i'|'o'|'u'|'y'|'A'|'E'|'I'|'O'|'U'|'Y') {
+        for &c in &stem_chars {
+            if c.is_ascii_alphabetic() && !matches!(c, 'a'|'e'|'i'|'o'|'u'|'y') {
                 consecutive_consonants += 1;
-                if consecutive_consonants >= 4 {
+                if consecutive_consonants >= 6 {
                     return true;
                 }
             } else {
                 consecutive_consonants = 0;
             }
         }
-        
-        let invalid_pairs = ["qg", "qx", "qz", "qk", "qv", "qw", "qy", "qb", "qc", "qd", "qj", "qh", "qp", "qs", "wz", "wx", "wq", "jz", "jx", "jq", "vf", "vc", "cx", "cv", "zb", "zd", "zg", "zh", "zj", "zk", "zl", "zm", "zn", "zp", "zq", "zr", "zs", "zv", "zx"];
-        let word_lower = word.to_lowercase();
+
+        // В английском языке 'j' ('о' в русском) никогда не стоит на конце слова и не идет перед согласной
+        if stem_chars.last() == Some(&'j') {
+            return true;
+        }
+        for w in stem_chars.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            // 'j' перед любой согласной (например jxtym -> очень, jh -> ор, jn -> от, jk -> ол, jm -> оь)
+            if a == 'j' && b.is_ascii_alphabetic() && !matches!(b, 'a'|'e'|'i'|'o'|'u') {
+                return true;
+            }
+            // Согласная перед 'j' (кроме d/b в adjust/object)
+            if b == 'j' && a.is_ascii_alphabetic() && !matches!(a, 'a'|'e'|'i'|'o'|'u'|'d'|'b') {
+                return true;
+            }
+        }
+
+        // Русские начала слов с 'н' ('y' в EN) + русская гласная ('f'=а, 't'=е, 'b'=и, 'j'=о, 's'=ы, 'z'=я)
+        for prefix in &["yf", "yt", "yb", "yj", "ys", "yz", "df", "dt", "db", "dj", "ds", "dz", "pf", "pt", "pb", "pj", "ps", "pz", "rf", "rt", "rb", "rj", "rs", "rz", "cf", "ct", "cb", "cj", "cs", "cz", "nf", "nt", "nb", "nj", "ns", "nz", "gf", "gt", "gb", "gj", "gs", "gz", "lf", "lt", "lb", "lj", "ls", "lz", "vf", "vt", "vb", "vj", "vs", "vz", "xf", "xt", "xb", "xj", "xe", "if", "it", "ib", "ij", "ie"] {
+            if stem_lower.starts_with(prefix) && !matches!(stem_lower.as_str(), "year" | "years" | "yeast" | "yearn" | "yield" | "yell" | "yellow" | "yes" | "yet" | "yesterday" | "young" | "your" | "yours" | "yourself" | "youth" | "you" | "yard" | "yarn" | "yawn" | "yacht") {
+                return true;
+            }
+        }
+
+        // Русские окончания на мягкий знак ('m') или 'й' ('q') после согласной
+        for suffix in &["nm", "cm", "km", "hm", "lm", "pm", "dm", "gm", "xm", "im", "om", "jq", "tq", "bq", "sq", "zq", "f.n", "e.n", "b.n", "z.n"] {
+            if stem_lower.ends_with(suffix) && !matches!(stem_lower.as_str(), "film" | "palm" | "calm" | "balm" | "psalm" | "helm" | "realm" | "elm" | "overwhelm" | "worm" | "form" | "norm" | "storm" | "warm" | "harm" | "farm" | "charm" | "alarm" | "arm" | "term" | "firm" | "confirm" | "affirm" | "germ" | "sperm" | "chasm" | "spasm" | "prism" | "organism" | "mechanism" | "turbulence" | "rhythm" | "algorithm" | "logarithm" | "him" | "dim" | "rim" | "trim" | "grim" | "brim" | "slim" | "swim" | "skim" | "whim" | "victim" | "pilgrim" | "interim" | "verbatim" | "denim" | "minim" | "maxim" | "claim" | "aim" | "maim" | "from" | "whom" | "atom" | "bottom" | "custom" | "symptom" | "phantom" | "random" | "kingdom" | "freedom" | "wisdom" | "boredom" | "seldom" | "condom" | "venom" | "bosom" | "blossom" | "fathom" | "idiom" | "axiom" | "mom" | "prom" | "rom" | "com" | "tom" | "pom" | "room" | "boom" | "zoom" | "doom" | "loom" | "bloom" | "gloom" | "groom" | "broom" | "mushroom") {
+                return true;
+            }
+        }
+
+        // Если на конце слова была запятая/точка/точка с запятой, но основа валидна — это просто пунктуация (hello,)
+        let invalid_pairs = [
+            "qg", "qx", "qz", "qk", "qv", "qw", "qy", "qb", "qc", "qd", "qj", "qh", "qp", "qs",
+            "wz", "wx", "wq", "jz", "jx", "jq", "vf", "vc", "cx", "cv", "zb", "zd", "zg", "zh",
+            "zj", "zk", "zm", "zn", "zp", "zq", "zr", "zs", "zv", "zx", "ghb", "dtn", "njk", "kmr",
+        ];
         for pair in &invalid_pairs {
-            if word_lower.contains(pair) {
+            if stem_lower.contains(pair) {
                 return true;
             }
         }
     } else {
-        let chars: Vec<char> = word.chars().collect();
+        // Текущая раскладка — РУССКАЯ (проверяем, не введено ли английское слово в русской раскладке,
+        // и не трогаем настоящие русские слова вроде "борщ", "женщина", "уборщица", "толщина", "тщательно")
+        let trimmed = word.trim_end_matches(|c| matches!(c, '.' | ',' | ';' | ':'));
+        let chars: Vec<char> = trimmed.chars().collect();
+        if chars.len() < 2 {
+            return false;
+        }
+
         if let Some(&first) = chars.first() {
-            if first == 'ы' || first == 'Ы' || first == 'ь' || first == 'Ь' || first == 'ъ' || first == 'Ъ' {
+            if matches!(first, 'ы' | 'Ы' | 'ь' | 'Ь' | 'ъ' | 'Ъ') {
                 return true;
             }
         }
-        
+
         let has_vowel = chars.iter().any(|&c| matches!(c, 'а'|'о'|'у'|'ы'|'э'|'я'|'е'|'ё'|'и'|'ю'|'А'|'О'|'У'|'Ы'|'Э'|'Я'|'Е'|'Ё'|'И'|'Ю'));
-        if !has_vowel && word.len() >= 3 {
+        if !has_vowel && chars.len() >= 3 {
             return true;
         }
 
-        let word_lower = word.to_lowercase();
-        let invalid_pairs = ["ьь", "ъъ", "ьъ", "ъь", "чщ", "щч", "жш", "шж", "цщ", "щц", "цч", "чц", "гщ", "кщ", "лщ", "мщ", "нщ", "пщ", "рщ", "сщ", "тщ", "фщ", "хщ", "цщ", "чщ", "шщ", "щщ"];
+        // 5 и более русских согласных подряд (например в английских словах со 'i'='ш', 'o'='щ', 'a'='ф', 'u'='г', 'y'='н')
+        let mut consecutive_consonants = 0;
+        for &c in &chars {
+            let cl = c.to_lowercase().next().unwrap_or(c);
+            if (cl >= 'а' && cl <= 'я' || cl == 'ё') && !matches!(cl, 'а'|'о'|'у'|'ы'|'э'|'я'|'е'|'ё'|'и'|'ю') {
+                consecutive_consonants += 1;
+                if consecutive_consonants >= 5 {
+                    return true;
+                }
+            } else {
+                consecutive_consonants = 0;
+            }
+        }
+
+        let word_lower = trimmed.to_lowercase();
+
+        // Точные совпадения и префиксы частых английских слов, набранных в русской раскладке
+        if word_lower.starts_with("еру") || word_lower.starts_with("шьз") || word_lower.starts_with("щь") {
+            return true;
+        }
+
+        // Комбинации, которые НЕВОЗМОЖНЫ в настоящих русских словах, но возникают при вводе английских слов в RU раскладке:
+        // (Примечание: "рщ", "нщ", "лщ", "пщ", "сщ", "тщ" намеренно исключены, т.к. они есть в словах борщ, женщина, толщина, общий, счёт, тщательно)
+        let invalid_pairs = [
+            // Невозможные сочетания ь/ъ/ы и шипящих
+            "ьь", "ъъ", "ьъ", "ъь", "ыь", "ьы", "ъы", "ыъ", "чщ", "щч", "жш", "шж", "цщ", "щц", "цч", "чц", "шщ", "щщ",
+            "жы", "шы", "чы", "щы", "щэ", "шэ", "жэ", "чэ", "цэ", "йь", "йъ", "йы",
+            // Гласная + 'ы' ('s' в EN: test=еуые, best=иуые, just=огые) или гласная + 'ь' ('m' в EN)
+            "уы", "аы", "оы", "еы", "иы", "яы", "юы", "эы", "ыы",
+            "уь", "аь", "оь", "еь", "иь", "яь", "юь", "эь", "гь",
+            // 'ь' ('m' в EN) перед английскими гласными (ma=ьф, me=ьу, mi=ьш, mo=ьщ, mu=ьг, my=ьн)
+            "ьф", "ьу", "ьш", "ьщ", "ьг", "ьн", "ьи", "ьз", "ьв", "ьп", "ьк", "ьт",
+            // 'щ' ('o' в EN) в английских биграммах (ou=щг, ow=щц, on=щт, or=щк, op=щз, ol=щд, ok=щл, od=щв, og=щп, oc=щс, oa=щф, oi=щш, ov=щм)
+            "щг", "щц", "щт", "щк", "щз", "щд", "щл", "щв", "щп", "щс", "щф", "щш", "щм",
+            // 'ц' ('w' в EN) в английских биграммах (wh=цр, wi=цш, wa=цф, wu=цг, wy=цн, wl=цд, wr=цк, wn=цт)
+            "цр", "цш", "цф", "цг", "цн", "цд", "цк", "цт", "цуд", "цуы", "цуи", "цут",
+            // 'ф' ('a' в EN) в английских биграммах (al=фд, ap=фз, ag=фп, ai=фш, ao=фщ, aw=фц, ax=фч, aq=фй, ay=фн)
+            "фд", "фз", "фп", "фш", "фщ", "фц", "фч", "фй", "фн", "уфк", "уфв", "уфс", "уфз",
+            // Специфические английские кластеры (hello=руддщ, ing=штп, ight=шпре, sh=ыр/шыр/фыр/гыр, ck=фсл/шсл/щсл/гсл, ch=срфе/срус/срш/срщ/срк)
+            "удд", "фдд", "шдд", "гдд", "дщ", "штп", "шпре", "ыр", "шыр", "фыр", "гыр",
+            "фсл", "шсл", "щсл", "гсл", "срфе", "срус", "срш", "срщ", "срк",
+            "ерфе", "ершы", "ерфт", "ершт", "цшер", "рфму", "акщь", "ефгк", "пшер", "агтс", "куегкт",
+            "ыефе", "ыекш", "ыные", "сркщ", "ашду", "дшту", "ешьу", "еуче", "тфьу", "ефид", "мфдг", "екгу", "афды",
+        ];
         for pair in &invalid_pairs {
             if word_lower.contains(pair) {
                 return true;
             }
         }
     }
-    
+
     false
 }
 
@@ -632,27 +1407,39 @@ fn get_active_process_name() -> Option<String> {
         if hwnd.is_null() {
             return None;
         }
+        let hwnd_key = hwnd as isize;
+        if let Ok(cache) = CACHED_FG_PROCESS.lock() {
+            if cache.0 == hwnd_key {
+                return cache.1.clone();
+            }
+        }
+
         let mut process_id = 0;
         GetWindowThreadProcessId(hwnd, &mut process_id);
         if process_id == 0 {
             return None;
         }
-        
+
         let process_handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, process_id);
         if process_handle.is_null() {
             return None;
         }
-        
+
         let mut buffer = [0u16; 260];
         let len = GetModuleBaseNameW(process_handle, std::ptr::null_mut(), buffer.as_mut_ptr(), buffer.len() as u32);
         CloseHandle(process_handle);
-        
-        if len > 0 {
+
+        let result = if len > 0 {
             let name = String::from_utf16_lossy(&buffer[..len as usize]);
             Some(name.to_lowercase())
         } else {
             None
+        };
+
+        if let Ok(mut cache) = CACHED_FG_PROCESS.lock() {
+            *cache = (hwnd_key, result.clone());
         }
+        result
     }
 }
 
@@ -776,57 +1563,78 @@ fn simulate_enter() {
 }
 
 fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
-    let mode = LAYOUT_CONVERTER_ENABLED.load(Ordering::SeqCst);
-    if mode == 0 {
+    let mode = LAYOUT_CONVERTER_ENABLED.load(Ordering::Relaxed);
+    if mode == 0 || !is_key_down {
         return false;
     }
 
-    let ctrl = CTRL_PRESSED.load(Ordering::SeqCst);
-    let alt = ALT_PRESSED.load(Ordering::SeqCst);
-    let shift = SHIFT_PRESSED.load(Ordering::SeqCst);
-    let win = WIN_PRESSED.load(Ordering::SeqCst);
+    let ctrl = CTRL_PRESSED.load(Ordering::Relaxed);
+    let alt = ALT_PRESSED.load(Ordering::Relaxed);
+    let shift = SHIFT_PRESSED.load(Ordering::Relaxed);
+    let win = WIN_PRESSED.load(Ordering::Relaxed);
+    let mods = current_modifier_bits();
+
+    let undo_spec = HOTKEY_LAYOUT_UNDO_SPEC.load(Ordering::Relaxed);
+    let exclude_spec = HOTKEY_LAYOUT_EXCLUDE_SPEC.load(Ordering::Relaxed);
 
     // Сбрасываем возможность отмены автозамены, если нажата любая другая клавиша
     let is_modifier = vk == 0xA0 || vk == 0xA1 || vk == 0xA2 || vk == 0xA3 || vk == 0xA4 || vk == 0xA5 || vk == 0x5B || vk == 0x5C;
-    let is_undo_hotkey = shift && !ctrl && !alt && !win && vk == 0x08;
-    if is_key_down && !is_modifier && !is_undo_hotkey {
+    let is_undo_hotkey = matches_key_hotkey(undo_spec, mods, vk, is_key_down);
+    if !is_modifier && !is_undo_hotkey {
         let mut last_correct = LAST_AUTOCORRECT.lock().unwrap();
         if last_correct.is_some() {
             *last_correct = None;
         }
     }
 
-    // 1. Хоткей занесения в черный список: Ctrl + Alt + Shift + X
-    if ctrl && alt && shift && !win && vk == 0x58 && is_key_down {
+    // 1. Хоткей занесения активного приложения в список исключений (по умолчанию Ctrl + Alt + Shift + X)
+    if matches_key_hotkey(exclude_spec, mods, vk, is_key_down) {
         if let Some(proc_name) = get_active_process_name() {
-            let mut set = EXCLUDED_PROCESSES.lock().unwrap();
-            if set.contains(&proc_name) {
-                set.remove(&proc_name);
-                unsafe {
-                    let _ = winapi::um::utilapiset::Beep(400, 100);
-                    let _ = winapi::um::utilapiset::Beep(350, 100);
+            let updated_list: Vec<String> = {
+                let mut set = EXCLUDED_PROCESSES.lock().unwrap();
+                if set.contains(&proc_name) {
+                    set.remove(&proc_name);
+                    unsafe {
+                        let _ = winapi::um::utilapiset::Beep(400, 100);
+                        let _ = winapi::um::utilapiset::Beep(350, 100);
+                    }
+                    log_to_file(&format!("Layout blacklist: Removed {}", proc_name));
+                } else {
+                    set.insert(proc_name.clone());
+                    unsafe {
+                        let _ = winapi::um::utilapiset::Beep(450, 100);
+                        let _ = winapi::um::utilapiset::Beep(500, 100);
+                    }
+                    log_to_file(&format!("Layout blacklist: Added {}", proc_name));
                 }
-                log_to_file(&format!("Layout blacklist: Removed {}", proc_name));
-            } else {
-                set.insert(proc_name.clone());
-                unsafe {
-                    let _ = winapi::um::utilapiset::Beep(450, 100);
-                    let _ = winapi::um::utilapiset::Beep(500, 100);
-                }
-                log_to_file(&format!("Layout blacklist: Added {}", proc_name));
+                set.iter().cloned().collect()
+            };
+            // Сохраняем обновленный список исключений в config.json и уведомляем UI
+            if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                let app_clone = app.clone();
+                std::thread::spawn(move || {
+                    if let Ok(mut cfg) = load_config_internal(&app_clone) {
+                        cfg.layout_excluded_processes = updated_list.clone();
+                        if let Ok(config_dir) = app_clone.path().app_config_dir() {
+                            let config_path = config_dir.join("config.json");
+                            if let Ok(json_str) = serde_json::to_string_pretty(&cfg) {
+                                let _ = std::fs::write(config_path, json_str);
+                            }
+                        }
+                    }
+                    let _ = app_clone.emit("excluded-processes-updated", updated_list);
+                });
             }
         }
         return true;
     }
 
-    // 2. Отмена автозамены: Shift + Backspace
-    if shift && !ctrl && !alt && !win && vk == 0x08 && is_key_down {
+    // 2. Отмена последней автозамены (по умолчанию Shift + Backspace)
+    if is_undo_hotkey {
         let mut last_correct = LAST_AUTOCORRECT.lock().unwrap();
-        if let Some((original, corrected, to_english, backspace_count)) = last_correct.take() {
-
+        if let Some((original, _corrected, to_english, backspace_count)) = last_correct.take() {
             std::thread::spawn(move || {
                 LAYOUT_PROCESSING.store(true, Ordering::SeqCst);
-                // Микропауза перед стиранием, чтобы ОС успела обработать Shift+Backspace
                 std::thread::sleep(Duration::from_millis(30));
                 simulate_backspaces(backspace_count);
                 std::thread::sleep(Duration::from_millis(50));
@@ -851,130 +1659,126 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
         }
     }
 
-    if is_key_down {
-        // Сбрасываем буфер ввода, если была пауза в печати больше 2 секунд
+    // Сбрасываем буфер ввода, если была пауза в печати больше 2 секунд
+    {
+        let mut last_time = LAST_KEY_TIME.lock().unwrap();
+        if last_time.elapsed() > Duration::from_secs(2) {
+            let mut buf = TYPED_BUFFER.lock().unwrap();
+            buf.clear();
+        }
+        *last_time = Instant::now();
+    }
+
+    if let Some((eng, rus)) = map_vk_to_chars(vk) {
+        if ctrl || alt || win {
+            let mut buf = TYPED_BUFFER.lock().unwrap();
+            buf.clear();
+            return false;
+        }
+
+        // Учитываем регистр на основе CapsLock и Shift
+        let caps_lock = unsafe { winapi::um::winuser::GetKeyState(winapi::um::winuser::VK_CAPITAL) & 1 } != 0;
+        let is_uppercase = shift ^ caps_lock;
+
+        let mut eng_char = eng;
+        let mut rus_char = rus;
+        if is_uppercase {
+            eng_char = eng_char.to_uppercase().to_string().chars().next().unwrap_or(eng_char);
+            rus_char = rus_char.to_uppercase().to_string().chars().next().unwrap_or(rus_char);
+        }
+
+        let is_eng_layout = unsafe {
+            use winapi::um::winuser::{GetForegroundWindow, GetWindowThreadProcessId, GetKeyboardLayout};
+            let hwnd = GetForegroundWindow();
+            let thread_id = GetWindowThreadProcessId(hwnd, std::ptr::null_mut());
+            let hkl = GetKeyboardLayout(thread_id);
+            let lang_id = (hkl as usize) & 0xFFFF;
+            lang_id == 0x0409
+        };
+
+        let mut buf = TYPED_BUFFER.lock().unwrap();
+        buf.push(TypedKey {
+            vk,
+            eng_char,
+            rus_char,
+            is_english_layout: is_eng_layout,
+        });
+        if buf.len() > 30 {
+            buf.remove(0);
+        }
+    } else if vk == 0x08 {
+        let mut buf = TYPED_BUFFER.lock().unwrap();
+        if !buf.is_empty() {
+            buf.pop();
+        }
+    } else if vk == 0x20 || vk == 0x0D {
+        let mut buf_guard = TYPED_BUFFER.lock().unwrap();
+        if buf_guard.is_empty() {
+            return false;
+        }
+
+        let typed_keys = buf_guard.clone();
+        buf_guard.clear();
+        drop(buf_guard);
+
+        let first_layout = typed_keys[0].is_english_layout;
+        let all_same_layout = typed_keys.iter().all(|k| k.is_english_layout == first_layout);
+        if !all_same_layout {
+            return false;
+        }
+
+        let word_current: String = typed_keys.iter().map(|k| if first_layout { k.eng_char } else { k.rus_char }).collect();
+        let word_alternate: String = typed_keys.iter().map(|k| if first_layout { k.rus_char } else { k.eng_char }).collect();
+
+        // Проверяем, не находится ли слово в списке исключений
         {
-            let mut last_time = LAST_KEY_TIME.lock().unwrap();
-            if last_time.elapsed() > Duration::from_secs(2) {
-                let mut buf = TYPED_BUFFER.lock().unwrap();
-                buf.clear();
+            let word_set = EXCLUDED_WORDS.lock().unwrap();
+            let clean_curr = word_current.trim_end_matches(|c| matches!(c, '.' | ',' | ';' | ':' | '/')).to_lowercase();
+            if word_set.contains(&word_current.to_lowercase()) || word_set.contains(&clean_curr) {
+                return false;
             }
-            *last_time = Instant::now();
         }
 
-        if let Some((eng, rus)) = map_vk_to_chars(vk) {
-            if ctrl || alt || win {
-                let mut buf = TYPED_BUFFER.lock().unwrap();
-                buf.clear();
-                return false;
-            }
+        // Игнорируем аббревиатуры (слова целиком в верхнем регистре, например RGB, HTML)
+        let is_all_caps = word_current.chars().all(|c| !c.is_alphabetic() || c.is_uppercase());
+        if is_all_caps {
+            return false;
+        }
 
-            // Учитываем регистр на основе CapsLock и Shift
-            let caps_lock = unsafe { winapi::um::winuser::GetKeyState(winapi::um::winuser::VK_CAPITAL) & 1 } != 0;
-            let is_uppercase = shift ^ caps_lock;
+        if word_current.chars().count() < 3 {
+            return false;
+        }
 
-            let mut eng_char = eng;
-            let mut rus_char = rus;
-            if is_uppercase {
-                eng_char = eng_char.to_uppercase().to_string().chars().next().unwrap_or(eng_char);
-                rus_char = rus_char.to_uppercase().to_string().chars().next().unwrap_or(rus_char);
-            }
-
-            let is_eng_layout = unsafe {
-                use winapi::um::winuser::{GetForegroundWindow, GetWindowThreadProcessId, GetKeyboardLayout};
-                let hwnd = GetForegroundWindow();
-                let thread_id = GetWindowThreadProcessId(hwnd, std::ptr::null_mut());
-                let hkl = GetKeyboardLayout(thread_id);
-                let lang_id = (hkl as usize) & 0xFFFF;
-                lang_id == 0x0409
-            };
-
-            let mut buf = TYPED_BUFFER.lock().unwrap();
-            buf.push(TypedKey {
-                vk,
-                eng_char: eng_char,
-                rus_char: rus_char,
-                is_english_layout: is_eng_layout,
-            });
-            if buf.len() > 30 {
-                buf.remove(0);
-            }
-        } else if vk == 0x08 {
-            let mut buf = TYPED_BUFFER.lock().unwrap();
-            if !buf.is_empty() {
-                buf.pop();
-            }
-        } else if vk == 0x20 || vk == 0x0D {
-            let mut buf_guard = TYPED_BUFFER.lock().unwrap();
-            if buf_guard.is_empty() {
-                return false;
-            }
-
-            let typed_keys = buf_guard.clone();
-            buf_guard.clear();
-            drop(buf_guard);
-
-            let first_layout = typed_keys[0].is_english_layout;
-            let all_same_layout = typed_keys.iter().all(|k| k.is_english_layout == first_layout);
-            if !all_same_layout {
-                return false;
-            }
-
-            let word_current: String = typed_keys.iter().map(|k| if first_layout { k.eng_char } else { k.rus_char }).collect();
-            let word_alternate: String = typed_keys.iter().map(|k| if first_layout { k.rus_char } else { k.eng_char }).collect();
-
-            // Проверяем, не находится ли слово в списке исключений
-            {
-                let word_set = EXCLUDED_WORDS.lock().unwrap();
-                if word_set.contains(&word_current.to_lowercase()) {
-                    return false;
+        if is_invalid_layout_word(&word_current, first_layout) && !is_invalid_layout_word(&word_alternate, !first_layout) {
+            let word_len = word_current.chars().count();
+            std::thread::spawn(move || {
+                LAYOUT_PROCESSING.store(true, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(30));
+                simulate_backspaces(word_len);
+                std::thread::sleep(Duration::from_millis(50));
+                simulate_unicode_input(&word_alternate);
+                switch_active_window_layout(!first_layout);
+                
+                if vk == 0x20 {
+                    simulate_unicode_input(" ");
+                } else {
+                    simulate_enter();
                 }
-            }
-
-            // Игнорируем аббревиатуры (слова целиком в верхнем регистре, например RGB, HTML)
-            let is_all_caps = word_current.chars().all(|c| !c.is_alphabetic() || c.is_uppercase());
-            if is_all_caps {
-                return false;
-            }
-
-            if word_current.chars().count() < 3 {
-                return false;
-            }
-
-            if is_invalid_layout_word(&word_current, first_layout) && !is_invalid_layout_word(&word_alternate, !first_layout) {
-                let word_len = word_current.chars().count();
-                std::thread::spawn(move || {
-                    LAYOUT_PROCESSING.store(true, Ordering::SeqCst);
-                    // Микропауза перед стиранием, чтобы ОС успела завершить печать последней буквы
-                    std::thread::sleep(Duration::from_millis(30));
-                    simulate_backspaces(word_len);
-                    std::thread::sleep(Duration::from_millis(50));
-                    simulate_unicode_input(&word_alternate);
-                    switch_active_window_layout(!first_layout);
-                    
-                    if vk == 0x20 {
-                        simulate_unicode_input(" ");
-                    } else {
-                        simulate_enter();
-                    }
-                    
-                    let mut last_correct = LAST_AUTOCORRECT.lock().unwrap();
-                    let total_backspaces = word_len + 1; // исправленное слово + пробел/Enter
-                    *last_correct = Some((word_current.clone(), word_alternate.clone(), !first_layout, total_backspaces));
-                    
-                    unsafe { let _ = winapi::um::utilapiset::Beep(400, 40); }
-                    log_to_file(&format!("Autocorrected: '{}' -> '{}'", word_current, word_alternate));
-                    
-                    LAYOUT_PROCESSING.store(false, Ordering::SeqCst);
-                });
-                return true;
-            }
-        } else {
-            if vk != 0xA0 && vk != 0xA1 && vk != 0xA2 && vk != 0xA3 && vk != 0xA4 && vk != 0xA5 {
-                let mut buf = TYPED_BUFFER.lock().unwrap();
-                buf.clear();
-            }
+                
+                let mut last_correct = LAST_AUTOCORRECT.lock().unwrap();
+                let total_backspaces = word_len + 1;
+                *last_correct = Some((word_current.clone(), word_alternate.clone(), !first_layout, total_backspaces));
+                
+                unsafe { let _ = winapi::um::utilapiset::Beep(400, 40); }
+                log_to_file(&format!("Autocorrected: '{}' -> '{}'", word_current, word_alternate));
+                
+                LAYOUT_PROCESSING.store(false, Ordering::SeqCst);
+            });
+            return true;
         }
+    } else if !is_modifier {
+        let mut buf = TYPED_BUFFER.lock().unwrap();
+        buf.clear();
     }
 
     false
@@ -986,8 +1790,6 @@ fn switch_active_window_layout(to_english: bool) {
     unsafe {
         let hwnd = GetForegroundWindow();
         if !hwnd.is_null() {
-            // 0x04090409 - Английский (США)
-            // 0x04190419 - Русский
             let layout_id = if to_english {
                 0x04090409 as LPARAM
             } else {
@@ -1037,7 +1839,6 @@ fn convert_selected_text_layout() {
         };
 
         if !selected.is_empty() {
-            // Считаем русские и английские буквы для определения направления переключения раскладки
             let mut rus_count = 0;
             let mut eng_count = 0;
             for c in selected.chars() {
@@ -1060,7 +1861,6 @@ fn convert_selected_text_layout() {
             simulate_ctrl_v();
             std::thread::sleep(std::time::Duration::from_millis(150));
 
-            // Переключаем системную раскладку ввода в активном окне в Windows
             switch_active_window_layout(to_english);
         } else {
             log_to_file("convert_selected_text_layout: Selected text is empty");
@@ -1084,12 +1884,12 @@ unsafe extern "system" fn low_level_keyboard_proc(
     if code >= 0 {
         let info = *(l_param as *const KBDLLHOOKSTRUCT);
         
-        // Ignore simulated events generated by our own simulate_ctrl_c
+        // Ignore simulated events generated by our own simulate_ctrl_c / simulate_unicode_input
         if info.dwExtraInfo == 0x12345678 {
             return CallNextHookEx(0, code, w_param, l_param);
         }
 
-        if LAYOUT_PROCESSING.load(Ordering::SeqCst) {
+        if LAYOUT_PROCESSING.load(Ordering::Relaxed) {
             return CallNextHookEx(0, code, w_param, l_param);
         }
 
@@ -1112,6 +1912,16 @@ unsafe extern "system" fn low_level_keyboard_proc(
             let prev = ALT_PRESSED.swap(is_key_down, Ordering::SeqCst);
             if prev != is_key_down {
                 state_changed = true;
+                // Отправляем событие нажатия/отпускания Alt ТОЛЬКО когда оверлей OCR реально открыт на экране
+                if OCR_WINDOW_VISIBLE.load(Ordering::Relaxed) {
+                    if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                        if is_key_down {
+                            let _ = app.emit("alt-pressed", ());
+                        } else {
+                            let _ = app.emit("alt-released", ());
+                        }
+                    }
+                }
             }
         } else if vk == VK_LSHIFT || vk == VK_RSHIFT {
             let prev = SHIFT_PRESSED.swap(is_key_down, Ordering::SeqCst);
@@ -1120,155 +1930,121 @@ unsafe extern "system" fn low_level_keyboard_proc(
             }
         }
 
-        // Вызываем автоанализатор и обработку ввода (автозамену)
+        let mods = current_modifier_bits();
+
+        // Вызываем автоанализатор и обработку ввода (автозамену, Shift+Backspace, Ctrl+Alt+Shift+X)
         if process_keyboard_input(vk, is_key_down) {
             return 1;
         }
 
-        // Обработка Alt+Q для OCR (Переводчик) через низкоуровневый хук
-        if vk == 0x51 { // 0x51 это клавиша Q
-            let ctrl = CTRL_PRESSED.load(Ordering::SeqCst);
-            let win = WIN_PRESSED.load(Ordering::SeqCst);
-            let alt = ALT_PRESSED.load(Ordering::SeqCst);
-            let shift = SHIFT_PRESSED.load(Ordering::SeqCst);
-            
-            if alt && !ctrl && !win && !shift {
-                if is_key_down {
-                    if OCR_ENABLED.load(Ordering::SeqCst) > 0 {
-                        if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
-                            println!("SINC PRO HOTKEY: Alt+Q (OCR) pressed via low-level hook");
-                            let app_clone = app.clone();
-                            tauri::async_runtime::spawn(async move {
-                                let visible = OCR_WINDOW_VISIBLE.load(std::sync::atomic::Ordering::SeqCst);
-                                if visible {
-                                    if let Err(e) = hide_ocr_window(app_clone).await {
-                                        println!("SINC PRO OCR: Global Shortcut hide_ocr_window failed: {}", e);
-                                    }
-                                } else {
-                                    if let Err(e) = show_ocr_window(app_clone).await {
-                                        println!("SINC PRO OCR: Global Shortcut show_ocr_window failed: {}", e);
-                                    }
-                                }
-                            });
-                        }
+        // 1. Обработка хоткея OCR (по умолчанию Alt+Q) — блокируем клавишу ТОЛЬКО если модуль OCR включен
+        let ocr_spec = HOTKEY_OCR_SPEC.load(Ordering::Relaxed);
+        if OCR_ENABLED.load(Ordering::Relaxed) > 0 && matches_any_hotkey(ocr_spec, mods, vk, is_key_down, state_changed) {
+            if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                let app_clone = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let visible = OCR_WINDOW_VISIBLE.load(std::sync::atomic::Ordering::SeqCst);
+                    if visible {
+                        let _ = hide_ocr_window(app_clone).await;
+                    } else {
+                        let _ = show_ocr_window(app_clone).await;
                     }
-                }
-                return 1; // блокируем прохождение Alt+Q дальше
+                });
+            }
+            if (ocr_spec & 0xFFFF) != 0 {
+                return 1;
             }
         }
 
-        if vk == VK_TAB {
-            let ctrl = CTRL_PRESSED.load(Ordering::SeqCst);
-            let win = WIN_PRESSED.load(Ordering::SeqCst);
-            let alt = ALT_PRESSED.load(Ordering::SeqCst);
-            let shift = SHIFT_PRESSED.load(Ordering::SeqCst);
-            
-            if ctrl && !win && !alt && !shift {
-                if is_key_down {
-                    if WIDGET_ENABLED.load(Ordering::SeqCst) > 0 {
-                        if !SHORTCUT_ACTIVE.swap(true, Ordering::SeqCst) {
-                            if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
-                                println!("SINC PRO HOTKEY: Emitting tts-action-append (Ctrl+Tab)");
-                                let _ = app.emit("tts-action-append", ());
-                            }
-                            SHORTCUT_ACTIVE.store(false, Ordering::SeqCst);
-                        }
-                    }
+        // 2. Обработка хоткея добавления текста в очередь TTS (по умолчанию Ctrl+Tab)
+        let tts_append_spec = HOTKEY_TTS_APPEND_SPEC.load(Ordering::Relaxed);
+        if WIDGET_ENABLED.load(Ordering::Relaxed) > 0 && matches_any_hotkey(tts_append_spec, mods, vk, is_key_down, state_changed) {
+            if !SHORTCUT_ACTIVE.swap(true, Ordering::SeqCst) {
+                if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                    let _ = app.emit("tts-action-append", ());
                 }
-                return 1; // блокируем прохождение Ctrl+Tab в активное окно
+                SHORTCUT_ACTIVE.store(false, Ordering::SeqCst);
+            }
+            // Если это не стандартный Ctrl+Tab или если зажат именно пользовательский хоткей, не ломаем переключение вкладок в браузерах
+            if tts_append_spec != (MOD_BIT_CTRL | 0x09) && (tts_append_spec & 0xFFFF) != 0 {
+                return 1;
             }
         }
 
+        // 3. Обработка Escape во время записи/паузы капсулы
         if vk == VK_ESCAPE && is_key_down {
-            if CAPSULE_ENABLED.load(Ordering::SeqCst) > 0 && RECORDING_OR_PAUSED.load(Ordering::SeqCst) {
+            if CAPSULE_ENABLED.load(Ordering::Relaxed) > 0 && RECORDING_OR_PAUSED.load(Ordering::Relaxed) {
                 if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
                     let _ = app.emit("global-escape", ());
                 }
             }
-        } else {
-            let target_key = LAYOUT_HOTKEY_KEY.load(Ordering::SeqCst);
-            let mod_type = LAYOUT_HOTKEY_MODIFIER.load(Ordering::SeqCst);
-            
-            // Специфика Windows: Ctrl + Pause транслируется в VK_CANCEL (0x03)
-            let is_target_pressed = if target_key == 0x13 && mod_type == 1 {
-                vk == 0x13 || vk == 0x03
-            } else {
-                vk == target_key
-            };
+        }
 
-            if is_target_pressed && is_key_down {
-                let modifier_pressed = match mod_type {
-                    1 => CTRL_PRESSED.load(Ordering::SeqCst),
-                    2 => ALT_PRESSED.load(Ordering::SeqCst),
-                    3 => SHIFT_PRESSED.load(Ordering::SeqCst),
-                    4 => WIN_PRESSED.load(Ordering::SeqCst),
-                    _ => false,
-                };
-                if modifier_pressed && LAYOUT_CONVERTER_ENABLED.load(Ordering::SeqCst) > 0 {
-                    convert_selected_text_layout();
+        // 4. Обработка хоткея конвертации выделенного текста (по умолчанию Ctrl+Pause)
+        let layout_convert_spec = HOTKEY_LAYOUT_CONVERT_SPEC.load(Ordering::Relaxed);
+        if LAYOUT_CONVERTER_ENABLED.load(Ordering::Relaxed) > 0 && matches_any_hotkey(layout_convert_spec, mods, vk, is_key_down, state_changed) {
+            convert_selected_text_layout();
+            if (layout_convert_spec & 0xFFFF) != 0 {
+                return 1;
+            }
+        }
+
+        // 5. Обработка хоткеев Озвучки (Чтение: Ctrl+Shift, Перевод: Ctrl+Alt)
+        if WIDGET_ENABLED.load(Ordering::Relaxed) > 0 {
+            let tts_read_spec = HOTKEY_TTS_READ_SPEC.load(Ordering::Relaxed);
+            let tts_translate_spec = HOTKEY_TTS_TRANSLATE_SPEC.load(Ordering::Relaxed);
+
+            if matches_any_hotkey(tts_read_spec, mods, vk, is_key_down, state_changed) {
+                if !SHORTCUT_ACTIVE.swap(true, Ordering::SeqCst) {
+                    if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                        let _ = app.emit("tts-action-read", ());
+                    }
+                    SHORTCUT_ACTIVE.store(false, Ordering::SeqCst);
+                }
+            } else if matches_any_hotkey(tts_translate_spec, mods, vk, is_key_down, state_changed) {
+                if !SHORTCUT_ACTIVE.swap(true, Ordering::SeqCst) {
+                    if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                        let _ = app.emit("tts-action-translate", ());
+                    }
+                    SHORTCUT_ACTIVE.store(false, Ordering::SeqCst);
                 }
             }
         }
 
-        if state_changed {
-            let ctrl = CTRL_PRESSED.load(Ordering::SeqCst);
-            let win = WIN_PRESSED.load(Ordering::SeqCst);
-            let alt = ALT_PRESSED.load(Ordering::SeqCst);
-            let shift = SHIFT_PRESSED.load(Ordering::SeqCst);
+        // 6. Обработка хоткеев Капсулы (Запись: Ctrl+Win, Принудительная отправка: Win+Alt)
+        if CAPSULE_ENABLED.load(Ordering::Relaxed) > 0 {
+            let record_spec = HOTKEY_RECORD_SPEC.load(Ordering::Relaxed);
+            let force_send_spec = HOTKEY_FORCE_SEND_SPEC.load(Ordering::Relaxed);
 
-            if ctrl && shift && !alt && !win {
-                if WIDGET_ENABLED.load(Ordering::SeqCst) > 0 {
-                    let was_active = SHORTCUT_ACTIVE.swap(true, Ordering::SeqCst);
-                    println!("SINC PRO HOTKEY: Ctrl+Shift detected, was_active={}", was_active);
-                    if !was_active {
-                        if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
-                            println!("SINC PRO HOTKEY: Emitting tts-action-read");
-                            let _ = app.emit("tts-action-read", ());
-                        }
-                        // TTS-чтение — одноразовое действие, сбрасываем флаг сразу,
-                        // чтобы следующее нажатие Ctrl+Shift снова сработало
-                        SHORTCUT_ACTIVE.store(false, Ordering::SeqCst);
+            if matches_any_hotkey(force_send_spec, mods, vk, is_key_down, state_changed) {
+                if !FORCE_SEND_ACTIVE.swap(true, Ordering::SeqCst) {
+                    if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                        let _ = app.emit("global-force-send", ());
                     }
                 }
-            } else if ctrl && alt && !shift && !win {
-                if WIDGET_ENABLED.load(Ordering::SeqCst) > 0 {
-                    if !SHORTCUT_ACTIVE.swap(true, Ordering::SeqCst) {
-                        if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
-                            let _ = app.emit("tts-action-translate", ());
-                        }
-                        // TTS-перевод — одноразовое действие, аналогично
-                        SHORTCUT_ACTIVE.store(false, Ordering::SeqCst);
+            } else if FORCE_SEND_ACTIVE.load(Ordering::Relaxed) {
+                let req_mods = force_send_spec & MOD_MASK;
+                let req_vk = force_send_spec & 0xFFFF;
+                if (mods & req_mods) != req_mods || (!is_key_down && req_vk != 0 && vk == req_vk) {
+                    FORCE_SEND_ACTIVE.store(false, Ordering::SeqCst);
+                }
+            }
+
+            if matches_any_hotkey(record_spec, mods, vk, is_key_down, state_changed) {
+                if !RECORD_HOTKEY_ACTIVE.swap(true, Ordering::SeqCst) {
+                    if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                        let _ = app.emit("global-shortcut-pressed", ());
                     }
                 }
-            } else if win && alt && !ctrl && !shift {
-                if CAPSULE_ENABLED.load(Ordering::SeqCst) > 0 {
-                    if !FORCE_SEND_ACTIVE.swap(true, Ordering::SeqCst) {
+            } else if RECORD_HOTKEY_ACTIVE.load(Ordering::Relaxed) {
+                let req_mods = record_spec & MOD_MASK;
+                let req_vk = record_spec & 0xFFFF;
+                if (mods & req_mods) != req_mods || (!is_key_down && req_vk != 0 && vk == req_vk) {
+                    if RECORD_HOTKEY_ACTIVE.swap(false, Ordering::SeqCst) {
                         if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
-                            println!("SINC PRO HOTKEY: Win+Alt (Send) detected");
-                            let _ = app.emit("global-force-send", ());
-                        }
-                    }
-                }
-            } else if ctrl && win && !alt && !shift {
-                if CAPSULE_ENABLED.load(Ordering::SeqCst) > 0 {
-                    if !SHORTCUT_ACTIVE.swap(true, Ordering::SeqCst) {
-                        if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
-                            println!("SINC PRO HOTKEY: Ctrl+Win (Record) pressed");
-                            let _ = app.emit("global-shortcut-pressed", ());
-                        }
-                    }
-                }
-            } else {
-                if SHORTCUT_ACTIVE.swap(false, Ordering::SeqCst) {
-                    if CAPSULE_ENABLED.load(Ordering::SeqCst) > 0 {
-                        if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
-                            println!("SINC PRO HOTKEY: Ctrl+Win released");
                             let _ = app.emit("global-shortcut-released", ());
                         }
                     }
-                }
-                if FORCE_SEND_ACTIVE.swap(false, Ordering::SeqCst) {
-                    println!("SINC PRO HOTKEY: Win+Alt released");
                 }
             }
         }
@@ -1506,6 +2282,8 @@ pub struct AppConfig {
     #[serde(default = "default_dictation_lang")]
     pub dictation_lang: String,
     #[serde(default)]
+    pub user_name: String,
+    #[serde(default)]
     pub api_key: String,
     #[serde(default)]
     pub yandex_api_key: String,
@@ -1546,11 +2324,31 @@ pub struct AppConfig {
     #[serde(default = "default_tts_local_voice")]
     pub tts_local_voice: String,
 
-    // Горячие клавиши смены раскладки
+    // Горячие клавиши смены раскладки (обратная совместимость)
     #[serde(default = "default_layout_hotkey_modifier")]
     pub layout_hotkey_modifier: String,
     #[serde(default = "default_layout_hotkey_key")]
     pub layout_hotkey_key: String,
+
+    // Все 9 настраиваемых глобальных комбинаций клавиш
+    #[serde(default = "default_hotkey_record")]
+    pub hotkey_record: String,
+    #[serde(default = "default_hotkey_force_send")]
+    pub hotkey_force_send: String,
+    #[serde(default = "default_hotkey_tts_read")]
+    pub hotkey_tts_read: String,
+    #[serde(default = "default_hotkey_tts_translate")]
+    pub hotkey_tts_translate: String,
+    #[serde(default = "default_hotkey_tts_append")]
+    pub hotkey_tts_append: String,
+    #[serde(default = "default_hotkey_ocr")]
+    pub hotkey_ocr: String,
+    #[serde(default = "default_hotkey_layout_convert")]
+    pub hotkey_layout_convert: String,
+    #[serde(default = "default_hotkey_layout_undo")]
+    pub hotkey_layout_undo: String,
+    #[serde(default = "default_hotkey_layout_exclude")]
+    pub hotkey_layout_exclude: String,
     
     #[serde(default = "default_layout_excluded_words")]
     pub layout_excluded_words: Vec<String>,
@@ -1567,6 +2365,7 @@ impl Default for AppConfig {
         AppConfig {
             ui_lang: "ru".to_string(),
             dictation_lang: "auto".to_string(),
+            user_name: "".to_string(),
             api_key: "".to_string(),
             yandex_api_key: "".to_string(),
             ai_model: "gemini-2.0-flash".to_string(),
@@ -1585,6 +2384,15 @@ impl Default for AppConfig {
             tts_local_voice: "ru_RU-dmitri-medium.onnx".to_string(),
             layout_hotkey_modifier: "Ctrl".to_string(),
             layout_hotkey_key: "Pause".to_string(),
+            hotkey_record: default_hotkey_record(),
+            hotkey_force_send: default_hotkey_force_send(),
+            hotkey_tts_read: default_hotkey_tts_read(),
+            hotkey_tts_translate: default_hotkey_tts_translate(),
+            hotkey_tts_append: default_hotkey_tts_append(),
+            hotkey_ocr: default_hotkey_ocr(),
+            hotkey_layout_convert: default_hotkey_layout_convert(),
+            hotkey_layout_undo: default_hotkey_layout_undo(),
+            hotkey_layout_exclude: default_hotkey_layout_exclude(),
             layout_excluded_words: vec![],
             layout_excluded_processes: default_layout_excluded_processes(),
             ai_servers: vec![],
@@ -1650,6 +2458,33 @@ fn default_layout_hotkey_modifier() -> String {
 }
 fn default_layout_hotkey_key() -> String {
     "Pause".to_string()
+}
+fn default_hotkey_record() -> String {
+    "Ctrl+Win".to_string()
+}
+fn default_hotkey_force_send() -> String {
+    "Win+Alt".to_string()
+}
+fn default_hotkey_tts_read() -> String {
+    "Ctrl+Shift".to_string()
+}
+fn default_hotkey_tts_translate() -> String {
+    "Ctrl+Alt".to_string()
+}
+fn default_hotkey_tts_append() -> String {
+    "Ctrl+Tab".to_string()
+}
+fn default_hotkey_ocr() -> String {
+    "Alt+Q".to_string()
+}
+fn default_hotkey_layout_convert() -> String {
+    "Ctrl+Pause".to_string()
+}
+fn default_hotkey_layout_undo() -> String {
+    "Shift+Backspace".to_string()
+}
+fn default_hotkey_layout_exclude() -> String {
+    "Ctrl+Alt+Shift+X".to_string()
 }
 fn default_stt_engine() -> String {
     "gemini".to_string()
@@ -1746,6 +2581,41 @@ fn sync_layout_config(config: &AppConfig) {
     LAYOUT_HOTKEY_MODIFIER.store(parse_hotkey_modifier(&config.layout_hotkey_modifier), Ordering::SeqCst);
     LAYOUT_HOTKEY_KEY.store(parse_hotkey_key(&config.layout_hotkey_key), Ordering::SeqCst);
 
+    // Синхронизируем все 9 глобальных комбинаций клавиш
+    let rec_spec = parse_hotkey_spec(&config.hotkey_record);
+    if rec_spec != 0 { HOTKEY_RECORD_SPEC.store(rec_spec, Ordering::SeqCst); }
+
+    let send_spec = parse_hotkey_spec(&config.hotkey_force_send);
+    if send_spec != 0 { HOTKEY_FORCE_SEND_SPEC.store(send_spec, Ordering::SeqCst); }
+
+    let read_spec = parse_hotkey_spec(&config.hotkey_tts_read);
+    if read_spec != 0 { HOTKEY_TTS_READ_SPEC.store(read_spec, Ordering::SeqCst); }
+
+    let tr_spec = parse_hotkey_spec(&config.hotkey_tts_translate);
+    if tr_spec != 0 { HOTKEY_TTS_TRANSLATE_SPEC.store(tr_spec, Ordering::SeqCst); }
+
+    let app_spec = parse_hotkey_spec(&config.hotkey_tts_append);
+    if app_spec != 0 { HOTKEY_TTS_APPEND_SPEC.store(app_spec, Ordering::SeqCst); }
+
+    let ocr_spec = parse_hotkey_spec(&config.hotkey_ocr);
+    if ocr_spec != 0 { HOTKEY_OCR_SPEC.store(ocr_spec, Ordering::SeqCst); }
+
+    let layout_combo = if config.hotkey_layout_convert == "Ctrl+Pause"
+        && (config.layout_hotkey_modifier != "Ctrl" || config.layout_hotkey_key != "Pause")
+    {
+        format!("{}+{}", config.layout_hotkey_modifier, config.layout_hotkey_key)
+    } else {
+        config.hotkey_layout_convert.clone()
+    };
+    let conv_spec = parse_hotkey_spec(&layout_combo);
+    if conv_spec != 0 { HOTKEY_LAYOUT_CONVERT_SPEC.store(conv_spec, Ordering::SeqCst); }
+
+    let undo_spec = parse_hotkey_spec(&config.hotkey_layout_undo);
+    if undo_spec != 0 { HOTKEY_LAYOUT_UNDO_SPEC.store(undo_spec, Ordering::SeqCst); }
+
+    let excl_spec = parse_hotkey_spec(&config.hotkey_layout_exclude);
+    if excl_spec != 0 { HOTKEY_LAYOUT_EXCLUDE_SPEC.store(excl_spec, Ordering::SeqCst); }
+
     let mut word_set = EXCLUDED_WORDS.lock().unwrap();
     word_set.clear();
     for word in &config.layout_excluded_words {
@@ -1813,6 +2683,7 @@ async fn save_config(app_handle: tauri::AppHandle, config: AppConfig) -> Result<
     WIDGET_ENABLED.store(config.widget_mode, Ordering::SeqCst);
     OCR_ENABLED.store(config.ocr_mode_switch, Ordering::SeqCst);
     sync_layout_config(&config);
+    let _ = app_handle.emit("config-updated", &config);
 
     Ok(())
 }
@@ -1827,6 +2698,9 @@ async fn update_config_fields(app_handle: tauri::AppHandle, fields: serde_json::
         }
         if let Some(val) = obj.get("dictation_lang") {
             if let Some(s) = val.as_str() { config.dictation_lang = s.to_string(); }
+        }
+        if let Some(val) = obj.get("user_name") {
+            if let Some(s) = val.as_str() { config.user_name = s.to_string(); }
         }
         if let Some(val) = obj.get("api_key") {
             if let Some(s) = val.as_str() { config.api_key = s.to_string(); }
@@ -1878,10 +2752,43 @@ async fn update_config_fields(app_handle: tauri::AppHandle, fields: serde_json::
             if let Some(n) = val.as_u64() { config.layout_converter_mode = n as u8; }
         }
         if let Some(val) = obj.get("layout_hotkey_modifier") {
-            if let Some(s) = val.as_str() { config.layout_hotkey_modifier = s.to_string(); }
+            if let Some(s) = val.as_str() {
+                config.layout_hotkey_modifier = s.to_string();
+                config.hotkey_layout_convert = format!("{}+{}", config.layout_hotkey_modifier, config.layout_hotkey_key);
+            }
         }
         if let Some(val) = obj.get("layout_hotkey_key") {
-            if let Some(s) = val.as_str() { config.layout_hotkey_key = s.to_string(); }
+            if let Some(s) = val.as_str() {
+                config.layout_hotkey_key = s.to_string();
+                config.hotkey_layout_convert = format!("{}+{}", config.layout_hotkey_modifier, config.layout_hotkey_key);
+            }
+        }
+        if let Some(val) = obj.get("hotkey_record") {
+            if let Some(s) = val.as_str() { config.hotkey_record = s.to_string(); }
+        }
+        if let Some(val) = obj.get("hotkey_force_send") {
+            if let Some(s) = val.as_str() { config.hotkey_force_send = s.to_string(); }
+        }
+        if let Some(val) = obj.get("hotkey_tts_read") {
+            if let Some(s) = val.as_str() { config.hotkey_tts_read = s.to_string(); }
+        }
+        if let Some(val) = obj.get("hotkey_tts_translate") {
+            if let Some(s) = val.as_str() { config.hotkey_tts_translate = s.to_string(); }
+        }
+        if let Some(val) = obj.get("hotkey_tts_append") {
+            if let Some(s) = val.as_str() { config.hotkey_tts_append = s.to_string(); }
+        }
+        if let Some(val) = obj.get("hotkey_ocr") {
+            if let Some(s) = val.as_str() { config.hotkey_ocr = s.to_string(); }
+        }
+        if let Some(val) = obj.get("hotkey_layout_convert") {
+            if let Some(s) = val.as_str() { config.hotkey_layout_convert = s.to_string(); }
+        }
+        if let Some(val) = obj.get("hotkey_layout_undo") {
+            if let Some(s) = val.as_str() { config.hotkey_layout_undo = s.to_string(); }
+        }
+        if let Some(val) = obj.get("hotkey_layout_exclude") {
+            if let Some(s) = val.as_str() { config.hotkey_layout_exclude = s.to_string(); }
         }
         if let Some(val) = obj.get("layout_excluded_words") {
             if let Ok(words) = serde_json::from_value::<Vec<String>>(val.clone()) {
@@ -1914,6 +2821,7 @@ async fn update_config_fields(app_handle: tauri::AppHandle, fields: serde_json::
     WIDGET_ENABLED.store(config.widget_mode, Ordering::SeqCst);
     OCR_ENABLED.store(config.ocr_mode_switch, Ordering::SeqCst);
     sync_layout_config(&config);
+    let _ = app_handle.emit("config-updated", &config);
 
     Ok(())
 }
@@ -7101,6 +8009,21 @@ fn resize_window(window: tauri::Window, width: i32, height: i32) -> Result<(), S
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+fn strip_window_frame(hwnd: isize) {
+    use winapi::um::winuser::{
+        GetWindowLongW, SetWindowLongW, GWL_STYLE, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
+        WS_SYSMENU, WS_THICKFRAME,
+    };
+    unsafe {
+        let style = GetWindowLongW(hwnd as _, GWL_STYLE) as u32;
+        let new_style = style & !(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
+        if new_style != style {
+            SetWindowLongW(hwnd as _, GWL_STYLE, new_style as i32);
+        }
+    }
+}
+
 #[tauri::command]
 #[cfg(target_os = "windows")]
 fn resize_bottom_up_phys(
@@ -7120,7 +8043,10 @@ fn resize_bottom_up_phys(
         _ => return Err("Текущее окно не является Win32 HWND".into()),
     };
 
-    println!("SINC PRO OCR: resize_bottom_up_phys -> hwnd=0x{:X}, x={}, y={}, width={}, height={}", hwnd, x, y, width, height);
+    let label = window.label();
+    if label == "widget" || label == "capsule" {
+        strip_window_frame(hwnd);
+    }
 
     #[link(name = "user32")]
     extern "system" {
@@ -7142,6 +8068,7 @@ fn resize_bottom_up_phys(
     const SWP_NOCOPYBITS: u32 = 0x0100;
     const SWP_NOOWNERZORDER: u32 = 0x0200;
     const SWP_SHOWWINDOW: u32 = 0x0040;
+    const SWP_FRAMECHANGED: u32 = 0x0020;
 
     unsafe {
         let res = SetWindowPos(
@@ -7151,14 +8078,13 @@ fn resize_bottom_up_phys(
             y,
             width,
             height,
-            SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOCOPYBITS | SWP_SHOWWINDOW,
+            SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOCOPYBITS | SWP_SHOWWINDOW | SWP_FRAMECHANGED,
         );
         if res == 0 {
             println!("SINC PRO OCR: SetWindowPos FAILED!");
             return Err("Ошибка при вызове SetWindowPos".into());
         }
         
-        let label = window.label();
         if label == "ocr" {
             ShowWindow(hwnd, 5); // SW_SHOW
             SetForegroundWindow(hwnd);
@@ -7337,6 +8263,22 @@ pub fn run() {
                 let _ = set_autostart_enabled(true);
             }
 
+            // Убираем системные стили рамок (WS_CAPTION / WS_THICKFRAME) у прозрачных плавающих окон,
+            // чтобы при подъеме к самой верхней границе экрана (y = 0) DWM не рисовал белую полосу и не срабатывал Aero Snap
+            #[cfg(target_os = "windows")]
+            {
+                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                for label in &["widget", "capsule"] {
+                    if let Some(w) = app.get_webview_window(label) {
+                        if let Ok(handle) = w.window_handle() {
+                            if let RawWindowHandle::Win32(win_handle) = handle.as_raw() {
+                                strip_window_frame(win_handle.hwnd.get() as isize);
+                            }
+                        }
+                    }
+                }
+            }
+
             let minimize = MINIMIZED_STARTUP.load(std::sync::atomic::Ordering::SeqCst);
             if !minimize {
                 if let Some(w) = app.get_webview_window("main") {
@@ -7426,6 +8368,8 @@ pub fn run() {
             let _tray = tray_builder.build(app)?;
 
             // Запускаем глобальный низкоуровневый хук клавиатуры на Windows
+            // (Поток опроса VK_MENU каждые 50мс удален — события alt-pressed/alt-released
+            // отправляются напрямую из low_level_keyboard_proc только при открытом окне OCR)
             #[cfg(target_os = "windows")]
             {
                 std::thread::spawn(|| {
@@ -7436,7 +8380,7 @@ pub fn run() {
                             println!("SINC PRO: Ошибка установки глобального хука клавиатуры");
                             return;
                         }
-                        println!("SINC PRO: Глобальный низкоуровневый хук клавиатуры (Ctrl+Win, Ctrl+Win+Alt, Escape) успешно зарегистрирован");
+                        println!("SINC PRO: Глобальный низкоуровневый хук клавиатуры успешно зарегистрирован");
                         
                         let mut msg = std::mem::zeroed();
                         while GetMessageW(&mut msg, 0, 0, 0) > 0 {
@@ -7444,27 +8388,6 @@ pub fn run() {
                         }
                         
                         UnhookWindowsHookEx(hook);
-                    }
-                });
-
-                std::thread::spawn(|| {
-                    use winapi::um::winuser::{GetAsyncKeyState, VK_MENU};
-                    let mut alt_pressed = false;
-                    loop {
-                        std::thread::sleep(std::time::Duration::from_millis(50));
-                        let state = unsafe { GetAsyncKeyState(VK_MENU) };
-                        let is_down = (state as u16 & 0x8000) != 0;
-                        if is_down != alt_pressed {
-                            alt_pressed = is_down;
-                            if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
-                                use tauri::Emitter;
-                                if is_down {
-                                    let _ = app.emit("alt-pressed", ());
-                                } else {
-                                    let _ = app.emit("alt-released", ());
-                                }
-                            }
-                        }
                     }
                 });
             }

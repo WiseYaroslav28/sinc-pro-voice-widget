@@ -7,7 +7,9 @@ const appWindow = getCurrentWebviewWindow();
 
 function logToBackend(message) {
   console.log(message);
-  invoke('write_js_log', { log: message }).catch(() => {});
+  if (typeof message === 'string' && /error|failed|warning|unhandled/i.test(message)) {
+    invoke('write_js_log', { log: message }).catch(() => {});
+  }
 }
 
 window.onerror = function (message, source, lineno, colno, error) {
@@ -35,6 +37,7 @@ let isSelecting = false;
 let isMouseDown = false;
 let startX = 0, startY = 0;
 let isAltPressed = false;
+let isOcrOverlayVisible = false;
 
 const lastOcrMethodInfo = {
   model: 'Неизвестно',
@@ -78,6 +81,7 @@ const sentenceColors = [
 
 // Управление окном
 document.getElementById('btn-close').addEventListener('click', async () => {
+  isOcrOverlayVisible = false;
   await appWindow.hide();
   await emit('ocr-visibility-changed', false);
   clearCanvas(true);
@@ -85,12 +89,13 @@ document.getElementById('btn-close').addEventListener('click', async () => {
 
 // Слушаем триггер запуска оверлея
 listen('ocr-action-trigger', async () => {
+  isOcrOverlayVisible = true;
   await startSelectionMode();
 });
 
 // Слушаем изменение видимости окна оверлея
 listen('ocr-visibility-changed', async (event) => {
-  logToBackend(`[OCR] ocr-visibility-changed event received: payload=${event.payload}`);
+  isOcrOverlayVisible = Boolean(event.payload);
   if (event.payload === true) {
     await startSelectionMode();
   } else {
@@ -101,14 +106,13 @@ listen('ocr-visibility-changed', async (event) => {
     lensContainer.style.display = 'none';
     document.body.style.pointerEvents = 'none';
     clearCanvas(true);
-    logToBackend(`[OCR] Overlay hidden, state cleared`);
   }
 });
 
 // Запуск режима выделения области (как "Ножницы")
 async function startSelectionMode() {
   try {
-    logToBackend(`[OCR] startSelectionMode called`);
+    isOcrOverlayVisible = true;
     clearCanvas(true);
     isSelecting = true;
     isMouseDown = false;
@@ -273,20 +277,20 @@ document.getElementById('btn-scan').addEventListener('click', async () => {
 
 // Взаимодействие с клавишей Alt (Passthrough режим) через глобальный хук Tauri
 listen('alt-pressed', async () => {
+  if (!isOcrOverlayVisible) return;
   if (!isAltPressed && !isSelecting) {
     isAltPressed = true;
     document.body.classList.add('alt-held');
     await invoke('set_ignore_cursor_events', { ignore: true });
-    logToBackend(`[OCR] Alt pressed: set_ignore_cursor_events=true`);
   }
 });
 
 listen('alt-released', async () => {
+  if (!isOcrOverlayVisible && !isAltPressed) return;
   if (isAltPressed) {
     isAltPressed = false;
     document.body.classList.remove('alt-held');
     await invoke('set_ignore_cursor_events', { ignore: false });
-    logToBackend(`[OCR] Alt released: set_ignore_cursor_events=false`);
   }
 });
 

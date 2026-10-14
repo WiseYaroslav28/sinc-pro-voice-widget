@@ -70,9 +70,11 @@ jobs:
           
           $updater.version = $version
           $updater.pub_date = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
-          $updater.notes = "Версия $version — Автоматический релиз"
+          $updater.notes = "Версия $version — Автоматический релиз SincPro"
           $updater.platforms."windows-x86_64".signature = $signature
-          $updater.platforms."windows-x86_64".url = "https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/download/v$version/tauri-app_${version}_x64_en-US.msi"
+          $msiFile = Get-ChildItem -Path src-tauri/target/release/bundle/msi/*.msi | Select-Object -First 1
+          $msiName = if ($msiFile) { $msiFile.Name } else { "SincPro_${version}_x64_en-US.msi" }
+          $updater.platforms."windows-x86_64".url = "https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/download/v$version/$msiName"
           
           # Преобразуем обратно в JSON без экранирования кириллицы
           $json = ConvertTo-Json $updater -Depth 100

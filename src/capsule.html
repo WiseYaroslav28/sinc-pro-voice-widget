@@ -280,13 +280,12 @@
         transition: opacity 0.25s ease 0.1s, max-width 0.3s ease, visibility 0.25s;
       }
 
-      /* Анимация пульсации дыхания для idle полоски */
-      @keyframes idle-breath {
-        0%, 100% { opacity: 0.65; }
-        50% { opacity: 1; }
-      }
+      /* Полоска в режиме покоя — статическая прозрачность без бесконечной перерисовки DWM */
       #state-idle div {
-        animation: idle-breath 3s infinite ease-in-out;
+        opacity: 0.72;
+      }
+      #state-idle div:hover {
+        opacity: 1;
       }
 
       /* Новые стили для предотвращения обрезки и плавной пульсации */
@@ -565,11 +564,7 @@
       }
 
       if (appWindow) {
-        // Проактивно включаем микрофон при фокусе окна
-        appWindow.listen('tauri::focus', () => {
-          getMicrophoneStream().catch(console.error);
-        });
-        // Гасим микрофон при размытии окна (уходе из фокуса), если не идет запись
+        // Гасим микрофон при уходе из фокуса, если не идет запись
         appWindow.listen('tauri::blur', () => {
           setTimeout(() => {
             if (currentState !== 'recording' && currentState !== 'pause' && currentState !== 'sending') {
@@ -586,36 +581,24 @@
       let audioStream = null;
       let audioChunks = [];
       let globalAudioStream = null;
-      
-      let micTimeout = null;
+      let maxRecordedVolume = 0;
+      let speechFramesCount = 0;
+      let micTrackBroken = false;
 
-      // Сброс и перезапуск таймаута неактивности микрофона (2 минуты)
-      function resetMicTimeout() {
-        if (micTimeout) clearTimeout(micTimeout);
-        micTimeout = setTimeout(() => {
-          if (currentState !== 'recording' && currentState !== 'pause' && currentState !== 'sending') {
-            closeMicrophoneStream();
-          } else {
-            resetMicTimeout();
-          }
-        }, 120000); // 2 минуты простоя
-      }
-
-      // Функция получения микрофонного потока (активирует по требованию, продлевает таймаут)
+      // Функция получения микрофонного потока строго по требованию во время записи
       async function getMicrophoneStream() {
         const isStreamValid = globalAudioStream && 
                               globalAudioStream.active && 
                               globalAudioStream.getAudioTracks().length > 0 &&
-                              globalAudioStream.getAudioTracks().every(track => track.readyState === 'live');
+                              globalAudioStream.getAudioTracks().every(track => track.readyState === 'live' && !track.muted);
         
         if (isStreamValid) {
-          resetMicTimeout();
           return globalAudioStream;
         }
         
+        closeMicrophoneStream();
         console.log("SINC PRO: Requesting microphone stream...");
         globalAudioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        resetMicTimeout();
         return globalAudioStream;
       }
 
@@ -628,18 +611,8 @@
           } catch (_) {}
           globalAudioStream = null;
         }
-        if (micTimeout) {
-          clearTimeout(micTimeout);
-          micTimeout = null;
-        }
       }
 
-      // Инициализируем микрофон на старте («горячий старт»), но он сам выключится через 2 минуты простоя
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        getMicrophoneStream().catch(err => {
-          console.error("SINC PRO: Initial microphone acquisition failed:", err);
-        });
-      }
       let recordingInterval = null;
       let recordSeconds = 0;
        
@@ -820,7 +793,7 @@
           const PhysicalPosition = window.__TAURI__.dpi.PhysicalPosition;
           const promptWin = await WebviewWindow.getByLabel('prompt');
           if (promptWin) {
-            // Позиционируем окно промпта ПРЯМО НАД капсулой
+            // Позиционируем окно промпта ПРЯМО НАД капсулой (или ПОД ней, если капсула у верхнего края экрана)
             const capsulePos = await appWindow.outerPosition();
             const capsuleSize = await appWindow.outerSize();
             // Размеры окна промпта (из tauri.conf.json: 450x220)
@@ -829,8 +802,10 @@
             const gap_phys = Math.round(8 * cachedScaleFactor);
             // Центрируем по горизонтали над капсулой
             const px = Math.round(capsulePos.x + capsuleSize.width / 2 - promptW_phys / 2);
-            // Размещаем выше капсулы
-            const py = Math.round(capsulePos.y - promptH_phys - gap_phys);
+            let py = Math.round(capsulePos.y - promptH_phys - gap_phys);
+            if (py < 10) {
+              py = Math.round(capsulePos.y + capsuleSize.height + gap_phys);
+            }
             await promptWin.setPosition(new PhysicalPosition(px, py));
             await window.__TAURI__.event.emitTo('prompt', 'set-current-prompt', customPromptText);
             await promptWin.show();
@@ -921,7 +896,7 @@
           }
         } catch (_) {}
 
-        // Если Магнит ВЫКЛЮЧЕН — пробуем восстановить сохранённую позицию
+        // Если Магнит ВЫКЛЮЧЕН — пробуем восстановить сохранённую позицию (включая верхнюю границу экрана)
         if (!isMagnetEnabled) {
           const savedPos = localStorage.getItem('capsule_pos');
           if (savedPos) {
@@ -935,7 +910,7 @@
                   const my = mon.position.y;
                   const mw = mon.size.width;
                   const mh = mon.size.height;
-                  if (parsed.x >= mx && parsed.x < mx + mw && parsed.y >= my && parsed.y < my + mh) {
+                  if (parsed.x >= mx - 60 && parsed.x < mx + mw && parsed.y >= my - 220 && parsed.y < my + mh) {
                     isInsideAnyMonitor = true;
                     break;
                   }
@@ -1211,7 +1186,7 @@
 
 
       // ======================================================================
-      // ОБРЕЗКА ОКНА ЧЕРЕЗ WIN32 REGION (Идеальный прозрачный хитбокс)
+      // ОБРЕЗКА ОКНА ЧЕРЕЗ WIN32 REGION + КЛИКАБЕЛЬНОСТЬ СКВОЗЬ ТЕНЬ/СИЯНИЕ
       // ======================================================================
       async function updateClickRegion(state) {
         if (!invoke || !appWindow) return;
@@ -1221,9 +1196,9 @@
           let w = 320, h = 200; // default for active states
 
           if (state === 'idle') {
-            w = 88; h = 32;
+            w = 92; h = 34;
           } else if (state === 'hover') {
-            w = 200; h = 180;
+            w = 210; h = 180;
           } else if (state === 'sending') {
             w = 180; h = 130;
           } else if (state === 'send-success') {
@@ -1235,7 +1210,7 @@
           } else if (state === 'recording-idle' || state === 'pause-idle') {
             w = 180; h = 130;
           } else if (state === 'recording-hover' || state === 'pause-hover') {
-            w = 240; h = 100;
+            w = 260; h = 115;
           } else if (state === 'recording-fan' || state === 'pause-fan') {
             w = 320; h = 200;
           }
@@ -1251,12 +1226,122 @@
         } catch(e) { console.error('Region err:', e); }
       }
 
+      // Проверка: находится ли точка (в логических координатах окна) внутри интерактивного тела капсулы/меню, а не в полупрозрачной тени/свечении вокруг неё
+      function isPointInsideCapsuleBody(clientX, clientY) {
+        const hitRect = (el, pad = 2) => {
+          if (!el) return false;
+          const r = el.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) return false;
+          return clientX >= r.left - pad && clientX <= r.right + pad && clientY >= r.top - pad && clientY <= r.bottom + pad;
+        };
+
+        const popup = document.getElementById('result-popup');
+        if (popup && popup.style.display && popup.style.display !== 'none') {
+          return true;
+        }
+        const toast = document.getElementById('capsule-toast');
+        if (toast && toast.classList.contains('opacity-100') && hitRect(toast, 2)) {
+          return true;
+        }
+
+        if (currentState === 'idle') {
+          const idleBar = stateIdle ? stateIdle.querySelector('div') : null;
+          return hitRect(idleBar, 3);
+        }
+
+        if (currentState === 'hover') {
+          const hoverBar = stateHover ? stateHover.querySelector('div') : null;
+          if (hitRect(hoverBar, 2)) return true;
+          if (hoverPresetsMenu && hoverPresetsMenu.classList.contains('opacity-100')) {
+            const btns = hoverPresetsMenu.querySelectorAll('.preset-btn');
+            for (const b of btns) {
+              if (hitRect(b, 6)) return true;
+            }
+          }
+          return false;
+        }
+
+        // Активные состояния (recording, pause, sending, send-success, send-error, cancel-confirm)
+        if (hitRect(activePill, 2)) return true;
+        if (btnCancelSending && btnCancelSending.classList.contains('visible') && hitRect(btnCancelSending, 4)) {
+          return true;
+        }
+        if (activeCancelBanner && !activeCancelBanner.classList.contains('pointer-events-none') && hitRect(activeCancelBanner, 2)) {
+          return true;
+        }
+        if (activeErrorBanner && !activeErrorBanner.classList.contains('pointer-events-none') && hitRect(activeErrorBanner, 2)) {
+          return true;
+        }
+        if (activePresetsFan && activePresetsFan.classList.contains('opacity-100')) {
+          const btns = activePresetsFan.querySelectorAll('.preset-btn');
+          for (const b of btns) {
+            if (hitRect(b, 6)) return true;
+          }
+          // Также учитываем мостик между пилюлей и веером пресетов при наведении
+          if (activePill) {
+            const pr = activePill.getBoundingClientRect();
+            if (clientX >= pr.left - 30 && clientX <= pr.right + 30 && clientY >= pr.top - 72 && clientY <= pr.bottom) {
+              return true;
+            }
+          }
+        }
+        return false;
+      }
+
+      let isIgnoringCapsuleShadow = false;
+      let capsuleShadowTimer = null;
+
+      async function setCapsuleShadowIgnore(ignore) {
+        if (!invoke || isIgnoringCapsuleShadow === ignore) return;
+        isIgnoringCapsuleShadow = ignore;
+        try {
+          await invoke('set_ignore_cursor_events', { ignore });
+        } catch (_) {}
+
+        if (ignore) {
+          if (!capsuleShadowTimer) {
+            capsuleShadowTimer = setInterval(async () => {
+              if (!isIgnoringCapsuleShadow) {
+                clearInterval(capsuleShadowTimer);
+                capsuleShadowTimer = null;
+                return;
+              }
+              try {
+                const [cx, cy] = await invoke('get_cursor_pos');
+                const sf = cachedScaleFactor || window.devicePixelRatio || 1;
+                const winX = (lastBottomCenterX_phys || 0) - Math.round(340 * sf / 2);
+                const winY = (lastBottomY_phys || 0) - Math.round(260 * sf);
+                const lx = (cx - winX) / sf;
+                const ly = (cy - winY) / sf;
+                const outOfWin = lx < 0 || ly < 0 || lx > 340 || ly > 260;
+                if (outOfWin || isPointInsideCapsuleBody(lx, ly)) {
+                  await setCapsuleShadowIgnore(false);
+                }
+              } catch (_) {
+                await setCapsuleShadowIgnore(false);
+              }
+            }, 50);
+          }
+        } else if (capsuleShadowTimer) {
+          clearInterval(capsuleShadowTimer);
+          capsuleShadowTimer = null;
+        }
+      }
+
+      document.addEventListener('mousemove', (e) => {
+        if (e.buttons !== 0 || maybeDragging) return;
+        const inside = isPointInsideCapsuleBody(e.clientX, e.clientY);
+        if (!inside && !isIgnoringCapsuleShadow) {
+          setCapsuleShadowIgnore(true);
+        } else if (inside && isIgnoringCapsuleShadow) {
+          setCapsuleShadowIgnore(false);
+        }
+      });
+
       let collapseTimer = null;
 
       container.addEventListener('mouseenter', () => {
         isMouseOver = true;
-        // Проактивно прогреваем микрофон при наведении курсора
-        getMicrophoneStream().catch(console.error);
         if (collapseTimer) { clearTimeout(collapseTimer); collapseTimer = null; }
 
         if (currentState === 'idle') {
@@ -1367,10 +1452,48 @@
         try {
           if (invoke) await invoke('start_recording_session');
           recordSeconds = 0;
+          maxRecordedVolume = 0;
+          speechFramesCount = 0;
+          micTrackBroken = false;
           activeTimer.textContent = '00:00';
 
-          // Получаем поток микрофона через гибридный менеджер
+          // Получаем поток микрофона строго при старте записи
           audioStream = await getMicrophoneStream();
+          const tracks = audioStream ? audioStream.getAudioTracks() : [];
+          const mainTrack = tracks[0];
+          if (!mainTrack || mainTrack.readyState !== 'live' || !mainTrack.enabled) {
+            closeMicrophoneStream();
+            playAudioCue('error');
+            showToast('⚠️ Неисправность микрофона: устройство отключено или недоступно!', true);
+            if (window.__TAURI__) {
+              window.__TAURI__.event.emit('mic-status-changed', { ok: false, reason: 'disconnected' });
+            }
+            return;
+          }
+          if (mainTrack.muted) {
+            micTrackBroken = true;
+          }
+          mainTrack.onended = () => {
+            micTrackBroken = true;
+            if (window.__TAURI__) {
+              window.__TAURI__.event.emit('mic-status-changed', { ok: false, reason: 'ended' });
+            }
+          };
+          mainTrack.onmute = () => {
+            micTrackBroken = true;
+            if (window.__TAURI__) {
+              window.__TAURI__.event.emit('mic-status-changed', { ok: false, reason: 'muted' });
+            }
+          };
+          mainTrack.onunmute = () => {
+            micTrackBroken = false;
+            if (window.__TAURI__) {
+              window.__TAURI__.event.emit('mic-status-changed', { ok: true });
+            }
+          };
+          if (window.__TAURI__) {
+            window.__TAURI__.event.emit('mic-status-changed', { ok: !mainTrack.muted });
+          }
           
           let mimeType = 'audio/webm';
           if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
@@ -1428,7 +1551,11 @@
           mediaRecorder.start(500);
         } catch (err) {
           console.error(err);
-          showToast('Доступ к микрофону заблокирован. Проверьте настройки системы.', true);
+          playAudioCue('error');
+          showToast('⚠️ Ошибка микрофона: устройство не найдено или доступ заблокирован в системе.', true);
+          if (window.__TAURI__) {
+            window.__TAURI__.event.emit('mic-status-changed', { ok: false, reason: 'error' });
+          }
           switchState('hover');
         }
       }
@@ -1633,10 +1760,43 @@
           return;
         }
 
+        const recordedPeak = maxRecordedVolume;
+        const recordedSpeechFrames = speechFramesCount;
+        const wasMicBroken = micTrackBroken;
+
         if (mediaRecorder && mediaRecorder.state !== 'inactive') {
           mediaRecorder.stop();
           // Дополнительное время, чтобы последний ondataavailable успел отработать
           await new Promise(resolve => setTimeout(resolve, 300));
+        }
+
+        // Проверка на тишину или неисправность/отключение микрофона:
+        // Если сигнал полностью нулевой (микрофон заглушён или сломан) или за всё время записи не было ни одного речевого всплеска —
+        // НЕ отправляем аудио в STT/ИИ и НЕ вставляем галлюцинации.
+        if ((wasMicBroken && recordedSpeechFrames < 2) || recordedSpeechFrames < 2 || recordedPeak < 16) {
+          isSending = false;
+          playAudioCue('error');
+          if (invoke) {
+            try {
+              await invoke('save_audio', {
+                durationSecs: recordSeconds,
+                preset: 'cancelled',
+                customPrompt: null,
+                isCancelled: true,
+                hardDelete: true
+              });
+            } catch (_) {}
+          }
+          if (wasMicBroken || recordedPeak === 0) {
+            if (window.__TAURI__) {
+              window.__TAURI__.event.emit('mic-status-changed', { ok: false, reason: 'zero_signal' });
+            }
+            showToast('⚠️ Микрофон неисправен или отключён (нулевой сигнал)! Текст не отправлен.', true);
+          } else {
+            showToast('🔇 Тишина в эфире — речь не обнаружена, отправка отменена.', true);
+          }
+          switchState('idle');
+          return;
         }
 
         try {
@@ -1817,11 +1977,10 @@
           });
         }
 
-        // Мультимонитор polling: при magnet=ON каждые 800ms смотрим на каком мониторе курсор
-        // Если монитор сменился — перемещаем капсулу туда
+        // Мультимонитор polling: при magnet=ON и видимой капсуле (capsuleMode === 2) каждые 800ms смотрим на каком мониторе курсор
         let _lastMonitorKey = null;
         setInterval(async () => {
-          if (!isCapsuleEnabled || !isMagnetEnabled || !invoke) return;
+          if (capsuleMode !== 2 || !isCapsuleEnabled || !isMagnetEnabled || !invoke) return;
           try {
             const mon = await invoke('get_cursor_monitor');
             const key = `${mon.work_left},${mon.work_top},${mon.work_right},${mon.work_bottom}`;
@@ -2126,16 +2285,34 @@
       function drawVisualizer() {
         if (!analyser) return;
         analyser.getByteFrequencyData(dataArray);
+
+        if (audioStream) {
+          const tr = audioStream.getAudioTracks()[0];
+          if (!tr || tr.readyState !== 'live' || tr.muted || !tr.enabled) {
+            micTrackBroken = true;
+          }
+        }
         
         const bars = document.querySelectorAll('#recording-waveform .waveform-bar');
         if (bars.length === 0) return;
 
-        // Вычисляем среднюю громкость для пульсации Orb
+        // Вычисляем среднюю и пиковую громкость речевого спектра для детекции тишины и пульсации Orb
         let sum = 0;
+        let peakBin = 0;
         for (let i = 0; i < dataArray.length; i++) {
-          sum += dataArray[i];
+          const val = dataArray[i];
+          sum += val;
+          if (i >= 1 && i <= 14 && val > peakBin) {
+            peakBin = val;
+          }
         }
         const avgVolume = sum / dataArray.length; // от 0 до 255
+        if (peakBin > maxRecordedVolume) {
+          maxRecordedVolume = peakBin;
+        }
+        if (peakBin >= 18 || avgVolume >= 7) {
+          speechFramesCount++;
+        }
 
         // Если пилюля сжата (компактный Orb), применяем эффект дыхания
         if (activePill) {

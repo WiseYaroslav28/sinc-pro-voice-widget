@@ -192,7 +192,7 @@
         <!-- TopAppBar / Шапка контента -->
         <header class="h-16 w-full flex justify-between items-center px-6 py-4 bg-transparent flex-shrink-0">
           <div class="flex items-center gap-4">
-            <h2 class="text-[20px] text-[#e4e1e9] font-semibold tracking-tight" id="greeting-title">Привет, Ярослав</h2>
+            <h2 class="text-[20px] text-[#e4e1e9] font-semibold tracking-tight cursor-pointer hover:text-[#d2bbff] transition-colors" id="greeting-title" title="Нажмите, чтобы изменить имя профиля">Привет!</h2>
             <div class="hidden md:flex items-center gap-2 bg-[#1b1b20] border border-[#4a4455]/30 rounded-full px-3 py-1 mt-1">
               <span class="w-2 h-2 rounded-full bg-[#7bd6d1] shadow-[0_0_8px_rgba(123,214,209,0.6)]"></span>
               <span class="text-[11px] font-medium text-[#ccc3d8]">Все системы онлайн</span>
@@ -202,14 +202,20 @@
               <!-- Рендерится динамически через WindowToggleManager -->
             </div>
           </div>
-          <div class="flex items-center gap-4 pr-24"> <!-- Смещение от кнопок окна -->
-            <button class="text-[#ccc3d8] hover:text-[#d2bbff] transition-colors focus:outline-none p-1 rounded-full hover:bg-[#1f1f24]" style="background: transparent; border: none; cursor: pointer;">
+          <div class="flex items-center gap-3 pr-24"> <!-- Смещение от кнопок окна -->
+            <!-- Кнопка-индикатор доступного обновления на видном месте -->
+            <button id="header-update-banner" class="hidden items-center gap-1.5 bg-gradient-to-r from-[#8e52ff] to-[#45a29e] text-white text-[11px] font-bold px-3.5 py-1.5 rounded-full shadow-[0_0_15px_rgba(142,82,255,0.5)] hover:opacity-95 transition-all cursor-pointer border-0 animate-pulse" title="Доступна новая версия SincPro — нажмите для установки">
+              <span class="material-symbols-outlined text-[15px]">system_update_alt</span>
+              <span id="header-update-version-text">Доступно обновление</span>
+            </button>
+            <button class="text-[#ccc3d8] hover:text-[#d2bbff] transition-colors focus:outline-none p-1 rounded-full hover:bg-[#1f1f24]" style="background: transparent; border: none; cursor: pointer;" id="btn-header-notifications" title="Проверить статус систем и обновлений">
               <span class="material-symbols-outlined text-[20px]">notifications</span>
             </button>
             <div class="flex items-center gap-2 border-l border-[#4a4455]/30 pl-4">
-              <div class="w-8 h-8 rounded-full bg-[#35343a] border border-[#4a4455]/30 flex items-center justify-center overflow-hidden">
-                <span class="material-symbols-outlined text-[#ccc3d8] text-[20px]">account_circle</span>
-              </div>
+              <button id="btn-profile-avatar" class="w-8 h-8 rounded-full bg-[#35343a] hover:bg-[#8e52ff]/30 border border-[#4a4455]/40 hover:border-[#d2bbff] flex items-center justify-center overflow-hidden transition-all cursor-pointer focus:outline-none" title="Локальный профиль пользователя (нажмите для изменения имени)">
+                <span class="text-[12px] font-bold text-[#d2bbff] hidden" id="profile-avatar-initial"></span>
+                <span class="material-symbols-outlined text-[#ccc3d8] text-[20px]" id="profile-avatar-icon">account_circle</span>
+              </button>
             </div>
           </div>
         </header>
@@ -339,7 +345,7 @@
               <span class="material-symbols-outlined text-[48px] text-[#d2bbff] mb-4">screenshot_region</span>
               <h3 class="text-[16px] font-semibold text-white mb-2">Оверлей переводчика OCR готов к работе</h3>
               <p class="text-[13px] text-[#ccc3d8] max-w-md mb-6 leading-relaxed">
-                Вы можете переместить специальную рамку над текстом, чтобы считать его. Горячая клавиша <strong class="text-[#d2bbff]">Alt + Q</strong> мгновенно вызывает оверлей.
+                Вы можете выделить любую область экрана над текстом, чтобы считать и перевести его. Горячая клавиша <strong class="text-[#d2bbff]" id="ocr-hotkey-badge">Alt + Q</strong> мгновенно вызывает оверлей.
               </p>
               <button class="bg-[#a377ff] text-[#36007d] hover:bg-[#eaddff] transition-all font-semibold rounded-lg px-6 py-2.5 text-[13px] focus:outline-none" id="btn-trigger-ocr">
                 Запустить оверлей сейчас
@@ -384,7 +390,7 @@
               
               <!-- Область редактирования текста (contenteditable) -->
               <div class="flex-1 bg-[#0e0e13] border border-[#4a4455]/30 rounded-xl p-4 overflow-y-auto text-[14px] leading-relaxed text-[#e4e1e9] focus:outline-none focus:border-[#7bd6d1]/50 transition-colors"
-                   id="voice-contenteditable" contenteditable="true" spellcheck="false" style="white-space: pre-wrap; padding-top: 16px;">Вставьте сюда текст для озвучивания, или выделите текст в любом приложении и нажмите Ctrl+Shift...</div>
+                   id="voice-contenteditable" contenteditable="true" spellcheck="false" style="white-space: pre-wrap; padding-top: 16px;">Вставьте сюда текст для озвучивания, или выделите текст в любом приложении и нажмите Ctrl + Shift + Q...</div>
             </div>
 
             <!-- Шкала прогресса (развернута внизу на всю ширину) -->
@@ -403,34 +409,43 @@
           <section class="tab-content flex flex-col gap-4 flex-1 overflow-y-auto py-4" id="tab-layout" style="display: none;">
             <!-- Блок 1: Горячие клавиши -->
             <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-5">
-              <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-4">Управление и Горячие Клавиши</h3>
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest">Управление и Горячие Клавиши</h3>
+                <span class="text-[10px] text-[#ccc3d8]/70">Нажмите на комбинацию, чтобы задать новую</span>
+              </div>
               
-              <div class="flex flex-col gap-3 text-[13px] mb-4">
+              <div class="flex flex-col gap-3 text-[13px] mb-2">
                 <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
-                  <span class="text-[#ccc3d8]">Ручная смена раскладки выделенного / последнего слова</span>
-                  <div class="flex items-center gap-1.5">
-                    <select class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] rounded px-1.5 py-0.5 text-[11px] font-semibold focus:outline-none focus:border-[#d2bbff]" id="setting-layout-modifier">
-                      <option value="Ctrl">Ctrl</option>
-                      <option value="Alt">Alt</option>
-                      <option value="Shift">Shift</option>
-                      <option value="Win">Win</option>
-                    </select>
-                    <span class="text-[#ccc3d8]">+</span>
-                    <select class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] rounded px-1.5 py-0.5 text-[11px] font-semibold focus:outline-none focus:border-[#d2bbff]" id="setting-layout-key">
-                      <option value="Pause">Pause</option>
-                      <option value="`">&grave; (Ё)</option>
-                      <option value="CapsLock">CapsLock</option>
-                      <option value="Insert">Insert</option>
-                      <option value="ScrollLock">ScrollLock</option>
-                      <option value="F12">F12</option>
-                    </select>
+                  <div>
+                    <span class="text-[#e4e1e9]">Ручная смена раскладки выделенного / последнего слова</span>
+                    <div class="text-[11px] text-[#ccc3d8]/70 mt-0.5">Конвертирует набранное слово RU ↔ EN и переключает язык ввода</div>
                   </div>
+                  <button type="button" class="hotkey-recorder-btn bg-[#1b1b20] hover:bg-[#2a2933] border border-[#4a4455]/40 hover:border-[#d2bbff] text-[#d2bbff] px-3 py-1.5 rounded-lg font-mono font-semibold text-[11px] transition-all cursor-pointer min-w-[140px] text-center" data-hotkey-field="hotkey_layout_convert">
+                    Ctrl + ` (Ё)
+                  </button>
+                </div>
+                <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
+                  <div>
+                    <span class="text-[#e4e1e9]">Отмена последнего автоисправления</span>
+                    <div class="text-[11px] text-[#ccc3d8]/70 mt-0.5">Возвращает исходное слово без добавления в исключения</div>
+                  </div>
+                  <button type="button" class="hotkey-recorder-btn bg-[#1b1b20] hover:bg-[#2a2933] border border-[#4a4455]/40 hover:border-[#d2bbff] text-[#d2bbff] px-3 py-1.5 rounded-lg font-mono font-semibold text-[11px] transition-all cursor-pointer min-w-[140px] text-center" data-hotkey-field="hotkey_layout_undo">
+                    Shift + Backspace
+                  </button>
                 </div>
                 <div class="flex justify-between items-center py-2">
-                  <span class="text-[#ccc3d8]">Отмена последнего автоисправления</span>
-                  <kbd class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] px-2 py-1 rounded font-semibold text-[11px]">Shift + Backspace</kbd>
+                  <div>
+                    <span class="text-[#e4e1e9]">Запомнить слово в исключениях и откатить замену</span>
+                    <div class="text-[11px] text-[#ccc3d8]/70 mt-0.5">Возвращает слово и больше никогда его не конвертирует автоматически</div>
+                  </div>
+                  <button type="button" class="hotkey-recorder-btn bg-[#1b1b20] hover:bg-[#2a2933] border border-[#4a4455]/40 hover:border-[#d2bbff] text-[#d2bbff] px-3 py-1.5 rounded-lg font-mono font-semibold text-[11px] transition-all cursor-pointer min-w-[140px] text-center" data-hotkey-field="hotkey_layout_exclude">
+                    Ctrl + Tab
+                  </button>
                 </div>
               </div>
+              <!-- Скрытые поля для обратной совместимости -->
+              <input type="hidden" id="setting-layout-modifier" value="Ctrl" />
+              <input type="hidden" id="setting-layout-key" value="`" />
             </div>
 
             <!-- Блок 2: Список исключений слов -->
@@ -478,10 +493,29 @@
 
           <!-- ВКЛАДКА 4: НАСТРОЙКИ (SETTINGS) -->
           <section class="tab-content flex flex-col gap-4 flex-1 overflow-y-auto py-4" id="tab-settings" style="display: none;">
-            <!-- Блок 1: Локализация -->
+            <!-- Панель быстрого сохранения настроек -->
+            <div class="flex items-center justify-between bg-[#13131a] rounded-xl border border-[#8e52ff]/30 px-5 py-3">
+              <div class="flex items-center gap-2.5">
+                <span class="material-symbols-outlined text-[#d2bbff] text-[18px]">tune</span>
+                <div>
+                  <div class="text-[13px] font-semibold text-white">Параметры и конфигурация SincPro</div>
+                  <div class="text-[11px] text-[#ccc3d8]">Изменения применяются автоматически или по нажатию кнопки «Сохранить»</div>
+                </div>
+              </div>
+              <button id="btn-save-settings-top" class="bg-gradient-to-r from-[#8e52ff] to-[#a377ff] hover:from-[#9d66ff] hover:to-[#b388ff] text-white font-semibold px-4 py-2 rounded-lg text-[12px] flex items-center gap-1.5 shadow-lg shadow-[#8e52ff]/20 transition-all cursor-pointer focus:outline-none">
+                <span class="material-symbols-outlined text-[15px]">check_circle</span>
+                <span>Сохранить настройки</span>
+              </button>
+            </div>
+
+            <!-- Блок 1: Профиль и Локализация -->
             <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-5">
-              <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-4">Локализация системы</h3>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-4">Профиль и локализация</h3>
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="flex flex-col gap-2">
+                  <label class="text-[11px] text-[#ccc3d8]">Ваше имя (локальный профиль)</label>
+                  <input type="text" id="setting-user-name" placeholder="Например: Ярослав" class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#d2bbff]" />
+                </div>
                 <div class="flex flex-col gap-2">
                   <label class="text-[11px] text-[#ccc3d8]">Язык интерфейса приложения</label>
                   <select class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#d2bbff]" id="setting-ui-lang">
@@ -510,8 +544,8 @@
                   <input type="password" id="setting-api-key" placeholder="Введите ваш API ключ от Google AI Studio" class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#d2bbff]" />
                 </div>
                 <div class="flex flex-col gap-2">
-                  <label class="text-[11px] text-[#ccc3d8]">Ключ API Yandex Translate (Резервный переводчик)</label>
-                  <input type="password" id="setting-yandex-api-key" placeholder="Введите ваш API ключ от Yandex (опционально)" class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#d2bbff]" />
+                  <label class="text-[11px] text-[#ccc3d8]">Ключ API Yandex (Резервный переводчик и Yandex SpeechKit TTS)</label>
+                  <input type="password" id="setting-yandex-api-key" placeholder="Введите ваш API ключ от Yandex Cloud (опционально)" class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#d2bbff]" />
                 </div>
                 <div class="flex flex-col gap-2">
                   <div class="flex items-center justify-between">
@@ -645,47 +679,94 @@
               </div>
             </div>
 
-            <!-- Блок 3: Горячие клавиши -->
+            <!-- Блок 3: Все 9 Горячих клавиш (Хоткеи) -->
             <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-5">
-              <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-4">Горячие клавиши (Хоткеи)</h3>
-              <div class="flex flex-col gap-3 text-[13px]">
-                <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
-                  <span class="text-[#ccc3d8]">Запуск смарт-микрофона</span>
-                  <kbd class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] px-2 py-1 rounded font-semibold text-[11px]">Ctrl + Win</kbd>
+              <div class="flex items-center justify-between mb-4">
+                <div>
+                  <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest">Горячие клавиши (Все 9 комбинаций)</h3>
+                  <p class="text-[11px] text-[#ccc3d8]/70 mt-0.5">Нажмите на любую комбинацию и зажмите нужные клавиши на клавиатуре для изменения (Esc — отмена)</p>
                 </div>
-                <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
-                  <span class="text-[#ccc3d8]">Быстрый перевод области OCR</span>
-                  <kbd class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] px-2 py-1 rounded font-semibold text-[11px]">Alt + Q</kbd>
-                </div>
-                <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
-                  <span class="text-[#ccc3d8]">Озвучить выделенный фрагмент</span>
-                  <kbd class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] px-2 py-1 rounded font-semibold text-[11px]">Ctrl + Shift + S</kbd>
-                </div>
-                <div class="flex justify-between items-center py-2">
-                  <span class="text-[#ccc3d8]">Смена раскладки текста</span>
-                  <div class="flex items-center gap-1.5">
-                    <select class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] rounded px-1.5 py-0.5 text-[11px] font-semibold focus:outline-none focus:border-[#d2bbff]" id="setting-layout-modifier">
-                      <option value="Ctrl">Ctrl</option>
-                      <option value="Alt">Alt</option>
-                      <option value="Shift">Shift</option>
-                      <option value="Win">Win</option>
-                    </select>
-                    <span class="text-[#ccc3d8]">+</span>
-                    <select class="bg-[#1b1b20] border border-[#4a4455]/30 text-[#e4e1e9] rounded px-1.5 py-0.5 text-[11px] font-semibold focus:outline-none focus:border-[#d2bbff]" id="setting-layout-key">
-                      <option value="Pause">Pause</option>
-                      <option value="`">&grave; (Ё)</option>
-                      <option value="CapsLock">CapsLock</option>
-                      <option value="Insert">Insert</option>
-                      <option value="ScrollLock">ScrollLock</option>
-                      <option value="F12">F12</option>
-                    </select>
-                  </div>
+                <button id="btn-reset-hotkeys" class="bg-[#1b1b20] hover:bg-[#2a292f] text-[#ccc3d8] hover:text-white border border-[#4a4455]/30 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors cursor-pointer">
+                  Сбросить по умолчанию
+                </button>
               </div>
-            </div>
+              <div class="flex flex-col gap-2.5 text-[13px]">
+                <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
+                  <div>
+                    <div class="text-[#e4e1e9] font-medium">Запись голоса (смарт-микрофон / капсула)</div>
+                    <div class="text-[11px] text-[#ccc3d8]/60">Удерживайте для диктовки (+ Alt для кастомного ИИ-промпта)</div>
+                  </div>
+                  <button data-hotkey-field="hotkey_record" class="hotkey-recorder-btn bg-[#1b1b20] hover:bg-[#25232d] border border-[#4a4455]/40 hover:border-[#d2bbff] text-[#d2bbff] px-3 py-1.5 rounded-lg font-mono font-semibold text-[11px] transition-all cursor-pointer min-w-[140px] text-center">Ctrl+Win</button>
+                </div>
+
+                <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
+                  <div>
+                    <div class="text-[#e4e1e9] font-medium">Принудительная отправка длинной записи</div>
+                    <div class="text-[11px] text-[#ccc3d8]/60">Завершить и отправить запись в режиме удержания</div>
+                  </div>
+                  <button data-hotkey-field="hotkey_force_send" class="hotkey-recorder-btn bg-[#1b1b20] hover:bg-[#25232d] border border-[#4a4455]/40 hover:border-[#d2bbff] text-[#d2bbff] px-3 py-1.5 rounded-lg font-mono font-semibold text-[11px] transition-all cursor-pointer min-w-[140px] text-center">Ctrl+Shift+Space</button>
+                </div>
+
+                <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
+                  <div>
+                    <div class="text-[#e4e1e9] font-medium">Озвучить выделенный текст (TTS)</div>
+                    <div class="text-[11px] text-[#ccc3d8]/60">Скопировать выделенный текст и сразу начать чтение вслух</div>
+                  </div>
+                  <button data-hotkey-field="hotkey_tts_read" class="hotkey-recorder-btn bg-[#1b1b20] hover:bg-[#25232d] border border-[#4a4455]/40 hover:border-[#d2bbff] text-[#d2bbff] px-3 py-1.5 rounded-lg font-mono font-semibold text-[11px] transition-all cursor-pointer min-w-[140px] text-center">Ctrl+Shift</button>
+                </div>
+
+                <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
+                  <div>
+                    <div class="text-[#e4e1e9] font-medium">Перевести и озвучить выделенный текст</div>
+                    <div class="text-[11px] text-[#ccc3d8]/60">Перевод выделенного текста через ИИ и чтение на русском</div>
+                  </div>
+                  <button data-hotkey-field="hotkey_tts_translate" class="hotkey-recorder-btn bg-[#1b1b20] hover:bg-[#25232d] border border-[#4a4455]/40 hover:border-[#d2bbff] text-[#d2bbff] px-3 py-1.5 rounded-lg font-mono font-semibold text-[11px] transition-all cursor-pointer min-w-[140px] text-center">Ctrl+Alt</button>
+                </div>
+
+                <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
+                  <div>
+                    <div class="text-[#e4e1e9] font-medium">Добавить текст в очередь чтения (TTS)</div>
+                    <div class="text-[11px] text-[#ccc3d8]/60">Дополнить текущий буфер плеера новым выделенным фрагментом</div>
+                  </div>
+                  <button data-hotkey-field="hotkey_tts_append" class="hotkey-recorder-btn bg-[#1b1b20] hover:bg-[#25232d] border border-[#4a4455]/40 hover:border-[#d2bbff] text-[#d2bbff] px-3 py-1.5 rounded-lg font-mono font-semibold text-[11px] transition-all cursor-pointer min-w-[140px] text-center">Ctrl+Tab</button>
+                </div>
+
+                <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
+                  <div>
+                    <div class="text-[#e4e1e9] font-medium">Быстрый перевод области экрана (OCR)</div>
+                    <div class="text-[11px] text-[#ccc3d8]/60">Открыть или закрыть интерактивный оверлей распознавания экрана</div>
+                  </div>
+                  <button data-hotkey-field="hotkey_ocr" class="hotkey-recorder-btn bg-[#1b1b20] hover:bg-[#25232d] border border-[#4a4455]/40 hover:border-[#d2bbff] text-[#d2bbff] px-3 py-1.5 rounded-lg font-mono font-semibold text-[11px] transition-all cursor-pointer min-w-[140px] text-center">Alt+Q</button>
+                </div>
+
+                <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
+                  <div>
+                    <div class="text-[#e4e1e9] font-medium">Конвертировать раскладку (RU ↔ EN)</div>
+                    <div class="text-[11px] text-[#ccc3d8]/60">Исправить последнее слово или выделенный текст</div>
+                  </div>
+                  <button data-hotkey-field="hotkey_layout_convert" class="hotkey-recorder-btn bg-[#1b1b20] hover:bg-[#25232d] border border-[#4a4455]/40 hover:border-[#d2bbff] text-[#d2bbff] px-3 py-1.5 rounded-lg font-mono font-semibold text-[11px] transition-all cursor-pointer min-w-[140px] text-center">Ctrl+Pause</button>
+                </div>
+
+                <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
+                  <div>
+                    <div class="text-[#e4e1e9] font-medium">Отменить автозамену + слово в исключения</div>
+                    <div class="text-[11px] text-[#ccc3d8]/60">Вернуть исходное слово и больше не конвертировать его</div>
+                  </div>
+                  <button data-hotkey-field="hotkey_layout_undo" class="hotkey-recorder-btn bg-[#1b1b20] hover:bg-[#25232d] border border-[#4a4455]/40 hover:border-[#d2bbff] text-[#d2bbff] px-3 py-1.5 rounded-lg font-mono font-semibold text-[11px] transition-all cursor-pointer min-w-[140px] text-center">Alt+Pause</button>
+                </div>
+
+                <div class="flex justify-between items-center py-2">
+                  <div>
+                    <div class="text-[#e4e1e9] font-medium">Откатить + добавить приложение в исключения</div>
+                    <div class="text-[11px] text-[#ccc3d8]/60">Отключить автораскладку в текущем активном процессе (.exe)</div>
+                  </div>
+                  <button data-hotkey-field="hotkey_layout_exclude" class="hotkey-recorder-btn bg-[#1b1b20] hover:bg-[#25232d] border border-[#4a4455]/40 hover:border-[#d2bbff] text-[#d2bbff] px-3 py-1.5 rounded-lg font-mono font-semibold text-[11px] transition-all cursor-pointer min-w-[140px] text-center">Shift+Pause</button>
+                </div>
+              </div>
             </div>
 
             <!-- Блок 5: Система -->
-            <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-5 mb-4">
+            <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-5 mb-2">
               <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-4">Системные параметры</h3>
               <div class="flex flex-col gap-4">
                 <div class="flex items-center justify-between">
@@ -740,6 +821,14 @@
                   <input type="checkbox" id="setting-capsule-magnet" style="display:none;" checked />
                 </div>
               </div>
+            </div>
+
+            <!-- Нижняя кнопка сохранения настроек -->
+            <div class="flex justify-end pb-4">
+              <button id="btn-save-settings-bottom" class="bg-gradient-to-r from-[#8e52ff] to-[#a377ff] hover:from-[#9d66ff] hover:to-[#b388ff] text-white font-semibold px-6 py-2.5 rounded-xl text-[13px] flex items-center gap-2 shadow-lg shadow-[#8e52ff]/25 transition-all cursor-pointer focus:outline-none">
+                <span class="material-symbols-outlined text-[16px]">save</span>
+                <span>Сохранить настройки</span>
+              </button>
             </div>
           </section>
 
@@ -950,20 +1039,131 @@
       }
 
       // ==========================================================================
-      // ЛОГИКА НАСТРОЕК (КОНФИГ)
+      // ЛОГИКА НАСТРОЕК (КОНФИГ, ПРОФИЛЬ И ВСЕ 9 ГЛОБАЛЬНЫХ ХОТКЕЕВ)
       // ==========================================================================
+      const DEFAULT_HOTKEYS = {
+        hotkey_record: 'Ctrl+Win',
+        hotkey_force_send: 'Ctrl+Shift+Space',
+        hotkey_tts_read: 'Ctrl+Shift',
+        hotkey_tts_translate: 'Ctrl+Alt',
+        hotkey_tts_append: 'Ctrl+Tab',
+        hotkey_ocr: 'Alt+Q',
+        hotkey_layout_convert: 'Ctrl+Pause',
+        hotkey_layout_undo: 'Alt+Pause',
+        hotkey_layout_exclude: 'Shift+Pause'
+      };
+      let currentHotkeys = { ...DEFAULT_HOTKEYS };
+
+      function updateGreetingUI(userName) {
+        const cleanName = (userName || '').trim();
+        const greetingEl = document.getElementById('greeting-title');
+        const avatarInit = document.getElementById('profile-avatar-initial');
+        const avatarIcon = document.getElementById('profile-avatar-icon');
+        if (greetingEl) {
+          greetingEl.textContent = cleanName ? `Привет, ${cleanName}` : 'Привет! Нажмите, чтобы указать имя';
+        }
+        if (avatarInit && avatarIcon) {
+          if (cleanName) {
+            avatarInit.textContent = cleanName.charAt(0).toUpperCase();
+            avatarInit.classList.remove('hidden');
+            avatarIcon.classList.add('hidden');
+          } else {
+            avatarInit.classList.add('hidden');
+            avatarIcon.classList.remove('hidden');
+          }
+        }
+      }
+
+      function syncHotkeysEverywhere() {
+        // 1. Все интерактивные кнопки записи хоткеев (в Настройках и во вкладке Автораскладка)
+        document.querySelectorAll('.hotkey-recorder-btn').forEach(btn => {
+          const field = btn.getAttribute('data-hotkey-field');
+          if (field && currentHotkeys[field]) {
+            btn.textContent = currentHotkeys[field];
+          }
+        });
+
+        // 2. Бейдж на вкладке OCR
+        const ocrBadge = document.getElementById('ocr-hotkey-badge');
+        if (ocrBadge) {
+          ocrBadge.textContent = currentHotkeys.hotkey_ocr || 'Alt+Q';
+        }
+
+        // 3. Тултипы тумблеров в шапке дашборда
+        const recKey = currentHotkeys.hotkey_record || 'Ctrl+Win';
+        const ttsReadKey = currentHotkeys.hotkey_tts_read || 'Ctrl+Shift';
+        const ttsTransKey = currentHotkeys.hotkey_tts_translate || 'Ctrl+Alt';
+        const ttsAppKey = currentHotkeys.hotkey_tts_append || 'Ctrl+Tab';
+        const ocrKey = currentHotkeys.hotkey_ocr || 'Alt+Q';
+        const layKey = currentHotkeys.hotkey_layout_convert || 'Ctrl+Pause';
+
+        const capToggle = document.getElementById('toggle-capsule');
+        if (capToggle) {
+          capToggle.title = `Капсула (быстрый ИИ-ввод)\nУдерживайте ${recKey} для диктовки\n${recKey}+Alt — ввод с промптом`;
+        }
+        const widToggle = document.getElementById('toggle-widget');
+        if (widToggle) {
+          widToggle.title = `Виджет озвучки (плавающий плеер)\n${ttsReadKey} — озвучить выделенное\n${ttsTransKey} — перевести и озвучить\n${ttsAppKey} — добавить в очередь`;
+        }
+        const ocrToggle = document.getElementById('toggle-ocr');
+        if (ocrToggle) {
+          ocrToggle.title = `Оверлей переводчика OCR\n${ocrKey} — открыть/закрыть оверлей`;
+        }
+        const layToggle = document.getElementById('toggle-layout');
+        if (layToggle) {
+          layToggle.title = `Смена раскладки клавиатуры (${layKey})\n0: Выключено\n1: Только хоткеи\n2: Автозамена на лету`;
+        }
+      }
+
       async function loadConfig() {
         if (invoke) {
           try {
             const config = await invoke('load_config');
+            const userNameInput = document.getElementById('setting-user-name');
+            if (userNameInput) userNameInput.value = config.user_name || '';
+            updateGreetingUI(config.user_name || '');
+
+            // Если имя пользователя ещё не задано и мы ещё не показывали окно знакомства — покажем ненавязчивую модалку профиля
+            if (!config.user_name && !localStorage.getItem('sinc_profile_prompted')) {
+              setTimeout(() => {
+                if (typeof window.openProfileModal === 'function') {
+                  window.openProfileModal(true);
+                }
+              }, 800);
+            }
+
             document.getElementById('setting-ui-lang').value = config.ui_lang || 'ru';
             document.getElementById('setting-dictation-lang').value = config.dictation_lang || 'auto';
             document.getElementById('setting-api-key').value = config.api_key || '';
             localStorage.setItem('apiKey', config.api_key || '');
             document.getElementById('setting-yandex-api-key').value = config.yandex_api_key || '';
             document.getElementById('setting-ocr-mode').value = config.ocr_mode || 'text';
-            document.getElementById('setting-layout-modifier').value = config.layout_hotkey_modifier || 'Ctrl';
-            document.getElementById('setting-layout-key').value = config.layout_hotkey_key || 'Pause';
+
+            // Загружаем все 9 хоткеев
+            const legacyConvert = (config.layout_hotkey_modifier && config.layout_hotkey_key)
+              ? `${config.layout_hotkey_modifier}+${config.layout_hotkey_key}`
+              : DEFAULT_HOTKEYS.hotkey_layout_convert;
+
+            currentHotkeys = {
+              hotkey_record: config.hotkey_record || DEFAULT_HOTKEYS.hotkey_record,
+              hotkey_force_send: config.hotkey_force_send || DEFAULT_HOTKEYS.hotkey_force_send,
+              hotkey_tts_read: config.hotkey_tts_read || DEFAULT_HOTKEYS.hotkey_tts_read,
+              hotkey_tts_translate: config.hotkey_tts_translate || DEFAULT_HOTKEYS.hotkey_tts_translate,
+              hotkey_tts_append: config.hotkey_tts_append || DEFAULT_HOTKEYS.hotkey_tts_append,
+              hotkey_ocr: config.hotkey_ocr || DEFAULT_HOTKEYS.hotkey_ocr,
+              hotkey_layout_convert: config.hotkey_layout_convert || legacyConvert,
+              hotkey_layout_undo: config.hotkey_layout_undo || DEFAULT_HOTKEYS.hotkey_layout_undo,
+              hotkey_layout_exclude: config.hotkey_layout_exclude || DEFAULT_HOTKEYS.hotkey_layout_exclude
+            };
+
+            const parts = (currentHotkeys.hotkey_layout_convert || 'Ctrl+Pause').split('+');
+            const modInput = document.getElementById('setting-layout-modifier');
+            const keyInput = document.getElementById('setting-layout-key');
+            if (modInput) modInput.value = parts[0] || 'Ctrl';
+            if (keyInput) keyInput.value = parts[parts.length - 1] || 'Pause';
+
+            syncHotkeysEverywhere();
+
             layoutExcludedWords = config.layout_excluded_words || [];
             renderLayoutWords();
             layoutExcludedProcesses = config.layout_excluded_processes || [];
@@ -1004,10 +1204,11 @@
           document.getElementById('setting-api-key').value = mockKey;
           localStorage.setItem('apiKey', mockKey);
           updateApiStatus(mockKey);
+          syncHotkeysEverywhere();
         }
       }
 
-      async function saveConfig() {
+      async function saveConfig(showNotification = true) {
         if (invoke) {
           const sttEngineVal = document.getElementById('setting-stt-engine').value;
           let sttEngine = 'gemini';
@@ -1018,15 +1219,35 @@
             sttLocalModel = sttEngineVal.substring(6);
           }
 
+          const userNameVal = (document.getElementById('setting-user-name')?.value || '').trim();
+          const convParts = (currentHotkeys.hotkey_layout_convert || 'Ctrl+Pause').split('+');
+          const legacyMod = convParts[0] || 'Ctrl';
+          const legacyKey = convParts[convParts.length - 1] || 'Pause';
+
+          const modEl = document.getElementById('setting-layout-modifier');
+          const keyEl = document.getElementById('setting-layout-key');
+          if (modEl) modEl.value = legacyMod;
+          if (keyEl) keyEl.value = legacyKey;
+
           const fields = {
+            user_name: userNameVal,
             ui_lang: document.getElementById('setting-ui-lang').value,
             dictation_lang: document.getElementById('setting-dictation-lang').value,
             api_key: document.getElementById('setting-api-key').value,
             yandex_api_key: document.getElementById('setting-yandex-api-key').value,
             ai_model: document.getElementById('setting-ai-model').value,
             ocr_mode: document.getElementById('setting-ocr-mode').value,
-            layout_hotkey_modifier: document.getElementById('setting-layout-modifier').value,
-            layout_hotkey_key: document.getElementById('setting-layout-key').value,
+            layout_hotkey_modifier: legacyMod,
+            layout_hotkey_key: legacyKey,
+            hotkey_record: currentHotkeys.hotkey_record,
+            hotkey_force_send: currentHotkeys.hotkey_force_send,
+            hotkey_tts_read: currentHotkeys.hotkey_tts_read,
+            hotkey_tts_translate: currentHotkeys.hotkey_tts_translate,
+            hotkey_tts_append: currentHotkeys.hotkey_tts_append,
+            hotkey_ocr: currentHotkeys.hotkey_ocr,
+            hotkey_layout_convert: currentHotkeys.hotkey_layout_convert,
+            hotkey_layout_undo: currentHotkeys.hotkey_layout_undo,
+            hotkey_layout_exclude: currentHotkeys.hotkey_layout_exclude,
             stt_engine: sttEngine,
             tts_engine: document.getElementById('setting-tts-engine').value,
             stt_local_model: sttLocalModel,
@@ -1037,9 +1258,10 @@
           };
           try {
             await invoke('update_config_fields', { fields });
+            updateGreetingUI(userNameVal);
+            syncHotkeysEverywhere();
             updateApiStatus(fields.api_key);
             localStorage.setItem('apiKey', fields.api_key || '');
-            console.log("Настройки сохранены:", fields);
             
             // Синхронизируем VoiceCore
             if (window.__TAURI__) {
@@ -1052,8 +1274,14 @@
               });
             }
             await updateExtensionsStatus();
+            if (showNotification && typeof showToast === 'function') {
+              showToast('✓ Настройки сохранены и применены', false);
+            }
           } catch (err) {
             console.error("Ошибка сохранения настроек:", err);
+            if (typeof showToast === 'function') {
+              showToast('Ошибка сохранения настроек: ' + err, true);
+            }
           }
         }
       }
@@ -1115,7 +1343,7 @@
             sttStatusText.className = 'text-[11px] text-[#ccc3d8] mt-0.5';
             if (sttSelect.value.startsWith('local_')) {
               sttSelect.value = 'gemini';
-              await saveConfig();
+              await saveConfig(false);
             }
           }
 
@@ -1147,7 +1375,7 @@
             const ttsSelect = document.getElementById('setting-tts-engine');
             if (ttsSelect.value === 'local') {
               ttsSelect.value = 'edge';
-              await saveConfig();
+              await saveConfig(false);
             }
           }
 
@@ -1360,25 +1588,179 @@
       window.removeLayoutWord = function(index) {
         layoutExcludedWords.splice(index, 1);
         renderLayoutWords();
-        saveConfig();
+        saveConfig(true);
       };
 
       window.removeLayoutApp = function(index) {
         layoutExcludedProcesses.splice(index, 1);
         renderLayoutApps();
-        saveConfig();
+        saveConfig(true);
       };
 
-      // Привязываем автосохранение настроек
-      document.getElementById('setting-ui-lang').addEventListener('change', saveConfig);
-      document.getElementById('setting-dictation-lang').addEventListener('change', saveConfig);
-      document.getElementById('setting-ocr-mode').addEventListener('change', saveConfig);
-      document.getElementById('setting-stt-engine').addEventListener('change', saveConfig);
-      document.getElementById('setting-tts-engine').addEventListener('change', saveConfig);
-      document.getElementById('setting-stt-local-model').addEventListener('change', saveConfig);
-      document.getElementById('setting-tts-local-voice').addEventListener('change', saveConfig);
-      document.getElementById('setting-layout-modifier').addEventListener('change', saveConfig);
-      document.getElementById('setting-layout-key').addEventListener('change', saveConfig);
+      // ==========================================================================
+      // ИНТЕРАКТИВНАЯ ЗАПИСЬ ХОТКЕЕВ (.hotkey-recorder-btn)
+      // ==========================================================================
+      let activeRecorderBtn = null;
+      let activeRecorderField = null;
+      let heldModifiers = new Set();
+
+      function normalizeKeyEventToSpec(e) {
+        const mods = [];
+        if (e.ctrlKey || heldModifiers.has('Ctrl')) mods.push('Ctrl');
+        if (e.altKey || heldModifiers.has('Alt')) mods.push('Alt');
+        if (e.shiftKey || heldModifiers.has('Shift')) mods.push('Shift');
+        if (e.metaKey || heldModifiers.has('Win')) mods.push('Win');
+
+        const code = e.code || '';
+        const key = e.key || '';
+
+        if (key === 'Control' || key === 'Shift' || key === 'Alt' || key === 'Meta' || key === 'OS') {
+          return { mods, mainKey: null };
+        }
+
+        let mainKey = null;
+        if (code.startsWith('Key')) {
+          mainKey = code.substring(3).toUpperCase();
+        } else if (code.startsWith('Digit')) {
+          mainKey = code.substring(5);
+        } else if (/^F([1-9]|1[0-2])$/.test(code)) {
+          mainKey = code;
+        } else if (code === 'Space' || key === ' ') {
+          mainKey = 'Space';
+        } else if (code === 'Tab' || key === 'Tab') {
+          mainKey = 'Tab';
+        } else if (code === 'Pause' || key === 'Pause') {
+          mainKey = 'Pause';
+        } else if (code === 'Backquote' || key === '`' || key === '~' || key === 'ё' || key === 'Ё') {
+          mainKey = '`';
+        } else if (code === 'CapsLock') {
+          mainKey = 'CapsLock';
+        } else if (code === 'Insert') {
+          mainKey = 'Insert';
+        } else if (code === 'ScrollLock') {
+          mainKey = 'ScrollLock';
+        } else if (code === 'Home' || code === 'End' || code === 'PageUp' || code === 'PageDown' || code === 'Delete' || code === 'Backspace' || code === 'Enter') {
+          mainKey = code;
+        }
+
+        return { mods, mainKey };
+      }
+
+      function stopHotkeyRecording(restoreOld = true) {
+        if (!activeRecorderBtn) return;
+        activeRecorderBtn.classList.remove('ring-2', 'ring-[#8e52ff]', 'bg-[#2a2438]', 'text-white');
+        if (restoreOld && activeRecorderField) {
+          activeRecorderBtn.textContent = currentHotkeys[activeRecorderField] || DEFAULT_HOTKEYS[activeRecorderField];
+        }
+        activeRecorderBtn = null;
+        activeRecorderField = null;
+        heldModifiers.clear();
+      }
+
+      document.querySelectorAll('.hotkey-recorder-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const field = btn.getAttribute('data-hotkey-field');
+          if (!field) return;
+          if (activeRecorderBtn === btn) {
+            stopHotkeyRecording(true);
+            return;
+          }
+          stopHotkeyRecording(true);
+          activeRecorderBtn = btn;
+          activeRecorderField = field;
+          heldModifiers.clear();
+          btn.textContent = 'Нажмите клавиши...';
+          btn.classList.add('ring-2', 'ring-[#8e52ff]', 'bg-[#2a2438]', 'text-white');
+        });
+      });
+
+      window.addEventListener('keydown', (e) => {
+        if (!activeRecorderBtn || !activeRecorderField) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (e.key === 'Escape') {
+          stopHotkeyRecording(true);
+          return;
+        }
+
+        if (e.key === 'Control') heldModifiers.add('Ctrl');
+        if (e.key === 'Alt') heldModifiers.add('Alt');
+        if (e.key === 'Shift') heldModifiers.add('Shift');
+        if (e.key === 'Meta' || e.key === 'OS') heldModifiers.add('Win');
+
+        const { mods, mainKey } = normalizeKeyEventToSpec(e);
+        if (mainKey) {
+          const combo = [...mods, mainKey].join('+');
+          currentHotkeys[activeRecorderField] = combo;
+          stopHotkeyRecording(false);
+          syncHotkeysEverywhere();
+          saveConfig(true);
+        } else if (mods.length > 0) {
+          activeRecorderBtn.textContent = mods.join('+') + '+...';
+        }
+      }, true);
+
+      window.addEventListener('keyup', (e) => {
+        if (!activeRecorderBtn || !activeRecorderField) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Позволяем сохранить чисто модификаторные комбинации (например Ctrl+Win, Ctrl+Shift, Ctrl+Alt), если зажато >= 2 модификаторов
+        if (heldModifiers.size >= 2) {
+          const ordered = [];
+          if (heldModifiers.has('Ctrl')) ordered.push('Ctrl');
+          if (heldModifiers.has('Alt')) ordered.push('Alt');
+          if (heldModifiers.has('Shift')) ordered.push('Shift');
+          if (heldModifiers.has('Win')) ordered.push('Win');
+          const combo = ordered.join('+');
+          currentHotkeys[activeRecorderField] = combo;
+          stopHotkeyRecording(false);
+          syncHotkeysEverywhere();
+          saveConfig(true);
+        }
+      }, true);
+
+      document.addEventListener('click', (e) => {
+        if (activeRecorderBtn && !e.target.closest('.hotkey-recorder-btn')) {
+          stopHotkeyRecording(true);
+        }
+      });
+
+      const btnResetHotkeys = document.getElementById('btn-reset-hotkeys');
+      if (btnResetHotkeys) {
+        btnResetHotkeys.addEventListener('click', () => {
+          currentHotkeys = { ...DEFAULT_HOTKEYS };
+          syncHotkeysEverywhere();
+          saveConfig(true);
+        });
+      }
+
+      // Привязываем сохранение настроек (автоматическое + по кнопкам «Сохранить настройки»)
+      document.getElementById('setting-ui-lang').addEventListener('change', () => saveConfig(true));
+      document.getElementById('setting-dictation-lang').addEventListener('change', () => saveConfig(true));
+      document.getElementById('setting-ocr-mode').addEventListener('change', () => saveConfig(true));
+      document.getElementById('setting-stt-engine').addEventListener('change', () => saveConfig(true));
+      document.getElementById('setting-tts-engine').addEventListener('change', () => saveConfig(true));
+      document.getElementById('setting-stt-local-model').addEventListener('change', () => saveConfig(true));
+      document.getElementById('setting-tts-local-voice').addEventListener('change', () => saveConfig(true));
+
+      const userNameInputEl = document.getElementById('setting-user-name');
+      if (userNameInputEl) {
+        userNameInputEl.addEventListener('change', () => saveConfig(true));
+        userNameInputEl.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            saveConfig(true);
+          }
+        });
+      }
+
+      const btnSaveTop = document.getElementById('btn-save-settings-top');
+      if (btnSaveTop) btnSaveTop.addEventListener('click', () => saveConfig(true));
+      const btnSaveBottom = document.getElementById('btn-save-settings-bottom');
+      if (btnSaveBottom) btnSaveBottom.addEventListener('click', () => saveConfig(true));
 
       // Привязываем обработчики добавления исключений раскладки
       document.getElementById('btn-layout-add-word').addEventListener('click', () => {
@@ -1388,7 +1770,7 @@
           layoutExcludedWords.push(val);
           input.value = '';
           renderLayoutWords();
-          saveConfig();
+          saveConfig(true);
         }
       });
       document.getElementById('input-layout-word').addEventListener('keydown', (e) => {
@@ -1404,7 +1786,7 @@
           layoutExcludedProcesses.push(val);
           input.value = '';
           renderLayoutApps();
-          saveConfig();
+          saveConfig(true);
         }
       });
       document.getElementById('input-layout-app').addEventListener('keydown', (e) => {
@@ -1417,14 +1799,14 @@
         localStorage.setItem('apiKey', key);
         const currentModel = document.getElementById('setting-ai-model').value;
         await fetchAndPopulateModels(key, currentModel);
-        saveConfig();
+        saveConfig(true);
       }, 1200));
       document.getElementById('setting-yandex-api-key').addEventListener('input', debounce(() => {
-        saveConfig();
+        saveConfig(true);
       }, 1000));
       document.getElementById('setting-ai-model').addEventListener('change', () => {
         updateModelInfo(document.getElementById('setting-ai-model').value);
-        saveConfig();
+        saveConfig(true);
       });
       // Кнопка ручного обновления списка моделей
       document.getElementById('btn-refresh-models').addEventListener('click', () => {
@@ -1496,7 +1878,7 @@
         const currentModel = select.value === id ? 'gemini-2.0-flash' : select.value;
         await fetchAndPopulateModels(key, currentModel);
         
-        await saveConfig();
+        await saveConfig(true);
       };
 
       async function checkServerHeartbeat(id, url) {
@@ -1576,12 +1958,12 @@
         const select = document.getElementById('setting-ai-model');
         await fetchAndPopulateModels(key, select.value);
 
-        await saveConfig();
+        await saveConfig(true);
       });
 
-      // Периодический heartbeat серверов раз в 15 секунд
+      // Периодический heartbeat серверов раз в 15 секунд (только когда окно видимо)
       setInterval(() => {
-        if (localAiServers && localAiServers.length > 0) {
+        if (!document.hidden && localAiServers && localAiServers.length > 0) {
           localAiServers.forEach(server => {
             checkServerHeartbeat(server.id, server.url);
           });
@@ -3283,11 +3665,98 @@
           refreshHistory();
         });
 
-        // Логика Tauri Updater
+        // Слушаем событие обновления списка процессов-исключений автораскладки (Shift+Pause)
+        window.__TAURI__.event.listen('excluded-processes-updated', (event) => {
+          if (Array.isArray(event.payload)) {
+            layoutExcludedProcesses = event.payload;
+            renderLayoutApps();
+            showToast('Приложение добавлено в исключения автораскладки', false);
+          }
+        });
+
+        // Мониторинг статуса микрофона (аппаратный + события от капсулы при тишине/ошибке)
+        const micStatusDot = document.getElementById('mic-status-dot');
+        const micStatusContainer = document.getElementById('status-container-mic');
+
+        function setMicStatusIndicator(status, message) {
+          if (!micStatusDot || !micStatusContainer) return;
+          if (status === 'ok') {
+            micStatusDot.className = 'w-2 h-2 rounded-full bg-[#7bd6d1] shadow-[0_0_6px_rgba(123,214,209,0.6)]';
+            micStatusContainer.title = message || 'Микрофон: Готов к записи';
+          } else if (status === 'silent') {
+            micStatusDot.className = 'w-2 h-2 rounded-full bg-[#ffb74d] shadow-[0_0_6px_rgba(255,183,77,0.7)]';
+            micStatusContainer.title = `Микрофон: ${message || 'Обнаружена тишина (звук не поступает)'}`;
+          } else {
+            micStatusDot.className = 'w-2 h-2 rounded-full bg-[#ff5252] shadow-[0_0_6px_rgba(255,82,82,0.8)]';
+            micStatusContainer.title = `Микрофон: ${message || 'Неисправен или отключён!'}`;
+          }
+        }
+
+        async function refreshMicHardwareStatus() {
+          if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+          try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const hasAudioInput = devices.some(d => d.kind === 'audioinput');
+            if (!hasAudioInput) {
+              setMicStatusIndicator('error', 'Аудиоустройства ввода не найдены!');
+            } else {
+              setMicStatusIndicator('ok', 'Микрофон: Подключён и готов к записи');
+            }
+          } catch (_) {}
+        }
+
+        refreshMicHardwareStatus();
+        if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+          navigator.mediaDevices.addEventListener('devicechange', refreshMicHardwareStatus);
+        }
+
+        window.__TAURI__.event.listen('mic-status-changed', (event) => {
+          const payload = event.payload || {};
+          setMicStatusIndicator(payload.status || 'ok', payload.message || '');
+          if (payload.status === 'error' || payload.status === 'silent') {
+            showToast(payload.message || 'Проверьте микрофон: звук не обнаружен', true);
+          }
+        });
+
+        // Логика Tauri Updater и заметного уведомления об обновлении в шапке
         const btnCheckUpdates = document.getElementById('btn-check-updates');
         const updateStatusText = document.getElementById('update-status-text');
         const updateProgressContainer = document.getElementById('update-progress-container');
         const updateProgressBar = document.getElementById('update-progress-bar');
+        const headerUpdateBanner = document.getElementById('header-update-banner');
+        const headerUpdateText = document.getElementById('header-update-text');
+
+        if (headerUpdateBanner) {
+          headerUpdateBanner.addEventListener('click', () => {
+            switchTab('tab-settings');
+            if (btnCheckUpdates && !btnCheckUpdates.disabled) {
+              btnCheckUpdates.click();
+            }
+          });
+        }
+
+        // Фоновая проверка обновлений при запуске (чтобы сразу показать кнопку в шапке дашборда)
+        setTimeout(async () => {
+          try {
+            if (window.__TAURI__ && window.__TAURI__.updater) {
+              const { check } = window.__TAURI__.updater;
+              const update = await check();
+              if (update && update.version) {
+                if (headerUpdateBanner && headerUpdateText) {
+                  headerUpdateText.textContent = `Доступно обновление v${update.version}`;
+                  headerUpdateBanner.classList.remove('hidden');
+                  headerUpdateBanner.classList.add('flex');
+                }
+                if (updateStatusText) {
+                  updateStatusText.classList.remove('hidden');
+                  updateStatusText.innerHTML = `Доступна новая версия: <strong class="text-[#7bd6d1]">${update.version}</strong>`;
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('Фоновая проверка обновлений не удалась:', e);
+          }
+        }, 2500);
 
         if (btnCheckUpdates) {
           btnCheckUpdates.addEventListener('click', async () => {
@@ -3319,6 +3788,11 @@
               }
 
               // Если обновление найдено
+              if (headerUpdateBanner && headerUpdateText) {
+                headerUpdateText.textContent = `Доступно обновление v${update.version}`;
+                headerUpdateBanner.classList.remove('hidden');
+                headerUpdateBanner.classList.add('flex');
+              }
               if (updateStatusText) {
                 updateStatusText.classList.remove('hidden');
                 updateStatusText.innerHTML = `Доступна новая версия: <strong class="text-[#7bd6d1]">${update.version}</strong>`;
@@ -3386,6 +3860,99 @@
       }
     </script>
 
+
+    <!-- Modal: Локальный профиль пользователя (Имя) -->
+    <div id="profile-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center opacity-0 pointer-events-none transition-all duration-300 ease-out z-[95]">
+      <div class="bg-[#1b1b20] border border-[#4a4455]/40 rounded-2xl w-full max-w-[380px] p-6 shadow-2xl transform scale-95 transition-all duration-300 ease-out flex flex-col gap-4 text-[#e4e1e9]" id="profile-modal-content">
+        <div class="flex items-center justify-between pb-3 border-b border-[#4a4455]/20">
+          <div class="flex items-center gap-2">
+            <span class="material-symbols-outlined text-[#d2bbff] text-[20px]">badge</span>
+            <h3 class="text-sm font-semibold tracking-wide" id="profile-modal-title">Профиль пользователя</h3>
+          </div>
+          <button id="profile-modal-close" class="p-1 rounded-lg text-[#ccc3d8] hover:text-white hover:bg-[#2a292f] transition-all cursor-pointer outline-none">
+            <span class="material-symbols-outlined text-[18px]">close</span>
+          </button>
+        </div>
+
+        <div class="flex flex-col gap-3">
+          <p class="text-[12px] text-[#ccc3d8] leading-relaxed">
+            Как к вам обращаться в приложении <strong class="text-white">SincPro</strong>? Имя сохраняется локально на вашем устройстве.
+          </p>
+          <div class="flex flex-col gap-1.5">
+            <label for="profile-modal-name-input" class="text-[11px] text-[#ccc3d8] font-medium">Ваше имя</label>
+            <input type="text" id="profile-modal-name-input" class="bg-[#0e0e13] border border-[#4a4455]/40 text-white rounded-xl px-3.5 py-2.5 text-[13px] focus:outline-none focus:border-[#8e52ff] focus:ring-1 focus:ring-[#8e52ff] w-full transition-all" placeholder="Введите ваше имя..." />
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-2.5 pt-3 border-t border-[#4a4455]/20 mt-1">
+          <button id="profile-modal-cancel" class="px-4 py-2 rounded-xl text-[12px] font-medium text-[#ccc3d8] hover:text-white hover:bg-[#2a292f] transition-all cursor-pointer outline-none">
+            Позже
+          </button>
+          <button id="profile-modal-save" class="px-4 py-2 rounded-xl text-[12px] font-semibold text-white bg-gradient-to-r from-[#8e52ff] to-[#a370ff] hover:from-[#9d66ff] hover:to-[#b385ff] shadow-lg shadow-[#8e52ff]/20 transition-all cursor-pointer outline-none">
+            Сохранить
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (function setupProfileModal() {
+        const modal = document.getElementById('profile-modal');
+        const content = document.getElementById('profile-modal-content');
+        const input = document.getElementById('profile-modal-name-input');
+        const closeBtn = document.getElementById('profile-modal-close');
+        const cancelBtn = document.getElementById('profile-modal-cancel');
+        const saveBtn = document.getElementById('profile-modal-save');
+        const avatarBtn = document.getElementById('btn-profile-avatar');
+        const greetingTitle = document.getElementById('greeting-title');
+
+        window.openProfileModal = function(isOnboarding = false) {
+          if (!modal || !content || !input) return;
+          const settingInput = document.getElementById('setting-user-name');
+          input.value = settingInput ? settingInput.value : '';
+          modal.classList.remove('opacity-0', 'pointer-events-none');
+          modal.classList.add('opacity-100');
+          content.classList.remove('scale-95');
+          content.classList.add('scale-100');
+          setTimeout(() => input.focus(), 60);
+        };
+
+        function closeProfileModal() {
+          if (!modal || !content) return;
+          localStorage.setItem('sinc_profile_prompted', 'true');
+          modal.classList.remove('opacity-100');
+          modal.classList.add('opacity-0', 'pointer-events-none');
+          content.classList.remove('scale-100');
+          content.classList.add('scale-95');
+        }
+
+        async function saveProfileModal() {
+          const val = (input?.value || '').trim();
+          localStorage.setItem('sinc_profile_prompted', 'true');
+          const settingInput = document.getElementById('setting-user-name');
+          if (settingInput) settingInput.value = val;
+          updateGreetingUI(val);
+          closeProfileModal();
+          await saveConfig(true);
+        }
+
+        if (closeBtn) closeBtn.addEventListener('click', closeProfileModal);
+        if (cancelBtn) cancelBtn.addEventListener('click', closeProfileModal);
+        if (saveBtn) saveBtn.addEventListener('click', saveProfileModal);
+        if (input) {
+          input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              saveProfileModal();
+            } else if (e.key === 'Escape') {
+              closeProfileModal();
+            }
+          });
+        }
+        if (avatarBtn) avatarBtn.addEventListener('click', () => window.openProfileModal(false));
+        if (greetingTitle) greetingTitle.addEventListener('click', () => window.openProfileModal(false));
+      })();
+    </script>
 
     <!-- Modal: Новый запрос ИИ -->
     <div id="new-request-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center opacity-0 pointer-events-none transition-all duration-300 ease-out z-[90]">

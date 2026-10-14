@@ -71,7 +71,7 @@ document.addEventListener('DOMContentLoaded', () => {
               const my = mon.position.y;
               const mw = mon.size.width;
               const mh = mon.size.height;
-              if (parsed.x >= mx && parsed.x < mx + mw && parsed.y >= my && parsed.y < my + mh) {
+              if (parsed.x >= mx - 40 && parsed.x < mx + mw && parsed.y >= my - 40 && parsed.y < my + mh) {
                 isInsideAnyMonitor = true;
                 break;
               }
@@ -95,10 +95,13 @@ document.addEventListener('DOMContentLoaded', () => {
         x: pos.x,
         y: pos.y
       });
+      cachedWindowPos = { x: pos.x, y: pos.y };
     } catch (e) {
       console.error('[Widget] initPosition WinAPI failed:', e);
     }
   }
+
+  let cachedWindowPos = { x: 0, y: 0 };
 
   // Следим за перемещением виджета и сохраняем его позицию с дебаунсом
   if (window.__TAURI__ && appWindow) {
@@ -108,9 +111,10 @@ document.addEventListener('DOMContentLoaded', () => {
       widgetTimeout = setTimeout(async () => {
         try {
           const pos = await appWindow.outerPosition();
+          cachedWindowPos = { x: pos.x, y: pos.y };
           localStorage.setItem('widget_pos', JSON.stringify({ x: pos.x, y: pos.y }));
         } catch (_) {}
-      }, 300);
+      }, 200);
     });
   }
 
@@ -148,73 +152,147 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Декорации отключены в tauri.conf.json статически для стабильности DWM
-
   const btnExpand = document.getElementById('tts-btn-expand');
   const expandedRow = document.getElementById('expanded-row');
   const expandIcon = document.getElementById('tts-expand-icon');
 
-  let isMenuOpen = false;
-
-  // ======================================================================
-  // РАЗМЕР ОКНА И ХИТБОКС — по аналогии с capsule.html
-  // Окно из tauri.conf.json: width=500, height=380
-  // Виджет-контейнер: w-[500px], панель h-[52px]
-  // ======================================================================
-
   const WIN_WIDTH = 580;
-  const WIN_HEIGHT_COLLAPSED = 100; // 52px панель + 16px padding-top + 32px тень снизу
   const WIN_HEIGHT_EXPANDED = 480;
 
   let isRowExpanded = false;
   let isDropdownOpen = false;
+  let currentRegionState = 'hover_collapsed';
 
   async function updateWindowHeight() {
-    // Больше не изменяем физический размер окна Tauri (всегда 580x380) для предотвращения сброса DWM стилей и появления нативной рамки
+    // Физический размер окна постоянен для стабильности DWM
   }
 
   // ======================================================================
-  // ОБРЕЗКА ОКНА ЧЕРЕЗ WIN32 REGION (Идеальный прозрачный хитбокс)
-  // Точная копия паттерна из capsule.html — updateClickRegion
+  // ОБРЕЗКА ОКНА ЧЕРЕЗ WIN32 REGION + КЛИКАБЕЛЬНОСТЬ СКВОЗЬ ТЕНЬ/СИЯНИЕ
   // ======================================================================
 
   async function updateClickRegion(state) {
     if (!window.__TAURI__) return;
     const { invoke } = window.__TAURI__.core;
+    if (state) currentRegionState = state;
 
     try {
-      let w, h, x, y;
+      const scaleFactor = window.devicePixelRatio || 1;
+      const rects = [];
 
-      // Контейнер виджета w=500px, отцентрован по горизонтали в окне 580px -> x = (580 - 500) / 2 = 40px
-      // Даем максимальный запас по бокам для тени: x = 2px, w = 576px (оставляем 2px зазора по бокам).
-      // Внутренний отступ сверху: padding-top: 32px.
-      // Зададим y = 30px для сохранения верхней тени и гарантированного отсечения Titlebar (y < 30px).
-      x = 2;
-      y = 30;
-      w = 576;
+      // Базовый прямоугольник плашки + запас под визуальную тень (сама тень пропускает клики через set_ignore_cursor_events)
+      const isHoverCollapsed = currentRegionState === 'hover_collapsed';
+      const barW = isHoverCollapsed ? 180 : 564;
+      const barH = (currentRegionState === 'expanded' || isRowExpanded) ? 145 : 98;
+      rects.push({ x: 4, y: 0, width: barW, height: barH });
 
-      if (state === 'hover_collapsed') {
-        x = 2;
-        w = 210;
-        h = 118;
-      } else if (state === 'collapsed') {
-        h = 118; // 52px панель + 66px запас для плавного затухания нижней тени
-      } else if (state === 'expanded') {
-        h = 165; // 52px панель + 45px второй ряд + 68px запас для тени
-      } else {
-        // dropdown
-        h = 443; // 480px высота окна - 37px отступов (30px сверху, 7px снизу)
+      // Если открыто выпадающее меню голоса или скорости — добавляем его точный прямоугольник с запасом под тень
+      if (currentRegionState === 'dropdown' || isDropdownOpen) {
+        const voiceMenu = root ? root.querySelector('#tts-voice-menu') : null;
+        const speedMenu = root ? root.querySelector('#tts-speed-menu') : null;
+        const openMenu = (voiceMenu && !voiceMenu.classList.contains('hidden')) ? voiceMenu
+                       : ((speedMenu && !speedMenu.classList.contains('hidden')) ? speedMenu : null);
+        if (openMenu) {
+          const mr = openMenu.getBoundingClientRect();
+          if (mr.width > 0 && mr.height > 0) {
+            rects.push({
+              x: Math.max(0, Math.floor(mr.left - 16)),
+              y: Math.max(0, Math.floor(mr.top - 8)),
+              width: Math.ceil(mr.width + 32),
+              height: Math.ceil(mr.height + 28)
+            });
+          } else {
+            rects[0].height = 420;
+          }
+        } else {
+          rects[0].height = 420;
+        }
       }
 
-      const scaleFactor = window.devicePixelRatio || 1;
       await invoke('set_click_region', {
-        rects: [{ x, y, width: w, height: h }],
+        rects,
         scaleFactor
       });
     } catch (e) {
       console.error('[Widget] Region err:', e);
     }
   }
+
+  // Проверка: находится ли точка (в логических координатах окна) внутри реального тела виджета или открытого меню (а не в полупрозрачной тени вокруг него)
+  function isPointInsideWidgetBody(clientX, clientY) {
+    if (!widgetContainer) return false;
+    const r = widgetContainer.getBoundingClientRect();
+    if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
+      return true;
+    }
+    if (root) {
+      const voiceMenu = root.querySelector('#tts-voice-menu');
+      if (voiceMenu && !voiceMenu.classList.contains('hidden')) {
+        const vr = voiceMenu.getBoundingClientRect();
+        if (clientX >= vr.left && clientX <= vr.right && clientY >= vr.top && clientY <= vr.bottom) {
+          return true;
+        }
+      }
+      const speedMenu = root.querySelector('#tts-speed-menu');
+      if (speedMenu && !speedMenu.classList.contains('hidden')) {
+        const sr = speedMenu.getBoundingClientRect();
+        if (clientX >= sr.left && clientX <= sr.right && clientY >= sr.top && clientY <= sr.bottom) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // Пропускаем клики сквозь область тени/свечения вокруг виджета
+  let isIgnoringShadowCursor = false;
+  let shadowCursorTimer = null;
+
+  async function setShadowIgnoreCursor(ignore) {
+    if (!window.__TAURI__ || isIgnoringShadowCursor === ignore) return;
+    isIgnoringShadowCursor = ignore;
+    const { invoke } = window.__TAURI__.core;
+    try {
+      await invoke('set_ignore_cursor_events', { ignore });
+    } catch (_) {}
+
+    if (ignore) {
+      if (!shadowCursorTimer) {
+        shadowCursorTimer = setInterval(async () => {
+          if (!isIgnoringShadowCursor) {
+            clearInterval(shadowCursorTimer);
+            shadowCursorTimer = null;
+            return;
+          }
+          try {
+            const [cx, cy] = await invoke('get_cursor_pos');
+            const dpr = window.devicePixelRatio || 1;
+            const lx = (cx - cachedWindowPos.x) / dpr;
+            const ly = (cy - cachedWindowPos.y) / dpr;
+            const outOfWindow = lx < 0 || ly < 0 || lx > WIN_WIDTH || ly > WIN_HEIGHT_EXPANDED;
+            if (outOfWindow || isPointInsideWidgetBody(lx, ly)) {
+              await setShadowIgnoreCursor(false);
+            }
+          } catch (_) {
+            await setShadowIgnoreCursor(false);
+          }
+        }, 50);
+      }
+    } else if (shadowCursorTimer) {
+      clearInterval(shadowCursorTimer);
+      shadowCursorTimer = null;
+    }
+  }
+
+  document.addEventListener('mousemove', (e) => {
+    if (e.buttons !== 0) return;
+    const inside = isPointInsideWidgetBody(e.clientX, e.clientY);
+    if (!inside && !isIgnoringShadowCursor) {
+      setShadowIgnoreCursor(true);
+    } else if (inside && isIgnoringShadowCursor) {
+      setShadowIgnoreCursor(false);
+    }
+  });
 
   if (widgetContainer) {
     widgetContainer.classList.add('hover-collapsed');
@@ -233,7 +311,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         isDropdownOpen = false;
 
-        // Сворачиваем второй ряд и сбрасываем кнопку expand
         if (expandedRow) {
           expandedRow.classList.remove('flex');
           expandedRow.classList.add('hidden');
@@ -245,8 +322,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         widgetContainer.classList.add('hover-collapsed');
         
-        // Откладываем применение узкого WinAPI хитбокса до завершения CSS анимации сжатия (350мс),
-        // чтобы правая часть виджета не срезалась во время движения.
         setTimeout(() => {
           if (widgetContainer.classList.contains('hover-collapsed')) {
             updateClickRegion('hover_collapsed');
@@ -302,13 +377,52 @@ document.addEventListener('DOMContentLoaded', () => {
   root.addEventListener('tts-menu-toggled', (e) => {
     isDropdownOpen = e.detail.expanded;
     updateWindowHeight();
-    updateClickRegion(isDropdownOpen ? 'dropdown' : (isRowExpanded ? 'expanded' : 'collapsed'));
+    setTimeout(() => {
+      updateClickRegion(isDropdownOpen ? 'dropdown' : (isRowExpanded ? 'expanded' : 'collapsed'));
+    }, 20);
   });
+
+  function formatHotkeyHuman(spec) {
+    if (!spec) return '';
+    return spec
+      .replace(/Control|Ctrl/gi, 'Ctrl')
+      .replace(/Shift/gi, 'Shift')
+      .replace(/Alt/gi, 'Alt')
+      .replace(/Key([A-Z])/gi, '$1')
+      .replace(/Digit([0-9])/gi, '$1')
+      .replace(/Backquote/gi, '`')
+      .replace(/Space/gi, 'Space')
+      .replace(/Pause/gi, 'Pause')
+      .replace(/\+/g, ' + ');
+  }
+
+  function applyWidgetHotkeyTooltips(cfg) {
+    if (!cfg) return;
+    const playBtn = root ? root.querySelector('#tts-widget-play') : null;
+    if (playBtn && cfg.hotkey_tts_read) {
+      playBtn.title = `Озвучить / Пауза (${formatHotkeyHuman(cfg.hotkey_tts_read)})`;
+    }
+    const trBtn = root ? root.querySelector('#tts-btn-translate') : null;
+    if (trBtn && cfg.hotkey_tts_translate) {
+      trBtn.title = `Переводить перед чтением (${formatHotkeyHuman(cfg.hotkey_tts_translate)})`;
+    }
+    if (expandedRow) {
+      const btns = expandedRow.querySelectorAll('button');
+      if (btns[0] && cfg.hotkey_ocr) {
+        btns[0].title = `Распознавание текста OCR (${formatHotkeyHuman(cfg.hotkey_ocr)})`;
+      }
+    }
+  }
 
   // Взаимодействие с Tauri (Отправка и прием)
   if (window.__TAURI__) {
     const { invoke } = window.__TAURI__.core;
     const { listen, emit } = window.__TAURI__.event;
+
+    invoke('load_config').then(applyWidgetHotkeyTooltips).catch(() => {});
+    listen('config-updated', (e) => {
+      if (e.payload) applyWidgetHotkeyTooltips(e.payload);
+    });
 
     // Сразу запрашиваем установленные голоса при загрузке
     invoke('get_installed_voices').then((voices) => {
