@@ -803,13 +803,13 @@
               </div>
             </div>
 
-            <!-- Блок 4: Капсула ИИ -->
+            <!-- Блок 4: Плавающие виджеты и Капсула ИИ -->
             <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-5">
-              <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-4">Капсула ИИ</h3>
+              <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-4">Плавающие виджеты и Капсула ИИ</h3>
               <div class="flex flex-col gap-4">
                 <div class="flex items-center justify-between">
                   <div>
-                    <div class="text-[13px] text-[#e4e1e9] font-medium">Магнит</div>
+                    <div class="text-[13px] text-[#e4e1e9] font-medium">Магнит капсулы</div>
                     <div class="text-[11px] text-[#ccc3d8] mt-0.5">Прижиматься к нижней части монитора с курсором</div>
                   </div>
                   <!-- Кастомный toggle — не зависит от Tailwind JIT -->
@@ -819,6 +819,27 @@
                          style="width:18px; height:18px; border-radius:50%; background:white; position:absolute; top:2px; left:20px; transition:left 0.2s; box-shadow:0 1px 3px rgba(0,0,0,0.4);"></div>
                   </div>
                   <input type="checkbox" id="setting-capsule-magnet" style="display:none;" checked />
+                </div>
+
+                <!-- Масштаб плавающих виджетов -->
+                <div class="flex flex-col gap-2.5 pt-4 border-t border-[#4a4455]/20">
+                  <div class="flex items-center justify-between gap-4">
+                    <div>
+                      <div class="text-[13px] text-[#e4e1e9] font-medium">Масштаб плавающих виджетов</div>
+                      <div class="text-[11px] text-[#ccc3d8] mt-0.5">Управление размером виджета озвучки, капсулы ИИ и всплывающих окон (70% – 150%)</div>
+                    </div>
+                    <div class="flex items-center gap-2 flex-shrink-0">
+                      <button type="button" id="btn-widget-scale-dec" class="w-7 h-7 rounded-lg bg-[#1b1b20] hover:bg-[#25232d] border border-[#4a4455]/40 hover:border-[#8e52ff] text-[#e4e1e9] font-bold text-[14px] flex items-center justify-center transition-colors cursor-pointer" title="Уменьшить на 5%">−</button>
+                      <span id="widget-scale-label" class="min-w-[48px] text-center font-mono font-bold text-[13px] text-[#d2bbff]">100%</span>
+                      <button type="button" id="btn-widget-scale-inc" class="w-7 h-7 rounded-lg bg-[#1b1b20] hover:bg-[#25232d] border border-[#4a4455]/40 hover:border-[#8e52ff] text-[#e4e1e9] font-bold text-[14px] flex items-center justify-center transition-colors cursor-pointer" title="Увеличить на 5%">+</button>
+                      <button type="button" id="btn-widget-scale-reset" class="px-2.5 h-7 rounded-lg bg-[#1b1b20] hover:bg-[#25232d] border border-[#4a4455]/40 hover:border-[#8e52ff] text-[#ccc3d8] hover:text-white text-[11px] font-semibold transition-colors cursor-pointer" title="Сбросить масштаб до 100%">100%</button>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-3">
+                    <span class="text-[10px] text-[#ccc3d8]/60 font-mono">70%</span>
+                    <input type="range" id="setting-widget-scale" min="70" max="150" step="5" value="100" class="flex-1 accent-[#8e52ff] cursor-pointer h-1.5 bg-[#1b1b20] rounded-lg" />
+                    <span class="text-[10px] text-[#ccc3d8]/60 font-mono">150%</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1188,6 +1209,12 @@
               syncMagnetToggleUI(magnetVal);
             }
 
+            const scalePercent = Math.round(Math.max(0.7, Math.min(1.5, parseFloat(config.widget_scale) || 1.0)) * 100);
+            const scaleSlider = document.getElementById('setting-widget-scale');
+            const scaleLabel = document.getElementById('widget-scale-label');
+            if (scaleSlider) scaleSlider.value = String(scalePercent);
+            if (scaleLabel) scaleLabel.textContent = `${scalePercent}%`;
+
             localAiServers = config.ai_servers || [];
             renderAiServersList();
 
@@ -1229,6 +1256,9 @@
           if (modEl) modEl.value = legacyMod;
           if (keyEl) keyEl.value = legacyKey;
 
+          const scaleSliderEl = document.getElementById('setting-widget-scale');
+          const widgetScaleVal = scaleSliderEl ? Math.max(0.7, Math.min(1.5, (parseInt(scaleSliderEl.value, 10) || 100) / 100)) : 1.0;
+
           const fields = {
             user_name: userNameVal,
             ui_lang: document.getElementById('setting-ui-lang').value,
@@ -1252,6 +1282,7 @@
             tts_engine: document.getElementById('setting-tts-engine').value,
             stt_local_model: sttLocalModel,
             tts_local_voice: document.getElementById('setting-tts-local-voice').value,
+            widget_scale: widgetScaleVal,
             layout_excluded_words: layoutExcludedWords,
             layout_excluded_processes: layoutExcludedProcesses,
             ai_servers: localAiServers
@@ -1761,6 +1792,53 @@
       if (btnSaveTop) btnSaveTop.addEventListener('click', () => saveConfig(true));
       const btnSaveBottom = document.getElementById('btn-save-settings-bottom');
       if (btnSaveBottom) btnSaveBottom.addEventListener('click', () => saveConfig(true));
+
+      // Управление масштабом плавающих виджетов
+      const widgetScaleSlider = document.getElementById('setting-widget-scale');
+      const widgetScaleLabel = document.getElementById('widget-scale-label');
+      const btnScaleDec = document.getElementById('btn-widget-scale-dec');
+      const btnScaleInc = document.getElementById('btn-widget-scale-inc');
+      const btnScaleReset = document.getElementById('btn-widget-scale-reset');
+
+      function applyWidgetScaleSliderValue(pct, shouldSave = true) {
+        const clamped = Math.max(70, Math.min(150, Math.round(pct / 5) * 5));
+        if (widgetScaleSlider) widgetScaleSlider.value = String(clamped);
+        if (widgetScaleLabel) widgetScaleLabel.textContent = `${clamped}%`;
+        if (shouldSave) {
+          saveConfig(true);
+        }
+      }
+
+      if (widgetScaleSlider) {
+        widgetScaleSlider.addEventListener('input', () => {
+          const val = parseInt(widgetScaleSlider.value, 10) || 100;
+          if (widgetScaleLabel) widgetScaleLabel.textContent = `${val}%`;
+          if (invoke) {
+            invoke('update_config_fields', { fields: { widget_scale: val / 100 } }).catch(() => {});
+          }
+        });
+        widgetScaleSlider.addEventListener('change', () => {
+          const val = parseInt(widgetScaleSlider.value, 10) || 100;
+          applyWidgetScaleSliderValue(val, true);
+        });
+      }
+      if (btnScaleDec) {
+        btnScaleDec.addEventListener('click', () => {
+          const cur = parseInt(widgetScaleSlider?.value || '100', 10) || 100;
+          applyWidgetScaleSliderValue(cur - 5, true);
+        });
+      }
+      if (btnScaleInc) {
+        btnScaleInc.addEventListener('click', () => {
+          const cur = parseInt(widgetScaleSlider?.value || '100', 10) || 100;
+          applyWidgetScaleSliderValue(cur + 5, true);
+        });
+      }
+      if (btnScaleReset) {
+        btnScaleReset.addEventListener('click', () => {
+          applyWidgetScaleSliderValue(100, true);
+        });
+      }
 
       // Привязываем обработчики добавления исключений раскладки
       document.getElementById('btn-layout-add-word').addEventListener('click', () => {

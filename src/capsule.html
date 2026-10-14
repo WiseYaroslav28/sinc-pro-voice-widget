@@ -631,9 +631,19 @@
       // Модуль Капсулы и его режим работы
       let capsuleMode = 2;
       let isCapsuleEnabled = true;
+      let widgetScale = 1.0;
+
+      function applyCapsuleScale(scale) {
+        const clamped = Math.max(0.7, Math.min(1.5, parseFloat(scale) || 1.0));
+        widgetScale = clamped;
+        if (container) {
+          container.style.transformOrigin = 'bottom center';
+          container.style.transform = clamped === 1 ? '' : `scale(${clamped})`;
+        }
+      }
 
       // ======================================================================
-      // ОБЩАЯ ЛОГИКА ПОЗИЦИОНИРОВАНИЯ (Окно зафиксировано 340x260)
+      // ОБЩАЯ ЛОГИКА ПОЗИЦИОНИРОВАНИЯ
       // ======================================================================
 
       async function resizeToState(state) {
@@ -646,8 +656,9 @@
           return;
         }
 
-        const w_phys = Math.round(340 * cachedScaleFactor);
-        const h_phys = Math.round(260 * cachedScaleFactor);
+        const scaleMult = Math.max(1, widgetScale);
+        const w_phys = Math.round(340 * scaleMult * cachedScaleFactor);
+        const h_phys = Math.round(260 * scaleMult * cachedScaleFactor);
 
         let anchorX_phys, anchorY_phys;
 
@@ -831,7 +842,6 @@
 
       // ======================================================================
       // ВЕЕР ПРЕСЕТОВ — ховер-обработчики с дебаунсом
-      // НОЛЬ ресайзов — всё помещается в фиксированном окне 320×200
       // ======================================================================
 
       const hoverPresetsContainer = document.getElementById('hover-presets-container');
@@ -839,11 +849,17 @@
       if (hoverPresetsContainer) {
         hoverPresetsContainer.addEventListener('mouseenter', () => {
           if (hoverPresetsTimer) { clearTimeout(hoverPresetsTimer); hoverPresetsTimer = null; }
-          hoverPresetsMenu.classList.remove('opacity-0', 'pointer-events-none'); hoverPresetsMenu.classList.add('opacity-100', 'pointer-events-auto');
+          hoverPresetsMenu.classList.remove('opacity-0', 'pointer-events-none');
+          hoverPresetsMenu.classList.add('opacity-100', 'pointer-events-auto');
+          updateClickRegion('hover-fan');
         });
         hoverPresetsContainer.addEventListener('mouseleave', () => {
           if (hoverPresetsTimer) clearTimeout(hoverPresetsTimer);
-          hoverPresetsTimer = setTimeout(() => { hoverPresetsMenu.classList.remove('opacity-100', 'pointer-events-auto'); hoverPresetsMenu.classList.add('opacity-0', 'pointer-events-none'); }, 400);
+          hoverPresetsTimer = setTimeout(() => {
+            hoverPresetsMenu.classList.remove('opacity-100', 'pointer-events-auto');
+            hoverPresetsMenu.classList.add('opacity-0', 'pointer-events-none');
+            if (currentState === 'hover') updateClickRegion('hover');
+          }, 400);
         });
       }
 
@@ -1152,9 +1168,11 @@
         if (!popup || !textArea) return;
         textArea.value = text;
         popup.style.display = 'flex';
+        updateClickRegion();
 
         document.getElementById('popup-close').onclick = () => {
           popup.style.display = 'none';
+          updateClickRegion();
         };
 
         document.getElementById('popup-insert').onclick = async () => {
@@ -1166,6 +1184,7 @@
             showToast('Не удалось вставить. Скопируйте вручную.', true);
           }
           popup.style.display = 'none';
+          updateClickRegion();
         };
 
         document.getElementById('popup-copy').onclick = async () => {
@@ -1176,171 +1195,108 @@
             showToast('Ошибка копирования', true);
           }
           popup.style.display = 'none';
+          updateClickRegion();
         };
 
         // Закрыть по клику на фон
         popup.onclick = (e) => {
-          if (e.target === popup) popup.style.display = 'none';
+          if (e.target === popup) {
+            popup.style.display = 'none';
+            updateClickRegion();
+          }
         };
       }
 
 
       // ======================================================================
-      // ОБРЕЗКА ОКНА ЧЕРЕЗ WIN32 REGION + КЛИКАБЕЛЬНОСТЬ СКВОЗЬ ТЕНЬ/СИЯНИЕ
+      // ТОЧНЫЕ ИНТЕРАКТИВНЫЕ РЕГИОНЫ КАПСУЛЫ (БЕЗ ТЕНЕЙ И СИЯНИЯ) ДЛЯ NATIVE HIT-TEST
       // ======================================================================
+      let lastCapsuleRegionState = 'idle';
+
       async function updateClickRegion(state) {
         if (!invoke || !appWindow) return;
-        try {
-          const WIN_WIDTH = 340;
-          const WIN_HEIGHT = 260;
-          let w = 320, h = 200; // default for active states
+        if (state) lastCapsuleRegionState = state;
+        const st = lastCapsuleRegionState;
 
-          if (state === 'idle') {
-            w = 92; h = 34;
-          } else if (state === 'hover') {
-            w = 210; h = 180;
-          } else if (state === 'sending') {
-            w = 180; h = 130;
-          } else if (state === 'send-success') {
-            w = 180; h = 130;
-          } else if (state === 'send-error') {
-            w = 280; h = 200;
-          } else if (state === 'cancel-confirm') {
-            w = 280; h = 200;
-          } else if (state === 'recording-idle' || state === 'pause-idle') {
-            w = 180; h = 130;
-          } else if (state === 'recording-hover' || state === 'pause-hover') {
-            w = 260; h = 115;
-          } else if (state === 'recording-fan' || state === 'pause-fan') {
-            w = 320; h = 200;
+        try {
+          const sf = window.devicePixelRatio || cachedScaleFactor || 1;
+          const winW = window.innerWidth || Math.round(340 * Math.max(1, widgetScale));
+          const winH = window.innerHeight || Math.round(260 * Math.max(1, widgetScale));
+          const s = widgetScale || 1.0;
+          const rects = [];
+
+          const popup = document.getElementById('result-popup');
+          if (popup && popup.style.display && popup.style.display !== 'none') {
+            rects.push({ x: 0, y: 0, width: winW, height: winH, radius: 0 });
           }
-          
-          // Вычисляем координаты региона (центр снизу)
-          const x = (WIN_WIDTH - w) / 2;
-          const y = WIN_HEIGHT - h;
+
+          if (toastActive) {
+            const tw = Math.round(294 * s);
+            const th = Math.round(52 * s);
+            rects.push({
+              x: Math.round((winW - tw) / 2),
+              y: Math.max(0, Math.round(winH - 256 * s)),
+              width: tw,
+              height: th,
+              radius: Math.round(12 * s)
+            });
+          }
+
+          const addBottomCenteredRect = (wLogic, hLogic, bottomOffsetLogic, radiusLogic) => {
+            const rw = Math.round(wLogic * s);
+            const rh = Math.round(hLogic * s);
+            const rbot = Math.round(bottomOffsetLogic * s);
+            rects.push({
+              x: Math.round((winW - rw) / 2),
+              y: Math.round(winH - rh - rbot),
+              width: rw,
+              height: rh,
+              radius: Math.round(radiusLogic * s)
+            });
+          };
+
+          if (st === 'idle') {
+            // Тонкая полоска покоя (w-16 h-1.5) с небольшим запасом для удобного наведения
+            addBottomCenteredRect(76, 18, 4, 9);
+          } else if (st === 'hover') {
+            // 3 круглые кнопки в ряд (без внешней тени)
+            addBottomCenteredRect(156, 48, 6, 24);
+          } else if (st === 'hover-fan') {
+            // 3 круглые кнопки + веер пресетов над ними
+            addBottomCenteredRect(156, 48, 6, 24);
+            addBottomCenteredRect(188, 102, 46, 16);
+          } else if (st === 'sending') {
+            // Компактный Orb (48x48) + крестик отмены сверху справа
+            addBottomCenteredRect(68, 66, 6, 26);
+          } else if (st === 'send-success') {
+            addBottomCenteredRect(54, 54, 6, 27);
+          } else if (st === 'recording-idle' || st === 'pause-idle') {
+            // Компактный пульсирующий Orb (48x48)
+            addBottomCenteredRect(56, 56, 6, 28);
+          } else if (st === 'recording-hover' || st === 'pause-hover') {
+            // Раскрытая пилюля (220x48) без внешней тени
+            addBottomCenteredRect(224, 52, 6, 26);
+          } else if (st === 'recording-fan' || st === 'pause-fan') {
+            // Раскрытая пилюля + веер пресетов над ней
+            addBottomCenteredRect(224, 52, 6, 26);
+            addBottomCenteredRect(190, 96, 52, 16);
+          } else if (st === 'send-error' || st === 'cancel-confirm') {
+            // Пилюля + баннер подтверждения/ошибки над ней
+            addBottomCenteredRect(266, 186, 6, 18);
+          } else {
+            addBottomCenteredRect(224, 52, 6, 26);
+          }
 
           await invoke('set_click_region', {
-            rects: [{ x, y, width: w, height: h }],
-            scaleFactor: cachedScaleFactor
+            rects,
+            scaleFactor: sf
           });
         } catch(e) { console.error('Region err:', e); }
       }
 
-      // Проверка: находится ли точка (в логических координатах окна) внутри интерактивного тела капсулы/меню, а не в полупрозрачной тени/свечении вокруг неё
-      function isPointInsideCapsuleBody(clientX, clientY) {
-        const hitRect = (el, pad = 2) => {
-          if (!el) return false;
-          const r = el.getBoundingClientRect();
-          if (r.width === 0 || r.height === 0) return false;
-          return clientX >= r.left - pad && clientX <= r.right + pad && clientY >= r.top - pad && clientY <= r.bottom + pad;
-        };
-
-        const popup = document.getElementById('result-popup');
-        if (popup && popup.style.display && popup.style.display !== 'none') {
-          return true;
-        }
-        const toast = document.getElementById('capsule-toast');
-        if (toast && toast.classList.contains('opacity-100') && hitRect(toast, 2)) {
-          return true;
-        }
-
-        if (currentState === 'idle') {
-          const idleBar = stateIdle ? stateIdle.querySelector('div') : null;
-          return hitRect(idleBar, 3);
-        }
-
-        if (currentState === 'hover') {
-          const hoverBar = stateHover ? stateHover.querySelector('div') : null;
-          if (hitRect(hoverBar, 2)) return true;
-          if (hoverPresetsMenu && hoverPresetsMenu.classList.contains('opacity-100')) {
-            const btns = hoverPresetsMenu.querySelectorAll('.preset-btn');
-            for (const b of btns) {
-              if (hitRect(b, 6)) return true;
-            }
-          }
-          return false;
-        }
-
-        // Активные состояния (recording, pause, sending, send-success, send-error, cancel-confirm)
-        if (hitRect(activePill, 2)) return true;
-        if (btnCancelSending && btnCancelSending.classList.contains('visible') && hitRect(btnCancelSending, 4)) {
-          return true;
-        }
-        if (activeCancelBanner && !activeCancelBanner.classList.contains('pointer-events-none') && hitRect(activeCancelBanner, 2)) {
-          return true;
-        }
-        if (activeErrorBanner && !activeErrorBanner.classList.contains('pointer-events-none') && hitRect(activeErrorBanner, 2)) {
-          return true;
-        }
-        if (activePresetsFan && activePresetsFan.classList.contains('opacity-100')) {
-          const btns = activePresetsFan.querySelectorAll('.preset-btn');
-          for (const b of btns) {
-            if (hitRect(b, 6)) return true;
-          }
-          // Также учитываем мостик между пилюлей и веером пресетов при наведении
-          if (activePill) {
-            const pr = activePill.getBoundingClientRect();
-            if (clientX >= pr.left - 30 && clientX <= pr.right + 30 && clientY >= pr.top - 72 && clientY <= pr.bottom) {
-              return true;
-            }
-          }
-        }
-        return false;
-      }
-
-      let isIgnoringCapsuleShadow = false;
-      let capsuleShadowTimer = null;
-
-      async function setCapsuleShadowIgnore(ignore) {
-        if (!invoke || isIgnoringCapsuleShadow === ignore) return;
-        isIgnoringCapsuleShadow = ignore;
-        try {
-          await invoke('set_ignore_cursor_events', { ignore });
-        } catch (_) {}
-
-        if (ignore) {
-          if (!capsuleShadowTimer) {
-            capsuleShadowTimer = setInterval(async () => {
-              if (!isIgnoringCapsuleShadow) {
-                clearInterval(capsuleShadowTimer);
-                capsuleShadowTimer = null;
-                return;
-              }
-              try {
-                const [cx, cy] = await invoke('get_cursor_pos');
-                const sf = cachedScaleFactor || window.devicePixelRatio || 1;
-                const winX = (lastBottomCenterX_phys || 0) - Math.round(340 * sf / 2);
-                const winY = (lastBottomY_phys || 0) - Math.round(260 * sf);
-                const lx = (cx - winX) / sf;
-                const ly = (cy - winY) / sf;
-                const outOfWin = lx < 0 || ly < 0 || lx > 340 || ly > 260;
-                if (outOfWin || isPointInsideCapsuleBody(lx, ly)) {
-                  await setCapsuleShadowIgnore(false);
-                }
-              } catch (_) {
-                await setCapsuleShadowIgnore(false);
-              }
-            }, 50);
-          }
-        } else if (capsuleShadowTimer) {
-          clearInterval(capsuleShadowTimer);
-          capsuleShadowTimer = null;
-        }
-      }
-
-      document.addEventListener('mousemove', (e) => {
-        if (e.buttons !== 0 || maybeDragging) return;
-        const inside = isPointInsideCapsuleBody(e.clientX, e.clientY);
-        if (!inside && !isIgnoringCapsuleShadow) {
-          setCapsuleShadowIgnore(true);
-        } else if (inside && isIgnoringCapsuleShadow) {
-          setCapsuleShadowIgnore(false);
-        }
-      });
-
       let collapseTimer = null;
 
-      container.addEventListener('mouseenter', () => {
+      function handleCapsuleMouseEnter() {
         isMouseOver = true;
         if (collapseTimer) { clearTimeout(collapseTimer); collapseTimer = null; }
 
@@ -1350,9 +1306,9 @@
           if (activePill) activePill.classList.add('expanded');
           showActivePresets();
         }
-      });
+      }
 
-      container.addEventListener('mouseleave', () => {
+      function handleCapsuleMouseLeave() {
         isMouseOver = false;
         
         if (collapseTimer) clearTimeout(collapseTimer);
@@ -1364,7 +1320,6 @@
                 activePresetsFan.classList.remove('opacity-100', 'pointer-events-auto'); 
                 activePresetsFan.classList.add('opacity-0', 'pointer-events-none'); 
               }
-              // Задерживаем сужение клик-региона на время анимации сжатия капсулы (450мс)
               setTimeout(() => {
                 if (!isMouseOver && (currentState === 'recording' || currentState === 'pause')) {
                   updateClickRegion(currentState === 'recording' ? 'recording-idle' : 'pause-idle');
@@ -1378,8 +1333,11 @@
               switchState('idle');
             }
           }
-        }, 500); // 500ms delay for hiding UI or switching to idle
-      });
+        }, 450);
+      }
+
+      container.addEventListener('mouseenter', handleCapsuleMouseEnter);
+      container.addEventListener('mouseleave', handleCapsuleMouseLeave);
 
       // ======================================================================
       // КНОПКИ И TOAST
@@ -1427,10 +1385,12 @@
         toastActive = true;
         newToast.classList.remove('opacity-0', 'pointer-events-none');
         newToast.classList.add('opacity-100');
+        updateClickRegion();
         setTimeout(() => {
           newToast.classList.remove('opacity-100');
           newToast.classList.add('opacity-0', 'pointer-events-none');
           toastActive = false;
+          updateClickRegion();
         }, 6000);
       }
 
@@ -1910,6 +1870,9 @@
             capsuleMode = config.capsule_mode !== undefined ? config.capsule_mode : 2;
             isCapsuleEnabled = (capsuleMode > 0);
             isMagnetEnabled = config.capsule_magnet !== undefined ? config.capsule_magnet : true;
+            if (config.widget_scale !== undefined) {
+              applyCapsuleScale(config.widget_scale);
+            }
 
             if (isMinimized) {
               if (appWindow) {
@@ -1942,6 +1905,9 @@
             capsuleMode = config.capsule_mode !== undefined ? config.capsule_mode : 2;
             isCapsuleEnabled = (capsuleMode > 0);
             isMagnetEnabled = config.capsule_magnet !== undefined ? config.capsule_magnet : true;
+            if (config.widget_scale !== undefined) {
+              applyCapsuleScale(config.widget_scale);
+            }
 
             if ((capsuleMode === 0 || capsuleMode === 1) && appWindow) {
               appWindow.hide().catch(() => {});
@@ -1958,6 +1924,36 @@
               initPosition();
             }
           });
+        });
+
+        window.__TAURI__.event.listen('config-updated', (event) => {
+          const cfg = event.payload || {};
+          if (cfg.widget_scale !== undefined) {
+            applyCapsuleScale(cfg.widget_scale);
+          }
+        });
+
+        window.__TAURI__.event.listen('cursor-entered-region', () => {
+          handleCapsuleMouseEnter();
+        });
+
+        window.__TAURI__.event.listen('cursor-left-region', () => {
+          handleCapsuleMouseLeave();
+        });
+
+        window.__TAURI__.event.listen('custom-drag-ended', async (event) => {
+          maybeDragging = false;
+          const pos = event.payload;
+          if (pos && typeof pos.x === 'number' && typeof pos.y === 'number') {
+            try {
+              const size = await appWindow.outerSize();
+              lastBottomCenterX_phys = pos.x + size.width / 2;
+              lastBottomY_phys       = pos.y + size.height;
+              if (!isMagnetEnabled) {
+                localStorage.setItem('capsule_pos', JSON.stringify({ x: pos.x, y: pos.y }));
+              }
+            } catch (_) {}
+          }
         });
 
         // Обновляем якорь ТОЛЬКО при ручном перетаскивании
@@ -2001,7 +1997,9 @@
           if (isMagnetEnabled) return;
           if (e.buttons === 1 && !e.target.closest('button') && !e.target.closest('input') && !e.target.closest('.preset-btn')) {
             maybeDragging = true;
-            appWindow.startDragging();
+            invoke('start_custom_drag', { topGlowOffsetPhys: 0 }).catch(() => {
+              if (appWindow) appWindow.startDragging().catch(() => {});
+            });
           }
         });
         container.addEventListener('mouseup', () => { maybeDragging = false; });
@@ -2282,6 +2280,10 @@
         }, 600);
       }
 
+      let lastOrbScale = 1.0;
+      let orbShadowApplied = false;
+      const lastBarScales = [0.25, 0.25, 0.25, 0.25, 0.25];
+
       function drawVisualizer() {
         if (!analyser) return;
         analyser.getByteFrequencyData(dataArray);
@@ -2292,9 +2294,6 @@
             micTrackBroken = true;
           }
         }
-        
-        const bars = document.querySelectorAll('#recording-waveform .waveform-bar');
-        if (bars.length === 0) return;
 
         // Вычисляем среднюю и пиковую громкость речевого спектра для детекции тишины и пульсации Orb
         let sum = 0;
@@ -2314,32 +2313,47 @@
           speechFramesCount++;
         }
 
-        // Если пилюля сжата (компактный Orb), применяем эффект дыхания
+        const isExpanded = activePill && activePill.classList.contains('expanded');
+
+        // 1. Компактный Orb: обновляем ТОЛЬКО GPU-свойство transform: scale() при значимом изменении,
+        // без перерисовки box-shadow на каждом кадре (0 Repaint)
         if (activePill) {
-          if (!activePill.classList.contains('expanded')) {
-            const scale = 1 + (avgVolume / 255) * 0.38; // максимум +38%
-            const glow = 15 + (avgVolume / 255) * 35; // тень до 50px
-            activePill.style.transform = `scale(${scale})`;
-            activePill.style.boxShadow = `0 0 ${glow}px rgba(142, 82, 255, ${0.35 + (avgVolume / 255) * 0.55}), inset 0 0 10px rgba(142, 82, 255, 0.15)`;
-          } else {
-            // В расширенном состоянии сбрасываем пульсацию
+          if (!isExpanded) {
+            if (!orbShadowApplied) {
+              activePill.style.boxShadow = '0 0 26px rgba(142, 82, 255, 0.65), inset 0 0 10px rgba(142, 82, 255, 0.18)';
+              orbShadowApplied = true;
+            }
+            const scale = 1 + (avgVolume / 255) * 0.34;
+            if (Math.abs(scale - lastOrbScale) >= 0.012) {
+              lastOrbScale = scale;
+              activePill.style.transform = `scale(${scale.toFixed(3)})`;
+            }
+            // В сжатом состоянии полоски эквалайзера скрыты — не тратим ресурсы на их DOM-обновление
+            return;
+          } else if (orbShadowApplied || lastOrbScale !== 1.0) {
             activePill.style.transform = '';
             activePill.style.boxShadow = '';
+            orbShadowApplied = false;
+            lastOrbScale = 1.0;
           }
         }
 
-        // Берем 5 частотных диапазонов для 5 полосочек (пропускаем самый бас и ультразвук)
+        // 2. Раскрытая капсула: обновляем 5 полосочек эквалайзера только при изменении высоты >= 1.5%
+        const bars = document.querySelectorAll('#recording-waveform .waveform-bar');
+        if (bars.length === 0) return;
+
         const indices = [1, 3, 5, 8, 11];
-        
         for (let i = 0; i < bars.length; i++) {
-          const value = dataArray[indices[i]] || 0; // От 0 до 255
-          
-          let scale = 0.25; // высота тишины (4px / 16px)
+          const value = dataArray[indices[i]] || 0;
+          let scale = 0.25;
           if (value > 15) {
-            // Высокая чувствительность для голоса
             scale = 0.25 + ((value - 15) / 240) * 0.75;
           }
-          bars[i].style.transform = `scaleY(${Math.max(0.25, Math.min(1.0, scale))})`;
+          const clamped = Math.max(0.25, Math.min(1.0, scale));
+          if (Math.abs(clamped - lastBarScales[i]) >= 0.015) {
+            lastBarScales[i] = clamped;
+            bars[i].style.transform = `scaleY(${clamped.toFixed(3)})`;
+          }
         }
       }
 
@@ -2355,7 +2369,7 @@
           analyser.fftSize = 64; // Дает 32 полосы частот
           analyser.minDecibels = -90;
           analyser.maxDecibels = -10;
-          analyser.smoothingTimeConstant = 0.85;
+          analyser.smoothingTimeConstant = 0.82;
           dataArray = new Uint8Array(analyser.frequencyBinCount);
         }
         
@@ -2366,7 +2380,8 @@
         currentSource.connect(analyser);
         
         if (visualizerRafId) clearInterval(visualizerRafId);
-        visualizerRafId = setInterval(drawVisualizer, 33); // ~30fps
+        // Экономные 20 FPS (50 мс) вместо 30/60 FPS — полоски сглаживаются через CSS transition
+        visualizerRafId = setInterval(drawVisualizer, 50);
       }
 
       function stopVisualizer() {
@@ -2376,13 +2391,18 @@
         }
         // Сброс всех полос в прямую линию (тишина)
         const bars = document.querySelectorAll('.waveform-bar');
-        bars.forEach(b => b.style.transform = 'scaleY(0.25)');
+        bars.forEach((b, idx) => {
+          b.style.transform = 'scaleY(0.25)';
+          if (idx < lastBarScales.length) lastBarScales[idx] = 0.25;
+        });
 
         // Сброс пульсации Orb
         if (activePill) {
           activePill.style.transform = '';
           activePill.style.boxShadow = '';
         }
+        orbShadowApplied = false;
+        lastOrbScale = 1.0;
 
         // Приостанавливаем AudioContext
         if (audioCtx && audioCtx.state === 'running') {

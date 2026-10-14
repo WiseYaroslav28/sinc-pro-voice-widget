@@ -5,13 +5,13 @@ window.renderTtsWidget = function(container, isMain = false) {
   // Базовая HTML структура виджета
   container.innerHTML = `
     <style>
-      #tts-speed-slider {
+      #tts-speed-slider, #tts-volume-slider {
         -webkit-appearance: none;
         background: #3a3545;
         border-radius: 2px;
         outline: none;
       }
-      #tts-speed-slider::-webkit-slider-thumb {
+      #tts-speed-slider::-webkit-slider-thumb, #tts-volume-slider::-webkit-slider-thumb {
         -webkit-appearance: none;
         width: 10px;
         height: 10px;
@@ -63,22 +63,33 @@ window.renderTtsWidget = function(container, isMain = false) {
         box-shadow: 0 0 10px rgba(255, 92, 92, 0.6) !important;
         text-shadow: 0 0 6px rgba(255, 92, 92, 0.8);
       }
-      .play-pulse { animation: play-pulse-glow 1.5s infinite; }
-      @keyframes play-pulse-glow {
-        0%, 100% { box-shadow: 0 0 8px rgba(142,82,255,0.5); transform: scale(1); }
-        50%       { box-shadow: 0 0 20px rgba(142,82,255,0.8); transform: scale(1.06); }
+      /* Экономная GPU-анимация пульсации: статичный box-shadow + анимация только transform (0 Repaint на CPU/GPU) */
+      .play-pulse {
+        box-shadow: 0 0 16px rgba(142,82,255,0.75) !important;
+        will-change: transform;
+        animation: play-pulse-glow 1.8s ease-in-out infinite;
       }
-      .pause-pulse { animation: pause-pulse-glow 1.5s infinite; }
+      @keyframes play-pulse-glow {
+        0%, 100% { transform: scale(1); }
+        50%       { transform: scale(1.06); }
+      }
+      .pause-pulse {
+        box-shadow: 0 0 16px rgba(255,209,102,0.8) !important;
+        will-change: transform;
+        animation: pause-pulse-glow 1.8s ease-in-out infinite;
+      }
       @keyframes pause-pulse-glow {
-        0%, 100% { box-shadow: 0 0 8px rgba(255,209,102,0.6); transform: scale(1); }
-        50%       { box-shadow: 0 0 20px rgba(255,209,102,0.9); transform: scale(1.06); }
+        0%, 100% { transform: scale(1); }
+        50%       { transform: scale(1.06); }
       }
       #tts-widget-pause-badge.badge-pulse {
-        animation: badge-glow 1.2s infinite;
+        box-shadow: 0 0 8px rgba(255,209,102,0.9);
+        will-change: transform;
+        animation: badge-glow 1.5s ease-in-out infinite;
       }
       @keyframes badge-glow {
-        0%, 100% { transform: scale(1); box-shadow: 0 0 6px rgba(255,209,102,0.8); }
-        50%       { transform: scale(1.15); box-shadow: 0 0 12px rgba(255,209,102,1); }
+        0%, 100% { transform: scale(1); }
+        50%       { transform: scale(1.12); }
       }
     </style>
     <div class="flex items-center py-2 gap-1 h-[52px] w-fit" style="${isMain ? 'padding-left: 20px; padding-right: 20px;' : 'padding-left: 14px; padding-right: 14px;'}" data-tauri-drag-region>
@@ -116,32 +127,32 @@ window.renderTtsWidget = function(container, isMain = false) {
       </div>
 
       <!-- Вся остальная часть, которая в плавающем виджете скрывается при hover-collapsed -->
-      <div class="flex items-center gap-1 tts-extra-content" data-tauri-drag-region>
+      <div class="flex items-center gap-0.5 tts-extra-content" data-tauri-drag-region>
         <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
 
-        <!-- 🔊 Голос -->
-        <div class="relative w-[160px] flex-shrink-0" id="tts-voice-wrapper">
-          <button class="bg-transparent text-[#e4e1e9] border-none flex items-center justify-center gap-1.5 px-3 py-1 rounded-full text-[11px] cursor-pointer transition-all hover:bg-[#3a3545] w-full" id="tts-btn-voice" title="Выбор голоса">
-            <span class="material-symbols-outlined text-[14px] text-[#ccc3d8]/60" style="font-variation-settings:'FILL' 1;">volume_up</span>
+        <!-- 🗣️ Голос -->
+        <div class="relative w-[134px] flex-shrink-0" id="tts-voice-wrapper">
+          <button class="bg-transparent text-[#e4e1e9] border-none flex items-center justify-center gap-1 px-2 py-1 rounded-full text-[11px] cursor-pointer transition-all hover:bg-[#3a3545] w-full" id="tts-btn-voice" title="Выбор голоса">
+            <span class="material-symbols-outlined text-[14px] text-[#ccc3d8]/60" style="font-variation-settings:'FILL' 1;">record_voice_over</span>
             <span id="tts-selected-voice-label" class="flex-1 text-left truncate">Загрузка...</span>
             <span class="material-symbols-outlined text-[14px] text-[#4a4455]">expand_more</span>
           </button>
-          <div class="absolute top-[calc(100%+8px)] left-0 bg-[#1b1b22]/95 border border-[#8e52ff]/35 rounded-[12px] p-1.5 hidden flex-col gap-[2px] shadow-[0_12px_32px_rgba(0,0,0,0.7)] backdrop-blur-md max-h-[280px] overflow-y-auto z-50 w-full" id="tts-voice-menu">
+          <div class="absolute top-[calc(100%+8px)] left-0 bg-[#1b1b22]/95 border border-[#8e52ff]/35 rounded-[12px] p-1.5 hidden flex-col gap-[2px] shadow-[0_12px_32px_rgba(0,0,0,0.7)] backdrop-blur-md max-h-[280px] overflow-y-auto z-50 w-[165px]" id="tts-voice-menu">
             <div class="text-[9px] uppercase tracking-widest text-[#8e52ff] px-2 mb-1 opacity-70">Голоса</div>
             <!-- Заполняется динамически -->
           </div>
         </div>
 
-        <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
+        <div class="w-px h-5 bg-[#4a4455]/30 mx-0.5 flex-shrink-0" data-tauri-drag-region></div>
 
         <!-- ⚡ Скорость -->
-        <div class="relative w-[72px] flex-shrink-0" id="tts-speed-wrapper">
-          <button class="bg-transparent text-[#e4e1e9] border-none flex items-center justify-center gap-1 w-full px-1 py-1 rounded-full text-[11px] cursor-pointer transition-all hover:bg-[#3a3545]" id="tts-btn-speed" title="Скорость воспроизведения">
+        <div class="relative w-[62px] flex-shrink-0" id="tts-speed-wrapper">
+          <button class="bg-transparent text-[#e4e1e9] border-none flex items-center justify-center gap-1 w-full px-1 py-1 rounded-full text-[11px] cursor-pointer transition-all hover:bg-[#3a3545]" id="tts-btn-speed" title="Скорость воспроизведения (можно крутить колесиком мыши)">
             <span class="material-symbols-outlined text-[14px] text-[#45a29e]">bolt</span>
             <span id="tts-selected-speed-label">1.0x</span>
           </button>
           <!-- Выпадающее меню скорости -->
-          <div class="absolute top-[calc(100%+8px)] left-1/2 -translate-x-1/2 bg-[#1b1b22]/95 border border-[#8e52ff]/35 rounded-[12px] p-2 w-[80px] hidden flex-col shadow-[0_12px_32px_rgba(0,0,0,0.7)] backdrop-blur-md z-50" id="tts-speed-menu">
+          <div class="absolute top-[calc(100%+8px)] left-1/2 -translate-x-1/2 bg-[#1b1b22]/95 border border-[#8e52ff]/35 rounded-[12px] p-2 w-[84px] hidden flex-col shadow-[0_12px_32px_rgba(0,0,0,0.7)] backdrop-blur-md z-50" id="tts-speed-menu">
             <div class="text-[9px] uppercase tracking-widest text-[#8e52ff] px-2 mb-2 opacity-70">Скорость</div>
             <div class="flex flex-row relative">
               <div class="flex flex-col flex-1 gap-1" id="tts-speed-list">
@@ -155,19 +166,39 @@ window.renderTtsWidget = function(container, isMain = false) {
           </div>
         </div>
 
-        <!-- Пространство перетаскивания и разделения -->
-        <div class="w-4" data-tauri-drag-region></div>
+        <div class="w-px h-5 bg-[#4a4455]/30 mx-0.5 flex-shrink-0" data-tauri-drag-region></div>
+
+        <!-- 🔊 Громкость озвучки -->
+        <div class="relative w-[64px] flex-shrink-0" id="tts-volume-wrapper">
+          <button class="bg-transparent text-[#e4e1e9] border-none flex items-center justify-center gap-1 w-full px-1 py-1 rounded-full text-[11px] cursor-pointer transition-all hover:bg-[#3a3545]" id="tts-btn-volume" title="Громкость озвучки (можно крутить колесиком мыши)">
+            <span class="material-symbols-outlined text-[14px] text-[#d2bbff]" id="tts-volume-icon" style="font-variation-settings:'FILL' 1;">volume_up</span>
+            <span id="tts-selected-volume-label">100%</span>
+          </button>
+          <!-- Выпадающее меню громкости -->
+          <div class="absolute top-[calc(100%+8px)] left-1/2 -translate-x-1/2 bg-[#1b1b22]/95 border border-[#8e52ff]/35 rounded-[12px] p-2 w-[88px] hidden flex-col shadow-[0_12px_32px_rgba(0,0,0,0.7)] backdrop-blur-md z-50" id="tts-volume-menu">
+            <div class="text-[9px] uppercase tracking-widest text-[#8e52ff] px-1.5 mb-2 opacity-70">Громкость</div>
+            <div class="flex flex-row relative">
+              <div class="flex flex-col flex-1 gap-1" id="tts-volume-list">
+                <!-- Заполняется динамически -->
+              </div>
+              <div class="relative w-6 ml-1 flex flex-col items-center justify-center">
+                <input type="range" id="tts-volume-slider" min="0" max="1" step="0.05" value="1.0" title="Плавная регулировка громкости"
+                       style="position: absolute; transform: rotate(-90deg); width: 110px; height: 4px;">
+              </div>
+            </div>
+          </div>
+        </div>
 
         <!-- Divider перед Translate -->
         <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
 
         <!-- 文A Перевод -->
-        <button class="bg-transparent text-[#ccc3d8] border-none flex items-center justify-center w-7 h-7 rounded-md cursor-pointer transition-all hover:bg-[#3a3545] hover:text-[#7bd6d1] outline-none ${isMain ? 'mx-3' : 'mx-1'}" id="tts-btn-translate" title="Переводить перед чтением">
+        <button class="bg-transparent text-[#ccc3d8] border-none flex items-center justify-center w-7 h-7 rounded-md cursor-pointer transition-all hover:bg-[#3a3545] hover:text-[#7bd6d1] outline-none ${isMain ? 'mx-2' : 'mx-0.5'}" id="tts-btn-translate" title="Переводить перед чтением">
           <span class="material-symbols-outlined text-[18px]">translate</span>
         </button>
 
         ${isMain ? '' : `
-        <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
+        <div class="w-px h-5 bg-[#4a4455]/30 mx-0.5 flex-shrink-0" data-tauri-drag-region></div>
         <button class="bg-transparent text-[#ccc3d8] border-none flex items-center justify-center w-7 h-7 rounded-md cursor-pointer transition-all hover:bg-[#3a3545] hover:text-white outline-none" id="tts-btn-expand" title="Дополнительно">
           <span class="material-symbols-outlined text-[18px]" id="tts-expand-icon">open_in_full</span>
         </button>
@@ -195,6 +226,8 @@ function initTtsWidgetLogic(container, isMain) {
 
   // 0.5 на самом верху, 3.0 в самом низу
   const SPEEDS = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0];
+  // 100% сверху, 0% снизу
+  const VOLUMES = [1.0, 0.75, 0.5, 0.25, 0.0];
 
   // DOM Elements
   const btnVoice = container.querySelector('#tts-btn-voice');
@@ -207,6 +240,13 @@ function initTtsWidgetLogic(container, isMain) {
   const speedLabel = container.querySelector('#tts-selected-speed-label');
   const speedSlider = container.querySelector('#tts-speed-slider');
 
+  const btnVolume = container.querySelector('#tts-btn-volume');
+  const volumeMenu = container.querySelector('#tts-volume-menu');
+  const volumeList = container.querySelector('#tts-volume-list');
+  const volumeLabel = container.querySelector('#tts-selected-volume-label');
+  const volumeIcon = container.querySelector('#tts-volume-icon');
+  const volumeSlider = container.querySelector('#tts-volume-slider');
+
   const btnPlay = container.querySelector('#tts-widget-play');
   const playIcon = container.querySelector('#tts-widget-play-icon');
   const btnStop = container.querySelector('#tts-widget-stop');
@@ -214,9 +254,10 @@ function initTtsWidgetLogic(container, isMain) {
   
   let currentVoice = PREFERRED_VOICES[0].edgeId;
   let currentSpeed = 1.0;
-  let currentTranslate = false;
+  let currentVolume = 1.0;
   let isPlaying = false;
   let isPaused = false;
+  let currentTranslate = false;
 
   let currentInstalledVoices = [];
 
@@ -282,6 +323,13 @@ function initTtsWidgetLogic(container, isMain) {
     `<div class="px-2 py-0 text-[11px] flex items-center h-[20px] cursor-pointer hover:bg-[#8e52ff]/20 rounded-md transition-colors speed-item" data-speed="${s}">${s}x</div>`
   ).join('');
 
+  // Render Volumes
+  if (volumeList) {
+    volumeList.innerHTML = VOLUMES.map(v =>
+      `<div class="px-1.5 py-0 text-[11px] flex items-center h-[22px] cursor-pointer hover:bg-[#8e52ff]/20 rounded-md transition-colors volume-item" data-volume="${v}">${Math.round(v * 100)}%</div>`
+    ).join('');
+  }
+
   // Helper function to update window size for Tauri (only for floating widget)
   function setWindowExpanded(expanded) {
     if (!isMain && window.__TAURI__) {
@@ -294,13 +342,18 @@ function initTtsWidgetLogic(container, isMain) {
 
   // Menus toggling
   function closeAllMenus() {
-    const wasOpen = !voiceMenu.classList.contains('hidden') || !speedMenu.classList.contains('hidden');
+    const wasOpen = !voiceMenu.classList.contains('hidden') || !speedMenu.classList.contains('hidden') || (volumeMenu && !volumeMenu.classList.contains('hidden'));
     voiceMenu.classList.add('hidden');
     voiceMenu.classList.remove('flex');
     speedMenu.classList.add('hidden');
     speedMenu.classList.remove('flex');
+    if (volumeMenu) {
+      volumeMenu.classList.add('hidden');
+      volumeMenu.classList.remove('flex');
+    }
     btnVoice.classList.remove('bg-[#3a3545]');
     btnSpeed.classList.remove('bg-[#3a3545]');
+    if (btnVolume) btnVolume.classList.remove('bg-[#3a3545]');
     if (wasOpen) setWindowExpanded(false);
   }
 
@@ -330,6 +383,20 @@ function initTtsWidgetLogic(container, isMain) {
     }
   });
 
+  if (btnVolume && volumeMenu) {
+    btnVolume.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isHidden = volumeMenu.classList.contains('hidden');
+      closeAllMenus();
+      if (isHidden) {
+        volumeMenu.classList.remove('hidden');
+        volumeMenu.classList.add('flex');
+        setWindowExpanded(true);
+      }
+    });
+    volumeMenu.addEventListener('click', (e) => e.stopPropagation());
+  }
+
   voiceMenu.addEventListener('click', (e) => e.stopPropagation());
   speedMenu.addEventListener('click', (e) => e.stopPropagation());
 
@@ -340,8 +407,6 @@ function initTtsWidgetLogic(container, isMain) {
       bubbles: true
     }));
   }
-
-
 
   // Speed Select
   function updateSpeedUI(val) {
@@ -356,8 +421,38 @@ function initTtsWidgetLogic(container, isMain) {
     });
   }
 
-  // Синхронизируем UI с сохраненным значением скорости при старте
+  // Volume Select
+  function updateVolumeUI(val) {
+    const clamped = Math.max(0, Math.min(1, parseFloat(val) !== undefined && !isNaN(parseFloat(val)) ? parseFloat(val) : 1.0));
+    currentVolume = clamped;
+    const pct = Math.round(clamped * 100);
+    if (volumeLabel) volumeLabel.textContent = `${pct}%`;
+    if (volumeSlider) volumeSlider.value = String(clamped);
+    if (volumeIcon) {
+      if (pct === 0) {
+        volumeIcon.textContent = 'volume_off';
+        volumeIcon.style.color = '#ff5c5c';
+      } else if (pct < 50) {
+        volumeIcon.textContent = 'volume_down';
+        volumeIcon.style.color = '#d2bbff';
+      } else {
+        volumeIcon.textContent = 'volume_up';
+        volumeIcon.style.color = '#d2bbff';
+      }
+    }
+    if (volumeList) {
+      volumeList.querySelectorAll('.volume-item').forEach(i => {
+        i.classList.remove('bg-[#8e52ff]/20', 'text-[#8e52ff]', 'font-bold');
+        if (Math.abs(parseFloat(i.dataset.volume) - clamped) < 0.02) {
+          i.classList.add('bg-[#8e52ff]/20', 'text-[#8e52ff]', 'font-bold');
+        }
+      });
+    }
+  }
+
+  // Синхронизируем UI с сохраненным значением скорости и громкости при старте
   updateSpeedUI(currentSpeed);
+  updateVolumeUI(currentVolume);
 
   speedList.querySelectorAll('.speed-item').forEach(item => {
     item.addEventListener('click', () => {
@@ -373,6 +468,45 @@ function initTtsWidgetLogic(container, isMain) {
     updateSpeedUI(val);
     notifyChange('setting', { speed: val });
   });
+
+  // Колесо мыши на кнопке скорости (шаг 0.05x)
+  btnSpeed.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 0.05 : -0.05;
+    const nextSpeed = Math.round(Math.max(0.5, Math.min(3.0, currentSpeed + delta)) * 20) / 20;
+    updateSpeedUI(nextSpeed);
+    notifyChange('setting', { speed: nextSpeed });
+  }, { passive: false });
+
+  if (volumeList) {
+    volumeList.querySelectorAll('.volume-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const val = parseFloat(item.dataset.volume);
+        updateVolumeUI(val);
+        closeAllMenus();
+        notifyChange('setting', { volume: val });
+      });
+    });
+  }
+
+  if (volumeSlider) {
+    volumeSlider.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      updateVolumeUI(val);
+      notifyChange('setting', { volume: val });
+    });
+  }
+
+  if (btnVolume) {
+    // Колесо мыши прямо на кнопке громкости (шаг 5%)
+    btnVolume.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 0.05 : -0.05;
+      const nextVol = Math.round(Math.max(0, Math.min(1, currentVolume + delta)) * 20) / 20;
+      updateVolumeUI(nextVol);
+      notifyChange('setting', { volume: nextVol });
+    }, { passive: false });
+  }
 
   // Buttons
   btnPlay.addEventListener('click', (e) => {
@@ -457,6 +591,9 @@ function initTtsWidgetLogic(container, isMain) {
     if (state.speed !== undefined) {
       updateSpeedUI(state.speed);
     }
+    if (state.volume !== undefined) {
+      updateVolumeUI(state.volume);
+    }
     if (state.voice !== undefined) {
       currentVoice = state.voice;
       voiceMenu.querySelectorAll('.voice-item').forEach(i => {
@@ -507,6 +644,10 @@ function initTtsWidgetLogic(container, isMain) {
       currentSpeed = config.tts_speed;
       updateSpeedUI(currentSpeed);
     }
+    if (config.tts_volume !== undefined) {
+      currentVolume = config.tts_volume;
+      updateVolumeUI(currentVolume);
+    }
     if (config.tts_translate !== undefined) {
       currentTranslate = config.tts_translate;
       if (btnTranslate) {
@@ -524,6 +665,7 @@ function initTtsWidgetLogic(container, isMain) {
       applyInitialConfig({
         tts_voice: savedSettings.voice,
         tts_speed: savedSettings.speed,
+        tts_volume: savedSettings.volume,
         tts_translate: savedSettings.translate
       });
     });
@@ -532,6 +674,7 @@ function initTtsWidgetLogic(container, isMain) {
     applyInitialConfig({
       tts_voice: savedSettings.voice,
       tts_speed: savedSettings.speed,
+      tts_volume: savedSettings.volume,
       tts_translate: savedSettings.translate
     });
   }

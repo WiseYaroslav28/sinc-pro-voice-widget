@@ -145,9 +145,36 @@
         appWindow.onResized(debouncedSaveResultState);
         
         // Позволяем перетаскивать модалку за заголовок
+        const { invoke } = window.__TAURI__.core;
+        const applyResultScale = async (scaleVal) => {
+          const s = Math.max(0.7, Math.min(1.5, parseFloat(scaleVal) || 1.0));
+          document.documentElement.style.zoom = String(s);
+          if (appWindow && window.__TAURI__.dpi) {
+            try {
+              const { LogicalSize } = window.__TAURI__.dpi;
+              await appWindow.setSize(new LogicalSize(Math.round(320 * s), Math.round(240 * s)));
+            } catch (_) {}
+          }
+        };
+
+        invoke('load_config').then((cfg) => {
+          if (cfg && cfg.widget_scale !== undefined) {
+            applyResultScale(cfg.widget_scale);
+          }
+        }).catch(() => {});
+
+        window.__TAURI__.event.listen('config-updated', (event) => {
+          const cfg = event.payload || {};
+          if (cfg.widget_scale !== undefined) {
+            applyResultScale(cfg.widget_scale);
+          }
+        });
+
         document.querySelector('.drag-region').addEventListener('mousedown', (e) => {
           if (e.buttons === 1 && !e.target.closest('button')) {
-            appWindow.startDragging();
+            invoke('start_custom_drag', { topGlowOffsetPhys: 0 }).catch(() => {
+              if (appWindow) appWindow.startDragging().catch(() => {});
+            });
           }
         });
 

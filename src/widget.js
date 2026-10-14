@@ -17,6 +17,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const { invoke } = window.__TAURI__.core;
     invoke('is_minimized_startup').then((isMinimized) => {
       invoke('load_config').then((config) => {
+        if (config && config.widget_scale !== undefined) {
+          applyWidgetScale(config.widget_scale);
+        }
         const widgetMode = config.widget_mode !== undefined ? config.widget_mode : 2;
         if (isMinimized) {
           appWindow.hide().catch(console.error);
@@ -49,13 +52,48 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  const PAD_LEFT = 42;
+  const PAD_TOP = 24;
+  let widgetScale = 1.0;
+  let cachedWindowPos = { x: 0, y: 0 };
+
+  const root = document.getElementById('tts-widget-root');
+  const widgetContainer = document.getElementById('widget-container');
+  const btnExpand = document.getElementById('tts-btn-expand');
+  const expandedRow = document.getElementById('expanded-row');
+  const expandIcon = document.getElementById('tts-expand-icon');
+
+  let isRowExpanded = false;
+  let isDropdownOpen = false;
+  let currentRegionState = 'hover_collapsed';
+
+  async function applyWidgetScale(scale) {
+    const clamped = Math.max(0.7, Math.min(1.5, parseFloat(scale) || 1.0));
+    widgetScale = clamped;
+    if (widgetContainer) {
+      widgetContainer.style.transform = clamped === 1 ? '' : `scale(${clamped})`;
+    }
+    if (window.__TAURI__) {
+      const { invoke } = window.__TAURI__.core;
+      const dpr = window.devicePixelRatio || 1;
+      const winW = Math.round((500 * widgetScale + 84) * dpr);
+      const winH = Math.round((440 * widgetScale + 60) * dpr);
+      try {
+        await invoke('resize_window', { width: winW, height: winH });
+      } catch (_) {}
+      setTimeout(() => updateClickRegion(), 40);
+    }
+  }
+
   // Принудительная инициализация WinAPI SetWindowPos для обхода бага с системной рамкой DWM
   async function initPosition() {
     if (!window.__TAURI__ || !appWindow) return;
     const { invoke } = window.__TAURI__.core;
     try {
-      await new Promise(r => setTimeout(r, 100)); // Задержка для DWM
-      const size = await appWindow.innerSize();
+      await new Promise(r => setTimeout(r, 80));
+      const dpr = window.devicePixelRatio || 1;
+      const winW = Math.round((500 * widgetScale + 84) * dpr);
+      const winH = Math.round((440 * widgetScale + 60) * dpr);
       let pos = await appWindow.outerPosition();
 
       // Пробуем восстановить сохраненные координаты с проверкой мониторов
@@ -71,37 +109,43 @@ document.addEventListener('DOMContentLoaded', () => {
               const my = mon.position.y;
               const mw = mon.size.width;
               const mh = mon.size.height;
-              if (parsed.x >= mx - 40 && parsed.x < mx + mw && parsed.y >= my - 40 && parsed.y < my + mh) {
+              if (parsed.x >= mx - 80 && parsed.x < mx + mw && parsed.y >= my - 80 && parsed.y < my + mh) {
                 isInsideAnyMonitor = true;
                 break;
               }
             }
             if (isInsideAnyMonitor) {
               pos = { x: parsed.x, y: parsed.y };
-              const { PhysicalPosition } = window.__TAURI__.dpi;
-              await appWindow.setPosition(new PhysicalPosition(pos.x, pos.y));
-              console.log(`[Widget] Position restored: x=${pos.x}, y=${pos.y}`);
             }
           }
         } catch (e) {
           console.error('[Widget] Restore position failed:', e);
         }
       }
-      
-      console.log(`[Widget] WinAPI init: size=${size.width}x${size.height}, pos=${pos.x},${pos.y}`);
+
       await invoke('resize_bottom_up_phys', {
-        width: size.width,
-        height: size.height,
+        width: winW,
+        height: winH,
         x: pos.x,
         y: pos.y
       });
       cachedWindowPos = { x: pos.x, y: pos.y };
+      updateClickRegion();
     } catch (e) {
       console.error('[Widget] initPosition WinAPI failed:', e);
     }
   }
 
-  let cachedWindowPos = { x: 0, y: 0 };
+  function startWidgetDrag() {
+    if (!window.__TAURI__) return;
+    const { invoke } = window.__TAURI__.core;
+    const dpr = window.devicePixelRatio || 1;
+    // Позволяем поднимать окно на 24 логических пикселя выше верхней границы экрана,
+    // чтобы видимая капсула (#widget-container) примагничивалась ровно к 0px от верха экрана,
+    // а при отступе от верха сохранялось полное свечение кнопки Play (.play-pulse)
+    const topGlowOffsetPhys = Math.round(PAD_TOP * dpr);
+    invoke('start_custom_drag', { topGlowOffsetPhys }).catch(console.error);
+  }
 
   // Следим за перемещением виджета и сохраняем его позицию с дебаунсом
   if (window.__TAURI__ && appWindow) {
@@ -118,8 +162,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  const root = document.getElementById('tts-widget-root');
-  
   // Рендерим общий UI
   if (window.renderTtsWidget) {
     window.renderTtsWidget(root, false);
@@ -129,46 +171,36 @@ document.addEventListener('DOMContentLoaded', () => {
     if (dragHandle && window.__TAURI__ && appWindow) {
       dragHandle.addEventListener('mousedown', (e) => {
         if (e.buttons === 1) {
-          appWindow.startDragging();
+          e.preventDefault();
+          startWidgetDrag();
         }
       });
     }
   }
 
   // Централизованное перетаскивание виджета за фон и элементы с data-tauri-drag-region
-  const widgetContainer = document.getElementById('widget-container');
   if (widgetContainer && window.__TAURI__ && appWindow) {
     widgetContainer.addEventListener('mousedown', (e) => {
       const isDragTarget = e.target.hasAttribute('data-tauri-drag-region') || 
                            e.target === widgetContainer || 
                            e.target.closest('[data-tauri-drag-region]');
       if (isDragTarget) {
-        if (!e.target.closest('button, select, input, a, .voice-item, .speed-item')) {
+        if (!e.target.closest('button, select, input, a, .voice-item, .speed-item, .volume-item')) {
           if (e.buttons === 1) {
-            appWindow.startDragging();
+            e.preventDefault();
+            startWidgetDrag();
           }
         }
       }
     });
   }
 
-  const btnExpand = document.getElementById('tts-btn-expand');
-  const expandedRow = document.getElementById('expanded-row');
-  const expandIcon = document.getElementById('tts-expand-icon');
-
-  const WIN_WIDTH = 580;
-  const WIN_HEIGHT_EXPANDED = 480;
-
-  let isRowExpanded = false;
-  let isDropdownOpen = false;
-  let currentRegionState = 'hover_collapsed';
-
   async function updateWindowHeight() {
-    // Физический размер окна постоянен для стабильности DWM
+    // Физический размер окна управляется через applyWidgetScale
   }
 
   // ======================================================================
-  // ОБРЕЗКА ОКНА ЧЕРЕЗ WIN32 REGION + КЛИКАБЕЛЬНОСТЬ СКВОЗЬ ТЕНЬ/СИЯНИЕ
+  // ТОЧНЫЙ РАСЧЕТ ИНТЕРАКТИВНОЙ ОБЛАСТИ (БЕЗ ТЕНЕЙ И СИЯНИЯ) ДЛЯ NATIVE HIT-TEST
   // ======================================================================
 
   async function updateClickRegion(state) {
@@ -180,32 +212,43 @@ document.addEventListener('DOMContentLoaded', () => {
       const scaleFactor = window.devicePixelRatio || 1;
       const rects = [];
 
-      // Базовый прямоугольник плашки + запас под визуальную тень (сама тень пропускает клики через set_ignore_cursor_events)
+      // Передаем ТОЛЬКО саму капсулу виджета (со скруглением 24px), без области тени вокруг неё!
+      // Вся область тени (слева, справа, сверху, снизу) остается на 100% прозрачной для кликов мыши.
       const isHoverCollapsed = currentRegionState === 'hover_collapsed';
-      const barW = isHoverCollapsed ? 180 : 564;
-      const barH = (currentRegionState === 'expanded' || isRowExpanded) ? 145 : 98;
-      rects.push({ x: 4, y: 0, width: barW, height: barH });
+      const pillW = Math.round((isHoverCollapsed ? 114 : 500) * widgetScale);
+      const basePillH = (currentRegionState === 'expanded' || isRowExpanded) ? 98 : 54;
+      const domRect = widgetContainer ? widgetContainer.getBoundingClientRect() : null;
+      const pillH = Math.round(Math.max(basePillH * widgetScale, domRect ? domRect.height : 0));
 
-      // Если открыто выпадающее меню голоса или скорости — добавляем его точный прямоугольник с запасом под тень
+      rects.push({
+        x: PAD_LEFT,
+        y: PAD_TOP,
+        width: pillW,
+        height: pillH,
+        radius: Math.round(24 * widgetScale)
+      });
+
+      // Если открыто выпадающее меню голоса, скорости или громкости — добавляем его точный прямоугольник
+      // и соединяем зазор между капсулой и меню, чтобы курсор не терял фокус при переходе в список
       if (currentRegionState === 'dropdown' || isDropdownOpen) {
         const voiceMenu = root ? root.querySelector('#tts-voice-menu') : null;
         const speedMenu = root ? root.querySelector('#tts-speed-menu') : null;
+        const volumeMenu = root ? root.querySelector('#tts-volume-menu') : null;
         const openMenu = (voiceMenu && !voiceMenu.classList.contains('hidden')) ? voiceMenu
-                       : ((speedMenu && !speedMenu.classList.contains('hidden')) ? speedMenu : null);
+                       : ((speedMenu && !speedMenu.classList.contains('hidden')) ? speedMenu
+                       : ((volumeMenu && !volumeMenu.classList.contains('hidden')) ? volumeMenu : null));
         if (openMenu) {
           const mr = openMenu.getBoundingClientRect();
           if (mr.width > 0 && mr.height > 0) {
+            const topY = Math.min(Math.floor(mr.top), PAD_TOP + pillH - 2);
             rects.push({
-              x: Math.max(0, Math.floor(mr.left - 16)),
-              y: Math.max(0, Math.floor(mr.top - 8)),
-              width: Math.ceil(mr.width + 32),
-              height: Math.ceil(mr.height + 28)
+              x: Math.floor(mr.left),
+              y: topY,
+              width: Math.ceil(mr.width),
+              height: Math.ceil(mr.bottom - topY),
+              radius: Math.round(14 * widgetScale)
             });
-          } else {
-            rects[0].height = 420;
           }
-        } else {
-          rects[0].height = 420;
         }
       }
 
@@ -218,117 +261,46 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Проверка: находится ли точка (в логических координатах окна) внутри реального тела виджета или открытого меню (а не в полупрозрачной тени вокруг него)
-  function isPointInsideWidgetBody(clientX, clientY) {
-    if (!widgetContainer) return false;
-    const r = widgetContainer.getBoundingClientRect();
-    if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
-      return true;
+  let collapseDebounceTimer = null;
+
+  const expandWidget = () => {
+    if (collapseDebounceTimer) {
+      clearTimeout(collapseDebounceTimer);
+      collapseDebounceTimer = null;
     }
-    if (root) {
-      const voiceMenu = root.querySelector('#tts-voice-menu');
-      if (voiceMenu && !voiceMenu.classList.contains('hidden')) {
-        const vr = voiceMenu.getBoundingClientRect();
-        if (clientX >= vr.left && clientX <= vr.right && clientY >= vr.top && clientY <= vr.bottom) {
-          return true;
-        }
+    if (widgetContainer && widgetContainer.classList.contains('hover-collapsed')) {
+      widgetContainer.classList.remove('hover-collapsed');
+      updateClickRegion(isDropdownOpen ? 'dropdown' : (isRowExpanded ? 'expanded' : 'collapsed'));
+    }
+  };
+
+  const collapseWidget = () => {
+    if (collapseDebounceTimer) {
+      clearTimeout(collapseDebounceTimer);
+      collapseDebounceTimer = null;
+    }
+    if (widgetContainer && !widgetContainer.classList.contains('hover-collapsed')) {
+      if (root && typeof root.closeMenus === 'function') {
+        root.closeMenus();
       }
-      const speedMenu = root.querySelector('#tts-speed-menu');
-      if (speedMenu && !speedMenu.classList.contains('hidden')) {
-        const sr = speedMenu.getBoundingClientRect();
-        if (clientX >= sr.left && clientX <= sr.right && clientY >= sr.top && clientY <= sr.bottom) {
-          return true;
-        }
+      isDropdownOpen = false;
+
+      if (expandedRow) {
+        expandedRow.classList.remove('flex');
+        expandedRow.classList.add('hidden');
       }
-    }
-    return false;
-  }
-
-  // Пропускаем клики сквозь область тени/свечения вокруг виджета
-  let isIgnoringShadowCursor = false;
-  let shadowCursorTimer = null;
-
-  async function setShadowIgnoreCursor(ignore) {
-    if (!window.__TAURI__ || isIgnoringShadowCursor === ignore) return;
-    isIgnoringShadowCursor = ignore;
-    const { invoke } = window.__TAURI__.core;
-    try {
-      await invoke('set_ignore_cursor_events', { ignore });
-    } catch (_) {}
-
-    if (ignore) {
-      if (!shadowCursorTimer) {
-        shadowCursorTimer = setInterval(async () => {
-          if (!isIgnoringShadowCursor) {
-            clearInterval(shadowCursorTimer);
-            shadowCursorTimer = null;
-            return;
-          }
-          try {
-            const [cx, cy] = await invoke('get_cursor_pos');
-            const dpr = window.devicePixelRatio || 1;
-            const lx = (cx - cachedWindowPos.x) / dpr;
-            const ly = (cy - cachedWindowPos.y) / dpr;
-            const outOfWindow = lx < 0 || ly < 0 || lx > WIN_WIDTH || ly > WIN_HEIGHT_EXPANDED;
-            if (outOfWindow || isPointInsideWidgetBody(lx, ly)) {
-              await setShadowIgnoreCursor(false);
-            }
-          } catch (_) {
-            await setShadowIgnoreCursor(false);
-          }
-        }, 50);
+      if (expandIcon) {
+        expandIcon.textContent = 'open_in_full';
       }
-    } else if (shadowCursorTimer) {
-      clearInterval(shadowCursorTimer);
-      shadowCursorTimer = null;
-    }
-  }
+      isRowExpanded = false;
 
-  document.addEventListener('mousemove', (e) => {
-    if (e.buttons !== 0) return;
-    const inside = isPointInsideWidgetBody(e.clientX, e.clientY);
-    if (!inside && !isIgnoringShadowCursor) {
-      setShadowIgnoreCursor(true);
-    } else if (inside && isIgnoringShadowCursor) {
-      setShadowIgnoreCursor(false);
+      widgetContainer.classList.add('hover-collapsed');
+      updateClickRegion('hover_collapsed');
     }
-  });
+  };
 
   if (widgetContainer) {
     widgetContainer.classList.add('hover-collapsed');
-    
-    const expandWidget = () => {
-      if (widgetContainer.classList.contains('hover-collapsed')) {
-        widgetContainer.classList.remove('hover-collapsed');
-        updateClickRegion(isDropdownOpen ? 'dropdown' : (isRowExpanded ? 'expanded' : 'collapsed'));
-      }
-    };
-
-    const collapseWidget = () => {
-      if (!widgetContainer.classList.contains('hover-collapsed')) {
-        if (root && typeof root.closeMenus === 'function') {
-          root.closeMenus();
-        }
-        isDropdownOpen = false;
-
-        if (expandedRow) {
-          expandedRow.classList.remove('flex');
-          expandedRow.classList.add('hidden');
-        }
-        if (expandIcon) {
-          expandIcon.textContent = 'open_in_full';
-        }
-        isRowExpanded = false;
-
-        widgetContainer.classList.add('hover-collapsed');
-        
-        setTimeout(() => {
-          if (widgetContainer.classList.contains('hover-collapsed')) {
-            updateClickRegion('hover_collapsed');
-          }
-        }, 350);
-      }
-    };
 
     const playStopWrapper = root.querySelector('#tts-play-stop-wrapper');
     const extraContent = root.querySelector('.tts-extra-content');
@@ -340,12 +312,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (extraContent) {
       extraContent.addEventListener('mouseenter', expandWidget);
     }
-
     if (dragHandle) {
-      dragHandle.addEventListener('mouseenter', collapseWidget);
+      dragHandle.addEventListener('mouseenter', () => {
+        // Если виджет уже раскрыт, не сворачиваем его мгновенно при случайном задевании ручки,
+        // а даем спокойно перетаскивать
+      });
     }
-
-    widgetContainer.addEventListener('mouseleave', collapseWidget);
   }
 
   // При старте — свернутый режим
@@ -362,14 +334,18 @@ document.addEventListener('DOMContentLoaded', () => {
         expandIcon.textContent = 'close_fullscreen';
         isRowExpanded = true;
         updateWindowHeight();
-        updateClickRegion(isDropdownOpen ? 'dropdown' : 'expanded');
+        setTimeout(() => {
+          updateClickRegion(isDropdownOpen ? 'dropdown' : 'expanded');
+        }, 20);
       } else {
         expandedRow.classList.remove('flex');
         expandedRow.classList.add('hidden');
         expandIcon.textContent = 'open_in_full';
         isRowExpanded = false;
         updateWindowHeight();
-        updateClickRegion(isDropdownOpen ? 'dropdown' : 'collapsed');
+        setTimeout(() => {
+          updateClickRegion(isDropdownOpen ? 'dropdown' : 'collapsed');
+        }, 20);
       }
     });
   }
@@ -379,7 +355,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateWindowHeight();
     setTimeout(() => {
       updateClickRegion(isDropdownOpen ? 'dropdown' : (isRowExpanded ? 'expanded' : 'collapsed'));
-    }, 20);
+    }, 25);
   });
 
   function formatHotkeyHuman(spec) {
@@ -396,8 +372,11 @@ document.addEventListener('DOMContentLoaded', () => {
       .replace(/\+/g, ' + ');
   }
 
-  function applyWidgetHotkeyTooltips(cfg) {
+  function applyWidgetConfig(cfg) {
     if (!cfg) return;
+    if (cfg.widget_scale !== undefined) {
+      applyWidgetScale(cfg.widget_scale);
+    }
     const playBtn = root ? root.querySelector('#tts-widget-play') : null;
     if (playBtn && cfg.hotkey_tts_read) {
       playBtn.title = `Озвучить / Пауза (${formatHotkeyHuman(cfg.hotkey_tts_read)})`;
@@ -419,9 +398,41 @@ document.addEventListener('DOMContentLoaded', () => {
     const { invoke } = window.__TAURI__.core;
     const { listen, emit } = window.__TAURI__.event;
 
-    invoke('load_config').then(applyWidgetHotkeyTooltips).catch(() => {});
+    invoke('load_config').then(applyWidgetConfig).catch(() => {});
     listen('config-updated', (e) => {
-      if (e.payload) applyWidgetHotkeyTooltips(e.payload);
+      if (e.payload) applyWidgetConfig(e.payload);
+    });
+
+    listen('custom-drag-ended', (e) => {
+      if (e.payload && typeof e.payload.x === 'number' && typeof e.payload.y === 'number') {
+        cachedWindowPos = { x: e.payload.x, y: e.payload.y };
+        localStorage.setItem('widget_pos', JSON.stringify(cachedWindowPos));
+      }
+    });
+
+    // Нативные события входа/выхода курсора из интерактивной капсулы (от потока hit-test в Rust)
+    listen('cursor-entered-region', (e) => {
+      if (collapseDebounceTimer) {
+        clearTimeout(collapseDebounceTimer);
+        collapseDebounceTimer = null;
+      }
+      if (e.payload && typeof e.payload.phys_x === 'number') {
+        const dpr = window.devicePixelRatio || 1;
+        const lx = e.payload.phys_x / dpr;
+        // Если виджет свернут и курсор вошел в левую часть (кнопка Play, а не точки перетаскивания справа) — раскрываем
+        if (widgetContainer && widgetContainer.classList.contains('hover-collapsed')) {
+          if (lx < PAD_LEFT + 78 * widgetScale) {
+            expandWidget();
+          }
+        }
+      }
+    });
+
+    listen('cursor-left-region', () => {
+      if (collapseDebounceTimer) clearTimeout(collapseDebounceTimer);
+      collapseDebounceTimer = setTimeout(() => {
+        collapseWidget();
+      }, 100);
     });
 
     // Сразу запрашиваем установленные голоса при загрузке

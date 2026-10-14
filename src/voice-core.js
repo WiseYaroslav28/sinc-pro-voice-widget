@@ -123,10 +123,14 @@ class VoiceCore {
         this.settings = {
             voice: 'ru-RU-SvetlanaNeural',
             speed: 1.0,
+            volume: 1.0,
             translate: false,
             tts_engine: 'edge',
             tts_local_voice: 'ru_RU-dmitri-medium.onnx'
         };
+        this._lastProgressBroadcastTime = 0;
+        this._lastBroadcastPlayedPct = -1;
+        this._lastBroadcastBufferedPct = -1;
 
         if (window.__TAURI__) {
             const { invoke } = window.__TAURI__.core;
@@ -136,11 +140,13 @@ class VoiceCore {
             ]).then(([config, voices]) => {
                 if (config.tts_voice) this.settings.voice = config.tts_voice;
                 if (config.tts_speed) this.settings.speed = config.tts_speed;
+                if (config.tts_volume !== undefined) this.settings.volume = Math.max(0, Math.min(1, parseFloat(config.tts_volume)));
                 if (config.tts_translate !== undefined) this.settings.translate = config.tts_translate;
                 if (config.tts_engine) this.settings.tts_engine = config.tts_engine;
                 if (config.tts_local_voice) this.settings.tts_local_voice = config.tts_local_voice;
                 this.settings.installedVoices = voices;
                 this.audioElement.playbackRate = this.settings.speed;
+                this.audioElement.volume = this.settings.volume;
                 if (this.onSettingsSync) this.onSettingsSync(this.settings);
                 this.broadcastState('settings', this.settings);
             }).catch(()=>{});
@@ -149,6 +155,7 @@ class VoiceCore {
             this.settings = {
                 voice: savedSettings.voice || 'ru-RU-SvetlanaNeural',
                 speed: savedSettings.speed || 1.0,
+                volume: savedSettings.volume !== undefined ? Math.max(0, Math.min(1, parseFloat(savedSettings.volume))) : 1.0,
                 translate: savedSettings.translate || false,
                 tts_engine: savedSettings.tts_engine || 'edge',
                 tts_local_voice: savedSettings.tts_local_voice || 'ru_RU-dmitri-medium.onnx'
@@ -157,6 +164,7 @@ class VoiceCore {
 
         this.audioElement = new Audio();
         this.audioElement.playbackRate = this.settings.speed;
+        this.audioElement.volume = this.settings.volume;
         
         // Слушатели событий
         this.onProgress = null;       // (percentBuffered, percentPlayed)
@@ -659,6 +667,7 @@ class VoiceCore {
         if (currentBuf && currentBuf.startsWith("data:")) {
             this.audioElement.src = currentBuf;
             this.audioElement.playbackRate = this.settings.speed;
+            this.audioElement.volume = Math.max(0, Math.min(1, this.settings.volume !== undefined ? this.settings.volume : 1.0));
             this.log('playCurrentSentence() calling audioElement.play() for index ' + this.currentSentenceIndex);
             this.audioElement.play().catch(e => {
                 this.log('Audio play FAILED: ' + e.name + ' ' + e.message);
@@ -711,18 +720,24 @@ class VoiceCore {
                 } else if (p.action === 'append') {
                     this.appendText(p.text);
                 } else if (p.action === 'settings' || p.action === 'setting') {
+                    const src = p.settings || p;
                     if (p.settings) {
                         this.settings = { ...this.settings, ...p.settings };
                     } else {
                         if (p.speed !== undefined) this.settings.speed = p.speed;
+                        if (p.volume !== undefined) this.settings.volume = Math.max(0, Math.min(1, parseFloat(p.volume)));
                         if (p.voice !== undefined) this.settings.voice = p.voice;
                         if (p.translate !== undefined) this.settings.translate = p.translate;
                         if (p.tts_engine !== undefined) this.settings.tts_engine = p.tts_engine;
                         if (p.tts_local_voice !== undefined) this.settings.tts_local_voice = p.tts_local_voice;
                         if (p.installedVoices !== undefined) this.settings.installedVoices = p.installedVoices;
                     }
-                    if (this.isPlaying && p.speed !== undefined) {
+                    if (src.speed !== undefined) {
                         this.audioElement.playbackRate = this.settings.speed;
+                    }
+                    if (src.volume !== undefined) {
+                        this.settings.volume = Math.max(0, Math.min(1, parseFloat(src.volume)));
+                        this.audioElement.volume = this.settings.volume;
                     }
                     localStorage.setItem('tts-settings', JSON.stringify(this.settings));
                     if (window.__TAURI__) {
@@ -730,6 +745,7 @@ class VoiceCore {
                         invoke('update_config_fields', { fields: {
                             tts_voice: this.settings.voice,
                             tts_speed: this.settings.speed,
+                            tts_volume: this.settings.volume,
                             tts_translate: this.settings.translate,
                             tts_engine: this.settings.tts_engine,
                             tts_local_voice: this.settings.tts_local_voice
@@ -794,11 +810,20 @@ class VoiceCore {
         }
 
         if (window.__TAURI__) {
-            window.__TAURI__.event.emit('tts-state-sync', {
-                action: 'progress',
-                percentBuffered,
-                percentPlayed
-            });
+            const now = Date.now();
+            const playedDiff = Math.abs(percentPlayed - this._lastBroadcastPlayedPct);
+            const bufDiff = Math.abs(percentBuffered - this._lastBroadcastBufferedPct);
+            const isBoundary = percentPlayed <= 0.1 || percentPlayed >= 99.5 || percentBuffered >= 99.9;
+            if (isBoundary || (now - this._lastProgressBroadcastTime >= 180 && (playedDiff >= 0.4 || bufDiff >= 0.4))) {
+                this._lastProgressBroadcastTime = now;
+                this._lastBroadcastPlayedPct = percentPlayed;
+                this._lastBroadcastBufferedPct = percentBuffered;
+                window.__TAURI__.event.emit('tts-state-sync', {
+                    action: 'progress',
+                    percentBuffered,
+                    percentPlayed
+                });
+            }
         }
     }
 }

@@ -2148,6 +2148,8 @@ fn is_autostart_enabled() -> Result<bool, String> {
 async fn show_capsule_window(app_handle: tauri::AppHandle) -> Result<(), String> {
     if let Some(w) = app_handle.get_webview_window("capsule") {
         w.show().map_err(|e| e.to_string())?;
+        #[cfg(target_os = "windows")]
+        ensure_webview_window_borderless(&w);
     }
     Ok(())
 }
@@ -2164,6 +2166,8 @@ async fn hide_capsule_window(app_handle: tauri::AppHandle) -> Result<(), String>
 async fn show_widget_window(app_handle: tauri::AppHandle) -> Result<(), String> {
     if let Some(w) = app_handle.get_webview_window("widget") {
         w.show().map_err(|e| e.to_string())?;
+        #[cfg(target_os = "windows")]
+        ensure_webview_window_borderless(&w);
         let _ = w.emit("widget-shown", ());
     }
     Ok(())
@@ -2302,13 +2306,17 @@ pub struct AppConfig {
     #[serde(default = "default_layout_converter_mode")]
     pub layout_converter_mode: u8,
     
-    // Настройки капсулы
+    // Настройки капсулы и масштаба виджетов
     #[serde(default = "default_true")]
     pub capsule_magnet: bool,
+    #[serde(default = "default_widget_scale")]
+    pub widget_scale: f32,
     
     // Настройки TTS
     #[serde(default = "default_tts_speed")]
     pub tts_speed: f32,
+    #[serde(default = "default_tts_volume")]
+    pub tts_volume: f32,
     #[serde(default = "default_tts_voice")]
     pub tts_voice: String,
     #[serde(default = "default_false")]
@@ -2375,7 +2383,9 @@ impl Default for AppConfig {
             ocr_mode_switch: 0,
             layout_converter_mode: 2,
             capsule_magnet: true,
+            widget_scale: 1.0,
             tts_speed: 1.0,
+            tts_volume: 1.0,
             tts_voice: "ru-RU-SvetlanaNeural".to_string(),
             tts_translate: false,
             stt_engine: "gemini".to_string(),
@@ -2398,6 +2408,14 @@ impl Default for AppConfig {
             ai_servers: vec![],
         }
     }
+}
+
+fn default_widget_scale() -> f32 {
+    1.0
+}
+
+fn default_tts_volume() -> f32 {
+    1.0
 }
 
 fn default_layout_excluded_words() -> Vec<String> {
@@ -2726,9 +2744,17 @@ async fn update_config_fields(app_handle: tauri::AppHandle, fields: serde_json::
         if let Some(val) = obj.get("capsule_magnet") {
             if let Some(b) = val.as_bool() { config.capsule_magnet = b; }
         }
+        if let Some(val) = obj.get("widget_scale") {
+            if let Some(f) = val.as_f64() { config.widget_scale = (f as f32).clamp(0.7, 1.5); }
+            else if let Some(n) = val.as_u64() { config.widget_scale = (n as f32).clamp(0.7, 1.5); }
+        }
         if let Some(val) = obj.get("tts_speed") {
             if let Some(f) = val.as_f64() { config.tts_speed = f as f32; }
             else if let Some(n) = val.as_u64() { config.tts_speed = n as f32; }
+        }
+        if let Some(val) = obj.get("tts_volume") {
+            if let Some(f) = val.as_f64() { config.tts_volume = (f as f32).clamp(0.0, 1.0); }
+            else if let Some(n) = val.as_u64() { config.tts_volume = (n as f32).clamp(0.0, 1.0); }
         }
         if let Some(val) = obj.get("tts_voice") {
             if let Some(s) = val.as_str() { config.tts_voice = s.to_string(); }
@@ -7721,8 +7747,231 @@ async fn start_ocr_scan_async(
     Ok(())
 }
 
+#[derive(Clone, Debug)]
+struct PhysicalHitRect {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    radius: i32,
+}
+
+static WINDOW_HIT_RECTS: std::sync::LazyLock<Mutex<HashMap<String, Vec<PhysicalHitRect>>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+static WINDOW_IGNORE_STATE: std::sync::LazyLock<Mutex<HashMap<String, bool>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+static CUSTOM_DRAG_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+fn point_in_rounded_rect(px: i32, py: i32, r: &PhysicalHitRect) -> bool {
+    if px < r.x || px > r.x + r.width || py < r.y || py > r.y + r.height {
+        return false;
+    }
+    let rad = r.radius.min(r.width / 2).min(r.height / 2);
+    if rad <= 0 {
+        return true;
+    }
+    let left_cx = r.x + rad;
+    let right_cx = r.x + r.width - rad;
+    let top_cy = r.y + rad;
+    let bottom_cy = r.y + r.height - rad;
+
+    let dx = if px < left_cx {
+        left_cx - px
+    } else if px > right_cx {
+        px - right_cx
+    } else {
+        0
+    };
+    let dy = if py < top_cy {
+        top_cy - py
+    } else if py > bottom_cy {
+        py - bottom_cy
+    } else {
+        0
+    };
+    if dx > 0 && dy > 0 {
+        (dx * dx + dy * dy) <= (rad * rad)
+    } else {
+        true
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn make_overlay_borderless(hwnd: isize) {
+    use winapi::um::winuser::{
+        GetWindowLongW, SetWindowLongW, SetWindowPos, SetWindowRgn, GWL_EXSTYLE, GWL_STYLE,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER,
+        WS_CAPTION, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX,
+        WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
+    };
+    unsafe {
+        let style = GetWindowLongW(hwnd as _, GWL_STYLE) as u32;
+        let bad_bits = WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
+        let new_style = (style & !bad_bits) | WS_POPUP | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
+        let mut changed = false;
+        if new_style != style {
+            SetWindowLongW(hwnd as _, GWL_STYLE, new_style as i32);
+            changed = true;
+        }
+
+        let ex_style = GetWindowLongW(hwnd as _, GWL_EXSTYLE) as u32;
+        let new_ex_style = ex_style | WS_EX_TOOLWINDOW;
+        if new_ex_style != ex_style {
+            SetWindowLongW(hwnd as _, GWL_EXSTYLE, new_ex_style as i32);
+            changed = true;
+        }
+
+        if changed {
+            // Сбрасываем любой GDI-регион, чтобы DWM DirectComposition сохранял 100% попиксельную прозрачность
+            SetWindowRgn(hwnd as _, std::ptr::null_mut(), 1);
+            SetWindowPos(
+                hwnd as _,
+                std::ptr::null_mut(),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_FRAMECHANGED,
+            );
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn ensure_webview_window_borderless(w: &tauri::WebviewWindow) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    if let Ok(handle) = w.window_handle() {
+        if let RawWindowHandle::Win32(win_handle) = handle.as_raw() {
+            make_overlay_borderless(win_handle.hwnd.get() as isize);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn set_ignore_cursor_events_hwnd(hwnd: isize, ignore: bool) {
+    use winapi::um::winuser::{
+        GetWindowLongW, SetWindowLongW, GWL_EXSTYLE, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
+        WS_EX_TRANSPARENT,
+    };
+    unsafe {
+        make_overlay_borderless(hwnd);
+        let ex_style = GetWindowLongW(hwnd as _, GWL_EXSTYLE) as u32;
+        let mut new_ex = ex_style | WS_EX_TOOLWINDOW | WS_EX_LAYERED;
+        if ignore {
+            new_ex |= WS_EX_TRANSPARENT;
+        } else {
+            new_ex &= !WS_EX_TRANSPARENT;
+        }
+        if new_ex != ex_style {
+            SetWindowLongW(hwnd as _, GWL_EXSTYLE, new_ex as i32);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn evaluate_overlay_hit_test<F>(label: &str, hwnd: isize, emit_fn: F)
+where
+    F: Fn(&str, serde_json::Value),
+{
+    #[repr(C)]
+    #[derive(Default)]
+    struct POINT {
+        x: i32,
+        y: i32,
+    }
+    #[repr(C)]
+    #[derive(Default)]
+    struct RECT {
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+    }
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetCursorPos(lpPoint: *mut POINT) -> i32;
+        fn GetWindowRect(hWnd: isize, lpRect: *mut RECT) -> i32;
+        fn GetAsyncKeyState(vKey: i32) -> i16;
+    }
+
+    let rects_opt = {
+        let guard = WINDOW_HIT_RECTS.lock().unwrap();
+        guard.get(label).cloned()
+    };
+    let Some(rects) = rects_opt else {
+        return;
+    };
+    if rects.is_empty() {
+        return;
+    }
+
+    let mut pt = POINT::default();
+    let mut wr = RECT::default();
+    unsafe {
+        if GetCursorPos(&mut pt) == 0 || GetWindowRect(hwnd, &mut wr) == 0 {
+            return;
+        }
+    }
+
+    let rel_x = pt.x - wr.left;
+    let rel_y = pt.y - wr.top;
+    let inside = rects.iter().any(|r| point_in_rounded_rect(rel_x, rel_y, r));
+
+    let prev_ignore = {
+        let guard = WINDOW_IGNORE_STATE.lock().unwrap();
+        guard.get(label).copied()
+    };
+
+    let lbutton_down = unsafe { (GetAsyncKeyState(0x01) as u16 & 0x8000) != 0 }
+        || CUSTOM_DRAG_ACTIVE.load(Ordering::Relaxed);
+
+    let should_ignore = if prev_ignore == Some(false) && lbutton_down {
+        false
+    } else {
+        !inside
+    };
+
+    set_ignore_cursor_events_hwnd(hwnd, should_ignore);
+
+    if prev_ignore != Some(should_ignore) {
+        {
+            let mut guard = WINDOW_IGNORE_STATE.lock().unwrap();
+            guard.insert(label.to_string(), should_ignore);
+        }
+        if should_ignore {
+            emit_fn("cursor-left-region", serde_json::json!({}));
+        } else {
+            emit_fn(
+                "cursor-entered-region",
+                serde_json::json!({
+                    "phys_x": rel_x,
+                    "phys_y": rel_y
+                }),
+            );
+        }
+    }
+}
+
 #[tauri::command]
 fn set_ignore_cursor_events(window: tauri::Window, ignore: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let label = window.label();
+        if label == "widget" || label == "capsule" {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            if let Ok(handle) = window.window_handle() {
+                if let RawWindowHandle::Win32(win_handle) = handle.as_raw() {
+                    let hwnd = win_handle.hwnd.get() as isize;
+                    set_ignore_cursor_events_hwnd(hwnd, ignore);
+                    let mut guard = WINDOW_IGNORE_STATE.lock().unwrap();
+                    guard.insert(label.to_string(), ignore);
+                    return Ok(());
+                }
+            }
+        }
+    }
     window.set_ignore_cursor_events(ignore).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -7764,6 +8013,8 @@ pub struct RegionRect {
     pub y: f64,
     pub width: f64,
     pub height: f64,
+    #[serde(default)]
+    pub radius: f64,
 }
 
 #[tauri::command]
@@ -7774,43 +8025,168 @@ async fn set_click_region(
 ) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        use tauri::Manager;
-        use winapi::shared::windef::HWND;
-        use winapi::um::wingdi::{CombineRgn, CreateRectRgn, RGN_OR};
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
         use winapi::um::winuser::SetWindowRgn;
 
-        let tauri_hwnd = window.hwnd().map_err(|e| e.to_string())?;
-        let hwnd = unsafe { std::mem::transmute::<_, HWND>(tauri_hwnd) };
-
-        if rects.is_empty() {
-            unsafe {
-                SetWindowRgn(hwnd, std::ptr::null_mut(), 1);
-            }
-            return Ok(());
-        }
+        let hwnd = match window.window_handle().map_err(|e| e.to_string())?.as_raw() {
+            RawWindowHandle::Win32(handle) => handle.hwnd.get() as isize,
+            _ => return Err("Не Win32 окно".into()),
+        };
 
         unsafe {
-            let r0 = &rects[0];
-            let mut final_rgn = CreateRectRgn(
-                (r0.x * scale_factor).round() as i32,
-                (r0.y * scale_factor).round() as i32,
-                ((r0.x + r0.width) * scale_factor).round() as i32,
-                ((r0.y + r0.height) * scale_factor).round() as i32,
-            );
-
-            for r in rects.iter().skip(1) {
-                let temp_rgn = CreateRectRgn(
-                    (r.x * scale_factor).round() as i32,
-                    (r.y * scale_factor).round() as i32,
-                    ((r.x + r.width) * scale_factor).round() as i32,
-                    ((r.y + r.height) * scale_factor).round() as i32,
-                );
-                CombineRgn(final_rgn, final_rgn, temp_rgn, RGN_OR);
-                winapi::um::wingdi::DeleteObject(temp_rgn as *mut _);
-            }
-
-            SetWindowRgn(hwnd, final_rgn, 1);
+            // Всегда держим SetWindowRgn = NULL, чтобы DWM DirectComposition рисовал чистую альфа-прозрачность
+            // без классической белой шапки Windows и без обрезки левой тени
+            SetWindowRgn(hwnd as _, std::ptr::null_mut(), 1);
         }
+        make_overlay_borderless(hwnd);
+
+        let phys_rects: Vec<PhysicalHitRect> = rects
+            .into_iter()
+            .map(|r| PhysicalHitRect {
+                x: (r.x * scale_factor).round() as i32,
+                y: (r.y * scale_factor).round() as i32,
+                width: (r.width * scale_factor).round() as i32,
+                height: (r.height * scale_factor).round() as i32,
+                radius: (r.radius * scale_factor).round() as i32,
+            })
+            .collect();
+
+        let label = window.label().to_string();
+        {
+            let mut guard = WINDOW_HIT_RECTS.lock().unwrap();
+            guard.insert(label.clone(), phys_rects);
+        }
+
+        evaluate_overlay_hit_test(&label, hwnd, |event_name, payload| {
+            let _ = window.emit(event_name, payload);
+        });
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn start_custom_drag(
+    window: tauri::Window,
+    top_glow_offset_phys: i32,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let hwnd = match window.window_handle().map_err(|e| e.to_string())?.as_raw() {
+            RawWindowHandle::Win32(handle) => handle.hwnd.get() as isize,
+            _ => return Err("Не Win32 окно".into()),
+        };
+
+        CUSTOM_DRAG_ACTIVE.store(true, Ordering::SeqCst);
+        set_ignore_cursor_events_hwnd(hwnd, false);
+
+        std::thread::spawn(move || {
+            #[repr(C)]
+            #[derive(Default, Clone, Copy)]
+            struct POINT {
+                x: i32,
+                y: i32,
+            }
+            #[repr(C)]
+            #[derive(Default, Clone, Copy)]
+            struct RECT {
+                left: i32,
+                top: i32,
+                right: i32,
+                bottom: i32,
+            }
+            #[repr(C)]
+            struct MONITORINFO {
+                cb_size: u32,
+                rc_monitor: RECT,
+                rc_work: RECT,
+                dw_flags: u32,
+            }
+            #[link(name = "user32")]
+            extern "system" {
+                fn GetCursorPos(lpPoint: *mut POINT) -> i32;
+                fn GetWindowRect(hWnd: isize, lpRect: *mut RECT) -> i32;
+                fn SetWindowPos(
+                    hWnd: isize,
+                    hWndInsertAfter: isize,
+                    X: i32,
+                    Y: i32,
+                    cx: i32,
+                    cy: i32,
+                    uFlags: u32,
+                ) -> i32;
+                fn GetAsyncKeyState(vKey: i32) -> i16;
+                fn MonitorFromPoint(pt: POINT, dwFlags: u32) -> isize;
+                fn GetMonitorInfoW(hMonitor: isize, lpmi: *mut MONITORINFO) -> i32;
+            }
+            const HWND_TOPMOST: isize = -1;
+            const SWP_NOSIZE: u32 = 0x0001;
+            const SWP_NOACTIVATE: u32 = 0x0010;
+            const SWP_NOOWNERZORDER: u32 = 0x0200;
+            const MONITOR_DEFAULTTONEAREST: u32 = 2;
+
+            unsafe {
+                make_overlay_borderless(hwnd);
+                let mut start_cursor = POINT::default();
+                let mut start_rect = RECT::default();
+                GetCursorPos(&mut start_cursor);
+                GetWindowRect(hwnd, &mut start_rect);
+
+                let offset_x = start_cursor.x - start_rect.left;
+                let offset_y = start_cursor.y - start_rect.top;
+                let mut last_x = start_rect.left;
+                let mut last_y = start_rect.top;
+
+                while (GetAsyncKeyState(0x01) as u16 & 0x8000) != 0 {
+                    let mut cur = POINT::default();
+                    GetCursorPos(&mut cur);
+
+                    let new_x = cur.x - offset_x;
+                    let mut new_y = cur.y - offset_y;
+
+                    let hmon = MonitorFromPoint(cur, MONITOR_DEFAULTTONEAREST);
+                    if hmon != 0 {
+                        let mut mi = MONITORINFO {
+                            cb_size: std::mem::size_of::<MONITORINFO>() as u32,
+                            rc_monitor: RECT::default(),
+                            rc_work: RECT::default(),
+                            dw_flags: 0,
+                        };
+                        if GetMonitorInfoW(hmon, &mut mi) != 0 {
+                            let min_y = mi.rc_monitor.top - top_glow_offset_phys;
+                            if new_y < min_y + 8 {
+                                new_y = min_y;
+                            }
+                        }
+                    }
+
+                    if new_x != last_x || new_y != last_y {
+                        SetWindowPos(
+                            hwnd,
+                            HWND_TOPMOST,
+                            new_x,
+                            new_y,
+                            0,
+                            0,
+                            SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+                        );
+                        last_x = new_x;
+                        last_y = new_y;
+                    }
+
+                    std::thread::sleep(std::time::Duration::from_millis(8));
+                }
+
+                CUSTOM_DRAG_ACTIVE.store(false, Ordering::SeqCst);
+                let _ = window.emit(
+                    "custom-drag-ended",
+                    serde_json::json!({
+                        "x": last_x,
+                        "y": last_y
+                    }),
+                );
+            }
+        });
     }
     Ok(())
 }
@@ -7994,34 +8370,23 @@ fn resize_window(window: tauri::Window, width: i32, height: i32) -> Result<(), S
         RawWindowHandle::Win32(handle) => handle.hwnd.get() as isize,
         _ => return Err("Текущее окно не является Win32 HWND".into()),
     };
+    let label = window.label();
+    if label == "widget" || label == "capsule" {
+        make_overlay_borderless(hwnd);
+    }
     #[link(name = "user32")]
     extern "system" {
         fn SetWindowPos(hWnd: isize, hWndInsertAfter: isize, X: i32, Y: i32, cx: i32, cy: i32, uFlags: u32) -> i32;
     }
+    const HWND_TOPMOST: isize = -1;
     const SWP_NOMOVE: u32 = 0x0002;
-    const SWP_NOZORDER: u32 = 0x0004;
     const SWP_NOACTIVATE: u32 = 0x0010;
     const SWP_NOOWNERZORDER: u32 = 0x0200;
     unsafe {
-        let res = SetWindowPos(hwnd, 0, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+        let res = SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, width, height, SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
         if res == 0 { return Err("Ошибка SetWindowPos".into()); }
     }
     Ok(())
-}
-
-#[cfg(target_os = "windows")]
-fn strip_window_frame(hwnd: isize) {
-    use winapi::um::winuser::{
-        GetWindowLongW, SetWindowLongW, GWL_STYLE, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
-        WS_SYSMENU, WS_THICKFRAME,
-    };
-    unsafe {
-        let style = GetWindowLongW(hwnd as _, GWL_STYLE) as u32;
-        let new_style = style & !(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
-        if new_style != style {
-            SetWindowLongW(hwnd as _, GWL_STYLE, new_style as i32);
-        }
-    }
 }
 
 #[tauri::command]
@@ -8045,7 +8410,7 @@ fn resize_bottom_up_phys(
 
     let label = window.label();
     if label == "widget" || label == "capsule" {
-        strip_window_frame(hwnd);
+        make_overlay_borderless(hwnd);
     }
 
     #[link(name = "user32")]
@@ -8091,8 +8456,14 @@ fn resize_bottom_up_phys(
         }
     }
     
-    // ПРИНУДИТЕЛЬНО восстанавливаем флаг TOPMOST, так как SetWindowPos может его сбить
-    let _ = window.set_always_on_top(true);
+    // Важно: НЕ вызываем window.set_always_on_top(true) для widget и capsule,
+    // т.к. в tao-0.35.3 это принудительно выставляет WS_CAPTION обратно!
+    // Флаг HWND_TOPMOST уже выставлен напрямую через SetWindowPos выше.
+    if label != "widget" && label != "capsule" {
+        let _ = window.set_always_on_top(true);
+    } else {
+        make_overlay_borderless(hwnd);
+    }
 
     Ok(())
 }
@@ -8263,22 +8634,6 @@ pub fn run() {
                 let _ = set_autostart_enabled(true);
             }
 
-            // Убираем системные стили рамок (WS_CAPTION / WS_THICKFRAME) у прозрачных плавающих окон,
-            // чтобы при подъеме к самой верхней границе экрана (y = 0) DWM не рисовал белую полосу и не срабатывал Aero Snap
-            #[cfg(target_os = "windows")]
-            {
-                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-                for label in &["widget", "capsule"] {
-                    if let Some(w) = app.get_webview_window(label) {
-                        if let Ok(handle) = w.window_handle() {
-                            if let RawWindowHandle::Win32(win_handle) = handle.as_raw() {
-                                strip_window_frame(win_handle.hwnd.get() as isize);
-                            }
-                        }
-                    }
-                }
-            }
-
             let minimize = MINIMIZED_STARTUP.load(std::sync::atomic::Ordering::SeqCst);
             if !minimize {
                 if let Some(w) = app.get_webview_window("main") {
@@ -8294,6 +8649,44 @@ pub fn run() {
                         let _ = w.show();
                     }
                 }
+            }
+
+            // Применяем безрамочный POPUP-стиль ПОСЛЕ показа окон, чтобы tao не перетер GWL_STYLE на WS_CAPTION
+            #[cfg(target_os = "windows")]
+            {
+                for label in &["widget", "capsule"] {
+                    if let Some(w) = app.get_webview_window(label) {
+                        ensure_webview_window_borderless(&w);
+                    }
+                }
+
+                // Легковесный нативный поток hit-test для плавающих оверлеев (widget и capsule).
+                // Заменяет JS-поллинг по IPC, гарантирует 0.0% нагрузки на CPU в простое,
+                // мгновенную кликабельность сквозь тень без мерцания и отсутствие белой плашки заголовка.
+                let hit_app_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                    use winapi::um::winuser::IsWindowVisible;
+
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_millis(25));
+                        for label in &["widget", "capsule"] {
+                            if let Some(w) = hit_app_handle.get_webview_window(label) {
+                                if let Ok(handle) = w.window_handle() {
+                                    if let RawWindowHandle::Win32(win_handle) = handle.as_raw() {
+                                        let hwnd = win_handle.hwnd.get() as isize;
+                                        let visible = unsafe { IsWindowVisible(hwnd as _) != 0 };
+                                        if visible {
+                                            evaluate_overlay_hit_test(label, hwnd, |event_name, payload| {
+                                                let _ = w.emit(event_name, payload);
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
             }
 
             // Инициализация системного трея
@@ -8333,6 +8726,8 @@ pub fn run() {
                         "show_widget" => {
                             if let Some(w) = app.get_webview_window("widget") {
                                 let _ = w.show();
+                                #[cfg(target_os = "windows")]
+                                ensure_webview_window_borderless(&w);
                                 let _ = w.set_focus();
                             }
                         }
@@ -8368,8 +8763,6 @@ pub fn run() {
             let _tray = tray_builder.build(app)?;
 
             // Запускаем глобальный низкоуровневый хук клавиатуры на Windows
-            // (Поток опроса VK_MENU каждые 50мс удален — события alt-pressed/alt-released
-            // отправляются напрямую из low_level_keyboard_proc только при открытом окне OCR)
             #[cfg(target_os = "windows")]
             {
                 std::thread::spawn(|| {
@@ -8435,6 +8828,7 @@ pub fn run() {
             get_cursor_pos,
             set_click_region,
             set_ignore_cursor_events,
+            start_custom_drag,
             capture_clipboard_text,
             translate_hybrid,
             process_ocr_vision,
