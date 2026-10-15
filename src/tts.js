@@ -83,6 +83,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 if (payload.translate !== undefined) {
                     engine.settings.translate = payload.translate;
+                    localStorage.setItem('tts-settings', JSON.stringify(engine.settings));
+                    if (invoke) {
+                        invoke('update_config_fields', { fields: { tts_translate: payload.translate } }).catch(() => {});
+                    }
                     engine.broadcastState('setting', { translate: payload.translate });
                 }
             }
@@ -337,14 +341,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
         listen('tts-action-read', async () => {
             try {
-                // МГНОВЕННО (0 мс) переключаем кнопку Play -> Pause и показываем активность до захвата буфера и синтеза!
+                // МГНОВЕННО (0 мс) переключаем кнопку Play -> Pause и выключаем режим перевода (гасим 文A)
                 if (cachedWidgetMode === 2) {
                     invoke('show_widget_window').catch(() => {});
                 }
+                engine.settings.translate = false;
+                localStorage.setItem('tts-settings', JSON.stringify(engine.settings));
+                invoke('update_config_fields', { fields: { tts_translate: false } }).catch(() => {});
+                if (root && root.updateState) {
+                    root.updateState({ translate: false });
+                }
+                engine.broadcastState('setting', { translate: false });
                 engine.preparePlayback();
 
-                const shouldTranslate = !!(engine.settings && engine.settings.translate);
-                const text = await invoke('capture_clipboard_text', { translate: shouldTranslate });
+                const text = await invoke('capture_clipboard_text', { translate: false });
                 if (!text || !text.trim()) {
                     console.warn('[TTS] tts-action-read: clipboard/selection empty');
                     engine.stop();
@@ -359,10 +369,17 @@ document.addEventListener('DOMContentLoaded', () => {
         
         listen('tts-action-translate', async () => {
             try {
-                // МГНОВЕННО (0 мс) переключаем кнопку Play -> Pause и показываем активность!
+                // МГНОВЕННО (0 мс) переключаем кнопку Play -> Pause и включаем режим перевода (подсвечиваем 文A)
                 if (cachedWidgetMode === 2) {
                     invoke('show_widget_window').catch(() => {});
                 }
+                engine.settings.translate = true;
+                localStorage.setItem('tts-settings', JSON.stringify(engine.settings));
+                invoke('update_config_fields', { fields: { tts_translate: true } }).catch(() => {});
+                if (root && root.updateState) {
+                    root.updateState({ translate: true });
+                }
+                engine.broadcastState('setting', { translate: true });
                 engine.preparePlayback();
 
                 const text = await invoke('capture_clipboard_text', { translate: true });

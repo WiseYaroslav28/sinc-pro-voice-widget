@@ -536,16 +536,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
-    // Кнопка перевода
-    const btnTranslate = document.getElementById('tts-btn-translate');
-    if (btnTranslate) {
-      let translateEnabled = false;
-      btnTranslate.addEventListener('click', () => {
-        translateEnabled = !translateEnabled;
-        btnTranslate.style.color = translateEnabled ? '#45a29e' : '';
-      });
-    }
-
     // Мгновенный отклик кнопки Play -> Pause (0 мс) прямо по нажатию глобального хоткея Ctrl+Shift / Ctrl+Alt
     const activateImmediatePlayState = () => {
       if (root && root.updateState) {

@@ -210,15 +210,15 @@
 
         <!-- TopAppBar / Шапка контента -->
         <header class="h-16 w-full flex justify-between items-center px-6 py-4 bg-transparent flex-shrink-0">
-          <div class="flex items-center gap-4" style="position: relative; z-index: 10000;">
-            <h2 class="text-[20px] text-[#e4e1e9] font-semibold tracking-tight cursor-pointer hover:text-[#d2bbff] transition-colors" id="greeting-title" title="Нажмите, чтобы изменить имя профиля">Привет!</h2>
-          </div>
-
-          <!-- Панель управления плавающими модулями в свободном верхнем поле заголовка -->
-          <div class="flex items-center gap-3 pr-24">
-            <div class="flex items-center gap-3 bg-[#1b1b20] border border-[#4a4455]/30 rounded-full px-3.5 py-1.5 shadow-sm" id="dashboard-toggles-container">
+          <div class="flex items-center" style="gap: 20px; position: relative; z-index: 10000;">
+            <h2 class="text-[20px] text-[#e4e1e9] font-semibold tracking-tight cursor-pointer hover:text-[#d2bbff] transition-colors flex-shrink-0" id="greeting-title" title="Нажмите, чтобы изменить имя профиля">Привет!</h2>
+            <!-- Панель управления плавающими модулями слева с небольшим отступом от имени -->
+            <div class="flex items-center gap-3 bg-[#1b1b20] border border-[#4a4455]/30 rounded-full px-3.5 py-1.5 shadow-sm flex-shrink-0" id="dashboard-toggles-container">
               <!-- Рендерится динамически через WindowToggleManager -->
             </div>
+          </div>
+
+          <div class="flex items-center gap-3" style="padding-right: 110px;">
             <!-- Кнопка-индикатор доступного обновления на видном месте -->
             <button id="header-update-banner" style="position: relative; z-index: 10000;" class="hidden items-center gap-1.5 bg-gradient-to-r from-[#8e52ff] to-[#45a29e] text-white text-[11px] font-bold px-3.5 py-1.5 rounded-full shadow-[0_0_15px_rgba(142,82,255,0.5)] hover:opacity-95 transition-all cursor-pointer border-0 animate-pulse" title="Доступна новая версия SincPro — нажмите для установки">
               <span class="material-symbols-outlined text-[15px]">system_update_alt</span>
