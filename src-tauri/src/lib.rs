@@ -835,6 +835,13 @@ pub(crate) fn is_valid_multimodal_gemini_model(model: &str) -> bool {
     }
     if m.contains("gemma")
         || m.contains("tts")
+        || m.contains("transcribe")
+        || m.contains("omni")
+        || m.contains("argon")
+        || m.contains("banana")
+        || m.contains("lyria")
+        || m.contains("deep-research")
+        || m.contains("customtools")
         || m.contains("native-audio")
         || m.contains("live")
         || m.contains("image")
@@ -848,12 +855,15 @@ pub(crate) fn is_valid_multimodal_gemini_model(model: &str) -> bool {
         || m.contains("computer-use")
         || m.contains("thinking")
         || m.contains("-exp")
-        || m.contains("preview")
         || m.contains("latest")
         || m.contains("antigravity")
-        || m.contains("3.5")
         || m.contains("3.1")
+        || m.contains("2.0-")
+        || m.contains("1.5-")
     {
+        return false;
+    }
+    if m.contains("preview") && m != "gemini-3-flash-preview" {
         return false;
     }
     m.starts_with("gemini-")
@@ -876,6 +886,18 @@ pub(crate) fn record_model_success(model: &str) {
     if is_valid_multimodal_gemini_model(model) {
         if let Ok(mut last_model_lock) = LAST_WORKING_MODEL.lock() {
             *last_model_lock = Some(model.to_string());
+        }
+    }
+    if let Ok(guard) = APP_HANDLE.lock() {
+        if let Some(ref app) = *guard {
+            let _ = app.emit(
+                "api-status-changed",
+                serde_json::json!({
+                    "status": "ok",
+                    "model": model,
+                    "message": format!("ИИ онлайн ({})", model)
+                }),
+            );
         }
     }
 }
@@ -929,14 +951,16 @@ pub(crate) fn build_audio_capable_models(primary_model: &str) -> Vec<String> {
     if is_valid_multimodal_gemini_model(primary_model) {
         candidates.push(primary_model.trim().to_string());
     }
-    // Только проверенные мультимодальные модели с отдельными пулами квот Free Tier
-    // (без алиасов *-latest, которые делят квоту с базовой моделью, и без *-pro с нулевым/минимальным Free Tier)
+    // Проверенные мультимодальные модели Gemini с поддержкой audio/webm + JSON и отдельными пулами квот Free Tier
     for m in [
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.6-flash",
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
-        "gemini-1.5-flash",
+        "gemini-3-flash-preview",
+        "gemini-3.7-flash",
+        "gemini-3.8-flash",
     ] {
         candidates.push(m.to_string());
     }
@@ -4123,14 +4147,8 @@ async fn save_audio(
                 let api_key = config.api_key.trim().to_string();
 
                 for model in &fallback_models {
-                    // Проверяем блокировку модели
-                    {
-                        let locks = MODEL_LOCKS.lock().unwrap();
-                        if let Some(unlock_time) = locks.get(model) {
-                            if std::time::Instant::now() < *unlock_time {
-                                continue;
-                            }
-                        }
+                    if is_model_locked(model) {
+                        continue;
                     }
 
                     // Проверяем локальные лимиты RPM/RPD перед запросом
@@ -4163,9 +4181,7 @@ async fn save_audio(
                                             last_err = format!("Модель {} вернула заглушку: {}", model, text);
                                             continue;
                                         }
-                                        if let Ok(mut last_model_lock) = LAST_WORKING_MODEL.lock() {
-                                            *last_model_lock = Some(model.clone());
-                                        }
+                                        record_model_success(model);
                                         gemini_text = Some(text);
                                         used_stt_model = format!("Gemini Cloud ({}) (RPM: {})", model, rpm);
                                         break;
@@ -4173,12 +4189,14 @@ async fn save_audio(
                                 }
                             } else {
                                 let err_text = res.text().await.unwrap_or_default();
-                                if status.as_u16() == 429 || err_text.contains("RESOURCE_EXHAUSTED") {
-                                    let unlock_time = std::time::Instant::now() + std::time::Duration::from_secs(25);
-                                    if let Ok(mut locks) = MODEL_LOCKS.lock() {
-                                        locks.insert(model.clone(), unlock_time);
-                                    }
-                                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                                if status.as_u16() == 429
+                                    || status.as_u16() == 404
+                                    || status.as_u16() == 400
+                                    || err_text.contains("RESOURCE_EXHAUSTED")
+                                    || err_text.contains("quota")
+                                {
+                                    record_model_failure(model, status.as_u16(), &err_text);
+                                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                                 }
                                 last_err = format!("Ошибка {} ({}): {}", status, model, err_text);
                                 log_tts_error("Gemini STT API error status", &last_err);
@@ -4197,12 +4215,26 @@ async fn save_audio(
                         log_tts_error("Gemini failed entirely", &format!("Attempting local STT fallback. Gemini error: {}", last_err));
                         let friendly_err = clean_gemini_error(&last_err);
                         let _ = app_handle.emit("stt-fallback", format!("Сбой Gemini ({friendly_err}). Включен локальный Whisper."));
+                        let _ = app_handle.emit(
+                            "api-status-changed",
+                            serde_json::json!({
+                                "status": "warning",
+                                "message": format!("Квота Gemini ({friendly_err}) — локальный Whisper")
+                            }),
+                        );
                         match run_local_stt(&app_handle, &file_path.to_string_lossy()).await {
                             Ok(t) => {
                                 used_stt_model = format!("Whisper Local ({}) (Offline Fallback)", config.stt_local_model);
                                 (t, false)
                             }
                             Err(local_err) => {
+                                let _ = app_handle.emit(
+                                    "api-status-changed",
+                                    serde_json::json!({
+                                        "status": "error",
+                                        "message": format!("Ошибка ИИ: {friendly_err}")
+                                    }),
+                                );
                                 (format!("[Ошибка распознавания (облако и локально): {}; {}]", clean_gemini_error(&last_err), local_err), true)
                             }
                         }
@@ -4289,12 +4321,14 @@ async fn save_audio(
                         used_llm_model = format!("{} ({})", server.name, server.model);
                         (local_transcript.clone(), processed, false)
                     }
-                    Err(e) => {
-                        (local_transcript.clone(), format!("[Ошибка локальной LLM: {}]", e), true)
+                    Err(_e) => {
+                        used_llm_model = "Нет (чистая транскрипция Whisper)".to_string();
+                        (local_transcript.clone(), local_transcript.clone(), false)
                     }
                 }
             } else {
-                (local_transcript.clone(), "[Ошибка: локальный сервер LLM не найден]".to_string(), true)
+                used_llm_model = "Нет (чистая транскрипция Whisper)".to_string();
+                (local_transcript.clone(), local_transcript.clone(), false)
             }
         } else if !config.api_key.trim().is_empty() {
             let text_prompt = format!(
@@ -4404,7 +4438,10 @@ async fn save_audio(
                     used_llm_model = "Ollama Local (Offline Fallback)".to_string();
                     match run_local_llm_postprocess(&local_transcript, &user_preset_prompt).await {
                         Ok(processed) => (local_transcript.clone(), processed, false),
-                        Err(e) => (local_transcript.clone(), format!("[Ошибка постобработки: {}]", e), true)
+                        Err(_e) => {
+                            used_llm_model = "Нет (чистая транскрипция Whisper)".to_string();
+                            (local_transcript.clone(), local_transcript.clone(), false)
+                        }
                     }
                 }
             }
@@ -4412,7 +4449,10 @@ async fn save_audio(
             used_llm_model = "Ollama Local (Offline Fallback)".to_string();
             match run_local_llm_postprocess(&local_transcript, &user_preset_prompt).await {
                 Ok(processed) => (local_transcript.clone(), processed, false),
-                Err(e) => (local_transcript.clone(), format!("[Ошибка постобработки: {}]", e), true)
+                Err(_e) => {
+                    used_llm_model = "Нет (чистая транскрипция Whisper)".to_string();
+                    (local_transcript.clone(), local_transcript.clone(), false)
+                }
             }
         };
 
@@ -4616,6 +4656,13 @@ async fn save_audio(
                 log_tts_error("Gemini failed entirely", &format!("Attempting local STT + LLM fallback. Gemini error: {}", last_err));
                 let friendly_err = clean_gemini_error(&last_err);
                 let _ = app_handle.emit("stt-fallback", format!("Сбой Gemini ({friendly_err}). Включен локальный Whisper."));
+                let _ = app_handle.emit(
+                    "api-status-changed",
+                    serde_json::json!({
+                        "status": "warning",
+                        "message": format!("Квота Gemini ({friendly_err}) — локальный Whisper")
+                    }),
+                );
                 match run_local_stt(&app_handle, &file_path.to_string_lossy()).await {
                     Ok(local_tr) => {
                         if local_tr.trim().is_empty() || is_stub_transcript(&local_tr) {
@@ -4634,13 +4681,21 @@ async fn save_audio(
                                 used_llm_model = model_name;
                                 (local_tr, processed_text, false)
                             }
-                            Err(e) => {
-                                used_llm_model = "None (Fallback Failed)".to_string();
-                                (local_tr, format!("[Ошибка локального ИИ: {}]", e), true)
+                            Err(_e) => {
+                                // Речь успешно распознана локальным Whisper! Не помечаем как ошибку — вставляем распознанный текст
+                                used_llm_model = "Нет (чистая транскрипция Whisper)".to_string();
+                                (local_tr.clone(), local_tr, false)
                             }
                         }
                     }
                     Err(_local_err) => {
+                        let _ = app_handle.emit(
+                            "api-status-changed",
+                            serde_json::json!({
+                                "status": "error",
+                                "message": format!("Ошибка ИИ: {friendly_err}")
+                            }),
+                        );
                         (format!("[Ошибка связи с сервером ИИ: {}]", friendly_err), String::new(), true)
                     }
                 }

@@ -117,16 +117,26 @@
         border-radius: 8px !important;
         box-shadow: inset 0 0 0 1px rgba(163, 119, 255, 0.25) !important;
       }
-      .sidebar.collapsed .sidebar-toggle-label,
-      .sidebar.collapsed #sidebar-modules-header {
-        display: none !important;
+      #dashboard-toggles-container .tri-switch-wrapper {
+        width: 100%;
+        justify-content: center;
+        gap: 14px;
+        padding: 4px 8px;
+        border-radius: 8px;
+        transition: all 0.2s ease;
+      }
+      #dashboard-toggles-container .tri-switch-wrapper:hover {
+        background-color: rgba(255, 255, 255, 0.04);
       }
       .sidebar.collapsed #sidebar-modules-card {
         padding: 6px 4px !important;
       }
-      .sidebar.collapsed .sidebar-toggle-row {
+      .sidebar.collapsed #dashboard-toggles-container .tri-switch-wrapper {
+        flex-direction: column !important;
+        align-items: center !important;
         justify-content: center !important;
-        padding: 2px 0 !important;
+        gap: 3px !important;
+        padding: 4px 2px !important;
       }
     </style>
   </head>
@@ -180,9 +190,8 @@
             <span class="text-[12px] sidebar-item-text">Журнал</span>
           </button>
 
-          <!-- Блок управления плавающими модулями (Капсула, Озвучка, OCR, Раскладка) -->
-          <div class="mt-3 pt-3 border-t border-[#4a4455]/30 flex flex-col gap-1.5">
-            <span id="sidebar-modules-header" class="text-[10px] font-bold uppercase tracking-wider text-[#958da1] px-2 mb-0.5 sidebar-item-text">Активные модули</span>
+          <!-- Блок управления плавающими модулями (только иконка + переключатель; при сворачивании тумблер переезжает под иконку) -->
+          <div class="mt-3 pt-3 border-t border-[#4a4455]/30">
             <div id="sidebar-modules-card" class="flex flex-col gap-1 bg-[#141419] border border-[#4a4455]/25 rounded-xl p-2">
               <div class="flex flex-col gap-1 w-full" id="dashboard-toggles-container">
                 <!-- Рендерится динамически через WindowToggleManager -->
@@ -890,30 +899,22 @@
 
         <!-- Подвал дашборда -->
         <footer class="h-12 w-full bg-[#0e0e13] border-t border-[#4a4455]/30 flex justify-between items-center px-6 flex-shrink-0 z-10 text-[11px]">
-          <span class="font-bold text-[#e4e1e9]" id="footer-api-summary">© 2026 SINC PRO. API: Gemini Connected.</span>
+          <span class="font-bold text-[#e4e1e9]" id="footer-api-summary">© 2026 SINC PRO</span>
           <div class="flex items-center gap-4">
-            <!-- Индикаторы статусов -->
-            <div class="flex items-center gap-3 border-r border-[#4a4455]/30 pr-4">
-              <!-- Сводный бейдж статуса систем -->
-              <div class="flex items-center gap-2 bg-[#1b1b20] border border-[#4a4455]/30 rounded-full px-3 py-1" id="system-overall-badge">
-                <span class="w-2 h-2 rounded-full bg-[#7bd6d1] shadow-[0_0_8px_rgba(123,214,209,0.6)]" id="system-overall-dot"></span>
-                <span class="text-[11px] font-medium text-[#ccc3d8]" id="system-overall-text">Все системы онлайн</span>
-              </div>
-              <!-- Статус Gemini AI -->
-              <div class="flex items-center gap-1.5 cursor-help" id="status-container-api" title="Интеграция ИИ: Подключение...">
+            <!-- Индикаторы статусов систем -->
+            <div class="flex items-center gap-3.5">
+              <!-- Статус Gemini AI / STT -->
+              <div class="flex items-center gap-1.5 cursor-help px-2.5 py-1 rounded-full bg-[#1b1b20] border border-[#4a4455]/30" id="status-container-api" title="Интеграция ИИ: Подключение...">
                 <span class="material-symbols-outlined text-[14px] text-[#ccc3d8]">smart_toy</span>
-                <span class="w-2 h-2 rounded-full" id="api-status-dot"></span>
+                <span class="w-2 h-2 rounded-full bg-[#7bd6d1] shadow-[0_0_6px_rgba(123,214,209,0.6)]" id="api-status-dot"></span>
                 <span id="api-status-text" style="display: none !important;"></span>
               </div>
               <!-- Статус Микрофона -->
-              <div class="flex items-center gap-1.5 cursor-help" id="status-container-mic" title="Микрофон: Готов к записи">
+              <div class="flex items-center gap-1.5 cursor-help px-2.5 py-1 rounded-full bg-[#1b1b20] border border-[#4a4455]/30" id="status-container-mic" title="Микрофон: Готов к записи">
                 <span class="material-symbols-outlined text-[14px] text-[#ccc3d8]">mic</span>
                 <span class="w-2 h-2 rounded-full bg-[#7bd6d1] shadow-[0_0_6px_rgba(123,214,209,0.6)]" id="mic-status-dot"></span>
               </div>
             </div>
-            <a class="text-[#ccc3d8] hover:text-[#7bd6d1] transition-opacity" href="#">Статус систем</a>
-            <a class="text-[#ccc3d8] hover:text-[#7bd6d1] transition-opacity" href="#">Помощь</a>
-            <a class="text-[#ccc3d8] hover:text-[#7bd6d1] transition-opacity" href="#">Конфиденциальность</a>
           </div>
         </footer>
       </main>
@@ -1156,22 +1157,27 @@
         const ocrKey = currentHotkeys.hotkey_ocr || 'Alt+Q';
         const layKey = currentHotkeys.hotkey_layout_convert || 'Ctrl+Pause';
 
-        const capToggle = document.getElementById('toggle-capsule');
-        if (capToggle) {
-          capToggle.title = `Капсула (быстрый ИИ-ввод)\nУдерживайте ${recKey} для диктовки\n${recKey}+Alt — ввод с промптом`;
-        }
-        const widToggle = document.getElementById('toggle-widget');
-        if (widToggle) {
-          widToggle.title = `Виджет озвучки (плавающий плеер)\n${ttsReadKey} — озвучить выделенное\n${ttsTransKey} — перевести и озвучить\n${ttsAppKey} — добавить в очередь`;
-        }
-        const ocrToggle = document.getElementById('toggle-ocr');
-        if (ocrToggle) {
-          ocrToggle.title = `Оверлей переводчика OCR\n${ocrKey} — открыть/закрыть оверлей`;
-        }
-        const layToggle = document.getElementById('toggle-layout');
-        if (layToggle) {
-          layToggle.title = `Смена раскладки клавиатуры (${layKey})\n0: Выключено\n1: Только хоткеи\n2: Автозамена на лету`;
-        }
+        const capTip = `Голосовой ввод и транскрибация\nУдерживайте ${recKey} для диктовки\n${recKey}+Alt — ввод с ИИ-промптом`;
+        const widTip = `Озвучка выделенного текста\n${ttsReadKey} — озвучить выделенное\n${ttsTransKey} — перевести и озвучить\n${ttsAppKey} — добавить в очередь`;
+        const ocrTip = `Перевод и захват текста с экрана\n${ocrKey} — выделить область экрана`;
+        const layTip = `Автоматическая смена раскладки (${layKey})\n0: Выключено\n1: Только хоткеи\n2: Автозамена на лету`;
+
+        ['toggle-capsule', 'toggle-capsule-wrapper'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.title = capTip;
+        });
+        ['toggle-widget', 'toggle-widget-wrapper'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.title = widTip;
+        });
+        ['toggle-ocr', 'toggle-ocr-wrapper'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.title = ocrTip;
+        });
+        ['toggle-layout', 'toggle-layout-wrapper'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.title = layTip;
+        });
       }
 
       async function loadConfig() {
@@ -1469,59 +1475,61 @@
         }
       }
 
+      function setApiStatusIndicator(status, message) {
+        const statusText = document.getElementById('api-status-text');
+        const statusDot = document.getElementById('api-status-dot');
+        const statusContainer = document.getElementById('status-container-api');
+        if (!statusDot) return;
+
+        if (status === 'ok') {
+          if (statusText) statusText.textContent = 'Подключено';
+          statusDot.className = 'w-2 h-2 rounded-full bg-[#7bd6d1] shadow-[0_0_6px_rgba(123,214,209,0.6)]';
+          statusDot.style.boxShadow = '0 0 6px rgba(123,214,209,0.6)';
+          if (statusContainer) {
+            statusContainer.title = message || 'Интеграция ИИ: Подключено и работает';
+          }
+        } else if (status === 'warning') {
+          if (statusText) statusText.textContent = 'Лимит / Офлайн';
+          statusDot.className = 'w-2 h-2 rounded-full bg-[#ffb74d] shadow-[0_0_6px_rgba(255,183,77,0.7)]';
+          statusDot.style.boxShadow = '0 0 6px rgba(255,183,77,0.7)';
+          if (statusContainer) {
+            statusContainer.title = message || 'Интеграция ИИ: Квота модели исчерпана, используется резервная модель или Whisper';
+          }
+        } else {
+          if (statusText) statusText.textContent = 'Ошибка / Нет ключа';
+          statusDot.className = 'w-2 h-2 rounded-full bg-[#ff5252] shadow-[0_0_6px_rgba(255,82,82,0.8)]';
+          statusDot.style.boxShadow = '0 0 6px rgba(255,82,82,0.8)';
+          if (statusContainer) {
+            statusContainer.title = message || 'Интеграция ИИ: Ошибка (Ключ API не установлен или недоступен)';
+          }
+        }
+      }
+
       function updateApiStatus(apiKey) {
         if (typeof updateGeminiKeyStatusBadge === 'function') {
           updateGeminiKeyStatusBadge(apiKey);
         }
-        const statusText = document.getElementById('api-status-text');
-        const statusDot = document.getElementById('api-status-dot');
-        const statusContainer = document.getElementById('status-container-api');
-        const overallDot = document.getElementById('system-overall-dot');
-        const overallText = document.getElementById('system-overall-text');
         const footerSummary = document.getElementById('footer-api-summary');
         const hasKey = !!(apiKey && apiKey.trim().length > 0);
-        if (statusDot) {
-          if (hasKey) {
-            if (statusText) statusText.textContent = 'Подключено';
-            statusDot.className = 'w-2 h-2 rounded-full bg-[#7bd6d1]';
-            statusDot.style.boxShadow = '0 0 6px rgba(123,214,209,0.6)';
-            if (statusContainer) {
-              statusContainer.title = 'Интеграция ИИ: Подключено (Ключ валиден)';
-            }
-          } else {
-            if (statusText) statusText.textContent = 'Нет ключа';
-            statusDot.className = 'w-2 h-2 rounded-full bg-[#ffb4ab]';
-            statusDot.style.boxShadow = '0 0 6px rgba(255,180,171,0.6)';
-            if (statusContainer) {
-              statusContainer.title = 'Интеграция ИИ: Ошибка (Ключ API не установлен)';
-            }
-          }
-        }
-        if (overallDot && overallText) {
-          if (hasKey) {
-            overallDot.className = 'w-2 h-2 rounded-full bg-[#7bd6d1] shadow-[0_0_8px_rgba(123,214,209,0.6)]';
-            overallText.textContent = 'Все системы онлайн';
-          } else {
-            overallDot.className = 'w-2 h-2 rounded-full bg-[#ffb4ab] shadow-[0_0_8px_rgba(255,180,171,0.6)]';
-            overallText.textContent = 'Требуется ключ API';
-          }
+        if (hasKey) {
+          setApiStatusIndicator('ok', 'Интеграция ИИ: Подключено (Ключ валиден)');
+        } else {
+          setApiStatusIndicator('error', 'Интеграция ИИ: Ошибка (Ключ API не установлен)');
         }
         if (footerSummary) {
-          footerSummary.textContent = hasKey
-            ? '© 2026 SINC PRO. API: Gemini Connected.'
-            : '© 2026 SINC PRO. API: Ключ не установлен.';
+          footerSummary.textContent = '© 2026 SINC PRO';
         }
       }
 
       // Известные лимиты Free Tier (обновляется из документации)
       const MODEL_LIMITS_KNOWN = {
-        'gemini-2.5-pro':         { rpm: 5,   rpd: 25,   tpm: 1000000, note: 'Самая мощная, лимиты Free Tier' },
+        'gemini-3.5-flash':       { rpm: 15,  rpd: 1500, tpm: 1000000, note: 'Рекомендуется, высокая квота ✓' },
+        'gemini-3.5-flash-lite':  { rpm: 30,  rpd: 1500, tpm: 1000000, note: 'Макс. скорость, Free Tier ✓' },
+        'gemini-3.6-flash':       { rpm: 15,  rpd: 1500, tpm: 1000000, note: 'Новейшая мультимодальная ✓' },
         'gemini-2.5-flash':       { rpm: 10,  rpd: 500,  tpm: 1000000, note: 'Баланс скорость/качество ✓' },
-        'gemini-2.5-flash-lite':  { rpm: 30,  rpd: 1500, tpm: 1000000, note: 'Макс. скорость, Free Tier' },
-        'gemini-2.0-flash':       { rpm: 15,  rpd: 1500, tpm: 1000000, note: 'Стабильная, рекомендуется' },
-        'gemini-2.0-flash-lite':  { rpm: 30,  rpd: 1500, tpm: 1000000, note: 'Быстрая и экономная' },
-        'gemini-1.5-flash':       { rpm: 15,  rpd: 1500, tpm: 1000000, note: 'Проверенная модель' },
-        'gemini-1.5-pro':         { rpm: 2,   rpd: 50,   tpm: 32000,   note: 'Сложные задачи, малый лимит' },
+        'gemini-2.5-flash-lite':  { rpm: 30,  rpd: 1500, tpm: 1000000, note: 'Быстрая и экономная' },
+        'gemini-3-flash-preview': { rpm: 15,  rpd: 1500, tpm: 1000000, note: 'Быстрая мультимодальная' },
+        'gemini-2.5-pro':         { rpm: 5,   rpd: 25,   tpm: 1000000, note: 'Самая мощная, малый лимит' },
       };
 
       async function fetchAndPopulateModels(apiKey, savedModel) {
@@ -1557,19 +1565,25 @@
               const blocked = [
                 'gemma', 'tts', 'native-audio', 'live', 'image', 'imagen', 'veo',
                 'embedding', 'aqa', 'bisheng', 'learnlm', 'robotics', 'computer-use',
-                'thinking', '-exp', 'preview', 'latest', 'antigravity', '3.5', '3.1'
+                'thinking', '-exp', 'latest', 'antigravity', 'transcribe', 'omni',
+                'argon', 'banana', 'lyria', 'deep-research', 'customtools', '3.1',
+                '2.0-', '1.5-'
               ];
-              return !blocked.some(b => m.includes(b));
+              if (blocked.some(b => m.includes(b))) return false;
+              if (m.includes('preview') && m !== 'gemini-3-flash-preview') return false;
+              return true;
             };
 
             const priorityOrder = [
+              'gemini-3.5-flash',
+              'gemini-3.5-flash-lite',
+              'gemini-3.6-flash',
               'gemini-2.5-flash',
               'gemini-2.5-flash-lite',
-              'gemini-2.0-flash',
-              'gemini-2.0-flash-lite',
-              'gemini-1.5-flash',
-              'gemini-2.5-pro',
-              'gemini-1.5-pro'
+              'gemini-3-flash-preview',
+              'gemini-3.7-flash',
+              'gemini-3.8-flash',
+              'gemini-2.5-pro'
             ];
 
             models = (data.models || []).filter(m => {
@@ -1596,9 +1610,10 @@
           } catch (err) {
             console.error('Ошибка загрузки моделей Gemini:', err);
             models = [
+              { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash (офлайн-фолбек)' },
+              { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite (офлайн-фолбек)' },
               { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (офлайн-фолбек)' },
-              { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite (офлайн-фолбек)' },
-              { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (офлайн-фолбек)' }
+              { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite (офлайн-фолбек)' }
             ];
           }
         }
@@ -1633,7 +1648,7 @@
           select.value = savedModel;
         } else if (select.options.length > 0) {
           // Автовыбор оптимальной мультимодальной модели
-          const preferred = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'];
+          const preferred = ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'];
           let set = false;
           for (const p of preferred) {
             if (select.querySelector(`option[value="${p}"]`)) { select.value = p; set = true; break; }
@@ -3174,10 +3189,10 @@
       const dashboardToggles = document.getElementById('dashboard-toggles-container');
       if (dashboardToggles && window.WindowToggleManager) {
         dashboardToggles.innerHTML = 
-          WindowToggleManager.renderToggle('toggle-capsule', 'mic', 'Капсула (быстрый ИИ-ввод)&#10;Удерживайте Ctrl+Win для диктовки&#10;Ctrl+Win+Alt — ввод с промптом', 'Капсула') +
-          WindowToggleManager.renderToggle('toggle-widget', 'record_voice_over', 'Виджет озвучки (плавающий плеер)&#10;Ctrl+Shift — озвучить выделенное&#10;Escape — остановить воспроизведение', 'Озвучка') +
-          WindowToggleManager.renderToggle('toggle-ocr', 'screenshot_region', 'Оверлей переводчика OCR&#10;Alt+Q — открыть/закрыть оверлей', 'Экран OCR') +
-          WindowToggleManager.renderToggle('toggle-layout', 'keyboard', 'Смена раскладки клавиатуры&#10;0: Выключено&#10;1: Только хоткеи (смена букв + переключение языка Windows)&#10;2: Автозамена на лету', 'Раскладка');
+          WindowToggleManager.renderToggle('toggle-capsule', 'mic', 'Голосовой ввод и транскрибация&#10;Удерживайте Ctrl+Win для диктовки&#10;Ctrl+Win+Alt — ввод с ИИ-промптом') +
+          WindowToggleManager.renderToggle('toggle-widget', 'record_voice_over', 'Озвучка выделенного текста&#10;Ctrl+Shift — озвучить выделенное&#10;Escape — остановить воспроизведение') +
+          WindowToggleManager.renderToggle('toggle-ocr', 'screenshot_region', 'Перевод и захват текста с экрана&#10;Alt+Q — выделить область экрана') +
+          WindowToggleManager.renderToggle('toggle-layout', 'keyboard', 'Автоматическая смена раскладки&#10;0: Выключено&#10;1: Только хоткеи (смена букв + переключение языка Windows)&#10;2: Автозамена на лету');
 
         WindowToggleManager.initToggle('toggle-capsule', 'capsule');
         WindowToggleManager.initToggle('toggle-widget', 'widget');
@@ -4038,10 +4053,41 @@
 
         window.__TAURI__.event.listen('mic-status-changed', (event) => {
           const payload = event.payload || {};
-          setMicStatusIndicator(payload.status || 'ok', payload.message || '');
-          if (payload.status === 'error' || payload.status === 'silent') {
-            showToast(payload.message || 'Проверьте микрофон: звук не обнаружен', true);
+          let status = payload.status;
+          let message = payload.message || '';
+          if (!status) {
+            if (payload.ok === true) {
+              status = 'ok';
+              message = message || 'Микрофон: Подключён и передаёт сигнал';
+            } else if (payload.ok === false) {
+              if (payload.reason === 'zero_signal' || payload.reason === 'muted') {
+                status = 'silent';
+                message = message || (payload.reason === 'muted' ? 'Микрофон заглушен (Mute)' : 'Обнаружена тишина (звук не поступает)');
+              } else {
+                status = 'error';
+                message = message || 'Микрофон отключён или недоступен!';
+              }
+            } else {
+              status = 'ok';
+            }
           }
+          setMicStatusIndicator(status, message);
+          if (status === 'error' || status === 'silent') {
+            showToast(message || 'Проверьте микрофон: звук не обнаружен', true);
+          }
+        });
+
+        window.__TAURI__.event.listen('api-status-changed', (event) => {
+          const payload = event.payload || {};
+          const status = payload.status || 'ok';
+          const msg = payload.message || (payload.model ? `Интеграция ИИ: Активна (${payload.model})` : '');
+          setApiStatusIndicator(status, msg);
+        });
+
+        window.__TAURI__.event.listen('stt-fallback', (event) => {
+          const reason = typeof event.payload === 'string' ? event.payload : 'Переключение на резервное распознавание';
+          setApiStatusIndicator('warning', `ИИ / STT: ${reason}`);
+          showToast(reason, false);
         });
 
         // Логика Tauri Updater и заметного уведомления об обновлении в шапке
