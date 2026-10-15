@@ -60,10 +60,10 @@ pub async fn translate_hybrid(
         return Ok(String::new());
     }
 
-    // Try Gemini First if key exists
+    // Try Gemini First if key exists (with fast model fallback chain)
     if !api_key.trim().is_empty() {
         let prompt = format!(
-            "Переведи все иностранные слова и предложения на русский язык, сохранив исходную структуру и контекст. Если текст уже на русском — просто верни его. Если смешанный — переведи только иностранные вставки, чтобы получился связный русский текст. Сохраняй технические плейсхолдеры в фигурных скобках вида {{N0}}, {{F0}} без изменений на своих местах. Текст:\n\n{}",
+            "Переведи все иностранные слова и предложения на русский язык, сохранив исходную структуру и контекст. Если текст уже на русском — просто верни его. Если смешанный — переведи только иностранные вставки, чтобы получился связный русский текст. Возвращай ТОЛЬКО готовый перевод без комментариев и пояснений. Сохраняй технические плейсхолдеры в фигурных скобках вида {{N0}}, {{F0}} без изменений на своих местах. Текст:\n\n{}",
             text
         );
 
@@ -74,23 +74,46 @@ pub async fn translate_hybrid(
             generation_config: GenerationConfig { temperature: 0.1 },
         };
 
-        let client = Client::new();
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-            if model.is_empty() { "gemini-2.5-flash" } else { model },
-            api_key
-        );
+        let client = Client::builder()
+            .timeout(Duration::from_secs(8))
+            .build()
+            .unwrap_or_else(|_| Client::new());
 
-        match client.post(&url).json(&req).send().await {
-            Ok(res) if res.status().is_success() => {
-                if let Ok(gr) = res.json::<GeminiResponse>().await {
-                    if let Some(mut cands) = gr.candidates {
-                        if let Some(cand) = cands.pop() {
-                            if let Some(content) = cand.content {
-                                if let Some(mut parts) = content.parts {
-                                    if let Some(part) = parts.pop() {
-                                        if let Some(translated) = part.text {
-                                            return Ok(post_process_translation(text, translated));
+        let mut candidate_models: Vec<&str> = Vec::new();
+        let trimmed_model = model.trim();
+        if !trimmed_model.is_empty()
+            && !trimmed_model.contains("native-audio")
+            && !trimmed_model.contains("antigravity")
+        {
+            candidate_models.push(trimmed_model);
+        }
+        for m in ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"] {
+            if !candidate_models.contains(&m) {
+                candidate_models.push(m);
+            }
+        }
+
+        for m in candidate_models {
+            let url = format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+                m,
+                api_key.trim()
+            );
+
+            if let Ok(res) = client.post(&url).json(&req).send().await {
+                if res.status().is_success() {
+                    if let Ok(gr) = res.json::<GeminiResponse>().await {
+                        if let Some(mut cands) = gr.candidates {
+                            if let Some(cand) = cands.pop() {
+                                if let Some(content) = cand.content {
+                                    if let Some(mut parts) = content.parts {
+                                        if let Some(part) = parts.pop() {
+                                            if let Some(translated) = part.text {
+                                                let clean = translated.trim().to_string();
+                                                if !clean.is_empty() {
+                                                    return Ok(post_process_translation(text, clean));
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -99,24 +122,33 @@ pub async fn translate_hybrid(
                     }
                 }
             }
-            _ => {} // Fallback on error
         }
     }
 
-    // Fallback: Parse English words and use Free Google Translate Web API
+    // Fallback: Free Google Translate Web API (translates full text while preserving Russian & placeholders)
     let translated = fallback_translate(text).await?;
     Ok(post_process_translation(text, translated))
 }
 
 async fn fallback_translate(text: &str) -> Result<String, String> {
-    // Simple logic: Extract English sentences/words, translate them, replace them back.
-    let re = Regex::new(r"[A-Za-z0-9\s.,!?'\x22\x27{} -]+").unwrap();
+    if text.trim().is_empty() {
+        return Ok(String::new());
+    }
 
+    // Primary fallback: translate full text directly via Google Translate (sl=auto&tl=ru)
+    // This handles whole paragraphs, punctuation, and non-Latin languages cleanly.
+    if let Ok(full_tr) = google_translate_free(text).await {
+        if !full_tr.trim().is_empty() {
+            return Ok(full_tr);
+        }
+    }
+
+    // Secondary fallback: fragment-by-fragment replacement
+    let re = Regex::new(r"[A-Za-z0-9\s.,!?'\x22\x27 -]+").unwrap();
     let mut original_fragments = Vec::new();
 
     for mat in re.find_iter(text) {
         let frag = mat.as_str().trim();
-        // Only translate if it actually contains english letters
         if frag.chars().any(|c| c.is_ascii_alphabetic()) && frag.len() > 1 {
             original_fragments.push(frag.to_string());
         }
@@ -126,12 +158,10 @@ async fn fallback_translate(text: &str) -> Result<String, String> {
         return Ok(text.to_string());
     }
 
-    // Translate batch
     let batch_text = original_fragments.join(" | ");
     let translated_batch = google_translate_free(&batch_text).await?;
-
     let trans_parts: Vec<&str> = translated_batch.split('|').collect();
-    
+
     let mut final_text = text.to_string();
     for (i, orig) in original_fragments.iter().enumerate() {
         if i < trans_parts.len() {
@@ -150,7 +180,7 @@ async fn google_translate_free(text: &str) -> Result<String, String> {
     let should_sleep = {
         let mut lock = GOOGLE_TRANSLATE_LOCK.lock().unwrap();
         let sleep = if let Some(last_time) = *lock {
-            last_time.elapsed() < Duration::from_millis(500)
+            last_time.elapsed() < Duration::from_millis(350)
         } else {
             false
         };
@@ -159,7 +189,7 @@ async fn google_translate_free(text: &str) -> Result<String, String> {
     };
 
     if should_sleep {
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(Duration::from_millis(350)).await;
     }
 
     let url = format!(
@@ -167,15 +197,18 @@ async fn google_translate_free(text: &str) -> Result<String, String> {
         urlencoding::encode(text)
     );
 
-    let client = Client::new();
+    let client = Client::builder()
+        .timeout(Duration::from_secs(8))
+        .build()
+        .unwrap_or_else(|_| Client::new());
     let res = client.get(&url).send().await.map_err(|e| e.to_string())?;
-    
+
     if !res.status().is_success() {
         return Err("Fallback translation failed".into());
     }
 
     let json: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
-    
+
     let mut result = String::new();
     if let Some(arr) = json.as_array() {
         if let Some(sentences) = arr.get(0).and_then(|v| v.as_array()) {

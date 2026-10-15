@@ -582,6 +582,7 @@
       let audioChunks = [];
       let globalAudioStream = null;
       let maxRecordedVolume = 0;
+      let maxRecordedRms = 0;
       let speechFramesCount = 0;
       let micTrackBroken = false;
 
@@ -1413,6 +1414,7 @@
           if (invoke) await invoke('start_recording_session');
           recordSeconds = 0;
           maxRecordedVolume = 0;
+          maxRecordedRms = 0;
           speechFramesCount = 0;
           micTrackBroken = false;
           activeTimer.textContent = '00:00';
@@ -1641,10 +1643,17 @@
             }
 
             if (isError) {
+              if (resultText && resultText.includes('На записи не обнаружена разборчивая речь')) {
+                isSending = false;
+                playAudioCue('cancel');
+                showToast('🔇 На записи не обнаружена разборчивая речь (тишина или шум).', false);
+                switchState('idle');
+                return;
+              }
               handleSendError(resultText);
             } else if (!resultText || resultText.trim().length === 0) {
               isSending = false;
-              showToast('ИИ: пустой ответ', true);
+              showToast('🔇 Разборчивая речь не обнаружена', false);
               switchState('idle');
             } else {
               handleSendSuccess(resultText);
@@ -1654,6 +1663,13 @@
           if (currentRequestCancelled) return;
           console.error(err);
           const errMsg = typeof err === 'string' ? err : 'Ошибка отправки. Запись сохранена в истории.';
+          if (errMsg.includes('На записи не обнаружена разборчивая речь')) {
+            isSending = false;
+            playAudioCue('cancel');
+            showToast('🔇 На записи не обнаружена разборчивая речь (тишина или шум).', false);
+            switchState('idle');
+            return;
+          }
           handleSendError(errMsg);
         }
       }
@@ -1721,6 +1737,7 @@
         }
 
         const recordedPeak = maxRecordedVolume;
+        const recordedRms = maxRecordedRms;
         const recordedSpeechFrames = speechFramesCount;
         const wasMicBroken = micTrackBroken;
 
@@ -1730,12 +1747,12 @@
           await new Promise(resolve => setTimeout(resolve, 300));
         }
 
-        // Проверка на тишину или неисправность/отключение микрофона:
-        // Если сигнал полностью нулевой (микрофон заглушён или сломан) или за всё время записи не было ни одного речевого всплеска —
-        // НЕ отправляем аудио в STT/ИИ и НЕ вставляем галлюцинации.
-        if ((wasMicBroken && recordedSpeechFrames < 2) || recordedSpeechFrames < 2 || recordedPeak < 16) {
+        // Интеллектуальная проверка записи ДО отправки на сервер (RMS + речевой спектр):
+        // Если микрофон отключён или в записи только тишина / фоновый шум комнаты —
+        // отменяем отправку до обращения к ИИ, чтобы исключить галлюцинации и расход квоты.
+        if ((wasMicBroken && recordedSpeechFrames < 3) || recordedSpeechFrames < 3 || recordedPeak < 30 || recordedRms < 2.2) {
           isSending = false;
-          playAudioCue('error');
+          playAudioCue('cancel');
           if (invoke) {
             try {
               await invoke('save_audio', {
@@ -1747,13 +1764,13 @@
               });
             } catch (_) {}
           }
-          if (wasMicBroken || recordedPeak === 0) {
+          if (wasMicBroken || (recordedPeak === 0 && recordedRms < 0.5)) {
             if (window.__TAURI__) {
               window.__TAURI__.event.emit('mic-status-changed', { ok: false, reason: 'zero_signal' });
             }
             showToast('⚠️ Микрофон неисправен или отключён (нулевой сигнал)! Текст не отправлен.', true);
           } else {
-            showToast('🔇 Тишина в эфире — речь не обнаружена, отправка отменена.', true);
+            showToast('🔇 Тишина на записи — речь не обнаружена, отправка отменена.', false);
           }
           switchState('idle');
           return;
@@ -2283,10 +2300,14 @@
       let lastOrbScale = 1.0;
       let orbShadowApplied = false;
       const lastBarScales = [0.25, 0.25, 0.25, 0.25, 0.25];
+      let timeDomainArray = null;
 
       function drawVisualizer() {
         if (!analyser) return;
         analyser.getByteFrequencyData(dataArray);
+        if (timeDomainArray) {
+          analyser.getByteTimeDomainData(timeDomainArray);
+        }
 
         if (audioStream) {
           const tr = audioStream.getAudioTracks()[0];
@@ -2295,7 +2316,21 @@
           }
         }
 
-        // Вычисляем среднюю и пиковую громкость речевого спектра для детекции тишины и пульсации Orb
+        // Вычисляем истинную RMS-амплитуду сигнала во временной области (для фильтрации фонового шума комнаты)
+        let rms = 0;
+        if (timeDomainArray) {
+          let sqSum = 0;
+          for (let i = 0; i < timeDomainArray.length; i++) {
+            const dev = timeDomainArray[i] - 128;
+            sqSum += dev * dev;
+          }
+          rms = Math.sqrt(sqSum / timeDomainArray.length);
+          if (rms > maxRecordedRms) {
+            maxRecordedRms = rms;
+          }
+        }
+
+        // Вычисляем среднюю и пиковую громкость речевого спектра для детекции речи и пульсации Orb
         let sum = 0;
         let peakBin = 0;
         for (let i = 0; i < dataArray.length; i++) {
@@ -2309,7 +2344,7 @@
         if (peakBin > maxRecordedVolume) {
           maxRecordedVolume = peakBin;
         }
-        if (peakBin >= 18 || avgVolume >= 7) {
+        if ((peakBin >= 32 || avgVolume >= 12) && rms >= 2.2) {
           speechFramesCount++;
         }
 
@@ -2367,10 +2402,11 @@
         if (!analyser) {
           analyser = audioCtx.createAnalyser();
           analyser.fftSize = 64; // Дает 32 полосы частот
-          analyser.minDecibels = -90;
+          analyser.minDecibels = -75; // Отсекаем тепловой шум микрофона (-90..-76 dB)
           analyser.maxDecibels = -10;
-          analyser.smoothingTimeConstant = 0.82;
+          analyser.smoothingTimeConstant = 0.80;
           dataArray = new Uint8Array(analyser.frequencyBinCount);
+          timeDomainArray = new Uint8Array(analyser.fftSize);
         }
         
         if (currentSource) {

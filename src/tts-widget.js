@@ -182,8 +182,8 @@ window.renderTtsWidget = function(container, isMain = false) {
                 <!-- Заполняется динамически -->
               </div>
               <div class="relative w-6 ml-1 flex flex-col items-center justify-center">
-                <input type="range" id="tts-volume-slider" min="0" max="1" step="0.05" value="1.0" title="Плавная регулировка громкости"
-                       style="position: absolute; transform: rotate(-90deg); width: 110px; height: 4px;">
+                <input type="range" id="tts-volume-slider" min="0" max="2.0" step="0.05" value="1.0" title="Плавная регулировка громкости (до 200% с усилением)"
+                       style="position: absolute; transform: rotate(-90deg); width: 175px; height: 4px;">
               </div>
             </div>
           </div>
@@ -226,8 +226,8 @@ function initTtsWidgetLogic(container, isMain) {
 
   // 0.5 на самом верху, 3.0 в самом низу
   const SPEEDS = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0];
-  // 100% сверху, 0% снизу
-  const VOLUMES = [1.0, 0.75, 0.5, 0.25, 0.0];
+  // 200% (Турбо-буст) сверху, 0% снизу
+  const VOLUMES = [2.0, 1.5, 1.25, 1.0, 0.75, 0.5, 0.25, 0.0];
 
   // DOM Elements
   const btnVoice = container.querySelector('#tts-btn-voice');
@@ -423,7 +423,7 @@ function initTtsWidgetLogic(container, isMain) {
 
   // Volume Select
   function updateVolumeUI(val) {
-    const clamped = Math.max(0, Math.min(1, parseFloat(val) !== undefined && !isNaN(parseFloat(val)) ? parseFloat(val) : 1.0));
+    const clamped = Math.max(0, Math.min(2.0, parseFloat(val) !== undefined && !isNaN(parseFloat(val)) ? parseFloat(val) : 1.0));
     currentVolume = clamped;
     const pct = Math.round(clamped * 100);
     if (volumeLabel) volumeLabel.textContent = `${pct}%`;
@@ -435,6 +435,9 @@ function initTtsWidgetLogic(container, isMain) {
       } else if (pct < 50) {
         volumeIcon.textContent = 'volume_down';
         volumeIcon.style.color = '#d2bbff';
+      } else if (pct > 100) {
+        volumeIcon.textContent = 'volume_up';
+        volumeIcon.style.color = '#7bd6d1';
       } else {
         volumeIcon.textContent = 'volume_up';
         volumeIcon.style.color = '#d2bbff';
@@ -498,11 +501,11 @@ function initTtsWidgetLogic(container, isMain) {
   }
 
   if (btnVolume) {
-    // Колесо мыши прямо на кнопке громкости (шаг 5%)
+    // Колесо мыши прямо на кнопке громкости (шаг 5%, до 200%)
     btnVolume.addEventListener('wheel', (e) => {
       e.preventDefault();
       const delta = e.deltaY < 0 ? 0.05 : -0.05;
-      const nextVol = Math.round(Math.max(0, Math.min(1, currentVolume + delta)) * 20) / 20;
+      const nextVol = Math.round(Math.max(0, Math.min(2.0, currentVolume + delta)) * 20) / 20;
       updateVolumeUI(nextVol);
       notifyChange('setting', { volume: nextVol });
     }, { passive: false });

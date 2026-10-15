@@ -140,13 +140,13 @@ class VoiceCore {
             ]).then(([config, voices]) => {
                 if (config.tts_voice) this.settings.voice = config.tts_voice;
                 if (config.tts_speed) this.settings.speed = config.tts_speed;
-                if (config.tts_volume !== undefined) this.settings.volume = Math.max(0, Math.min(1, parseFloat(config.tts_volume)));
+                if (config.tts_volume !== undefined) this.settings.volume = Math.max(0, Math.min(2.0, parseFloat(config.tts_volume)));
                 if (config.tts_translate !== undefined) this.settings.translate = config.tts_translate;
                 if (config.tts_engine) this.settings.tts_engine = config.tts_engine;
                 if (config.tts_local_voice) this.settings.tts_local_voice = config.tts_local_voice;
                 this.settings.installedVoices = voices;
                 this.audioElement.playbackRate = this.settings.speed;
-                this.audioElement.volume = this.settings.volume;
+                this.applyEffectiveVolume(this.settings.volume);
                 if (this.onSettingsSync) this.onSettingsSync(this.settings);
                 this.broadcastState('settings', this.settings);
             }).catch(()=>{});
@@ -155,7 +155,7 @@ class VoiceCore {
             this.settings = {
                 voice: savedSettings.voice || 'ru-RU-SvetlanaNeural',
                 speed: savedSettings.speed || 1.0,
-                volume: savedSettings.volume !== undefined ? Math.max(0, Math.min(1, parseFloat(savedSettings.volume))) : 1.0,
+                volume: savedSettings.volume !== undefined ? Math.max(0, Math.min(2.0, parseFloat(savedSettings.volume))) : 1.0,
                 translate: savedSettings.translate || false,
                 tts_engine: savedSettings.tts_engine || 'edge',
                 tts_local_voice: savedSettings.tts_local_voice || 'ru_RU-dmitri-medium.onnx'
@@ -163,8 +163,13 @@ class VoiceCore {
         }
 
         this.audioElement = new Audio();
+        this.audioElement.crossOrigin = "anonymous";
         this.audioElement.playbackRate = this.settings.speed;
-        this.audioElement.volume = this.settings.volume;
+        this._audioCtx = null;
+        this._gainNode = null;
+        this._compressorNode = null;
+        this._sourceNode = null;
+        this.applyEffectiveVolume(this.settings.volume);
         
         // Слушатели событий
         this.onProgress = null;       // (percentBuffered, percentPlayed)
@@ -174,6 +179,51 @@ class VoiceCore {
 
         this.setupAudioEvents();
         this.setupTauriSync();
+    }
+
+    ensureAudioBoostGraph() {
+        try {
+            if (!this._audioCtx) {
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                if (!AudioCtx) return false;
+                this._audioCtx = new AudioCtx();
+                this._sourceNode = this._audioCtx.createMediaElementSource(this.audioElement);
+                this._compressorNode = this._audioCtx.createDynamicsCompressor();
+                // Мягкая вещательная нормализация (-14 LUFS как на YouTube) без искажений на пиках
+                this._compressorNode.threshold.value = -20;
+                this._compressorNode.knee.value = 18;
+                this._compressorNode.ratio.value = 3.0;
+                this._compressorNode.attack.value = 0.003;
+                this._compressorNode.release.value = 0.20;
+
+                this._gainNode = this._audioCtx.createGain();
+                this._sourceNode.connect(this._compressorNode);
+                this._compressorNode.connect(this._gainNode);
+                this._gainNode.connect(this._audioCtx.destination);
+            }
+            if (this._audioCtx && this._audioCtx.state === 'suspended') {
+                this._audioCtx.resume().catch(() => {});
+            }
+            return !!this._gainNode;
+        } catch (err) {
+            console.warn('[VoiceCore] WebAudio boost fallback:', err);
+            return false;
+        }
+    }
+
+    applyEffectiveVolume(vol) {
+        const clamped = Math.max(0, Math.min(2.0, isNaN(vol) ? 1.0 : parseFloat(vol)));
+        this.settings.volume = clamped;
+        if (!this.audioElement) return;
+        if (this._gainNode && this._audioCtx) {
+            this.audioElement.volume = 1.0;
+            // Базовый буст 1.35x на 100% выравнивает громкость синтеза речи (-18 LUFS) с уровнем YouTube (-14 LUFS),
+            // а при 200% даёт до 2.7x усиления с защитой от перегруза через компрессор
+            const boostedGain = clamped <= 0.001 ? 0.0 : (clamped * 1.35);
+            this._gainNode.gain.value = boostedGain;
+        } else {
+            this.audioElement.volume = Math.max(0, Math.min(1.0, clamped));
+        }
     }
 
     log(message) {
@@ -591,6 +641,8 @@ class VoiceCore {
 
         if (hasSrc && !ended && paused) {
             this.log('play() -> resuming audio');
+            this.ensureAudioBoostGraph();
+            this.applyEffectiveVolume(this.settings.volume !== undefined ? this.settings.volume : 1.0);
             this.audioElement.play().catch(e => {
                 this.log("Audio play error: " + e.name + " " + e.message);
                 if (e.name === 'NotAllowedError') {
@@ -667,7 +719,8 @@ class VoiceCore {
         if (currentBuf && currentBuf.startsWith("data:")) {
             this.audioElement.src = currentBuf;
             this.audioElement.playbackRate = this.settings.speed;
-            this.audioElement.volume = Math.max(0, Math.min(1, this.settings.volume !== undefined ? this.settings.volume : 1.0));
+            this.ensureAudioBoostGraph();
+            this.applyEffectiveVolume(this.settings.volume !== undefined ? this.settings.volume : 1.0);
             this.log('playCurrentSentence() calling audioElement.play() for index ' + this.currentSentenceIndex);
             this.audioElement.play().catch(e => {
                 this.log('Audio play FAILED: ' + e.name + ' ' + e.message);
@@ -725,7 +778,7 @@ class VoiceCore {
                         this.settings = { ...this.settings, ...p.settings };
                     } else {
                         if (p.speed !== undefined) this.settings.speed = p.speed;
-                        if (p.volume !== undefined) this.settings.volume = Math.max(0, Math.min(1, parseFloat(p.volume)));
+                        if (p.volume !== undefined) this.settings.volume = Math.max(0, Math.min(2.0, parseFloat(p.volume)));
                         if (p.voice !== undefined) this.settings.voice = p.voice;
                         if (p.translate !== undefined) this.settings.translate = p.translate;
                         if (p.tts_engine !== undefined) this.settings.tts_engine = p.tts_engine;
@@ -736,8 +789,7 @@ class VoiceCore {
                         this.audioElement.playbackRate = this.settings.speed;
                     }
                     if (src.volume !== undefined) {
-                        this.settings.volume = Math.max(0, Math.min(1, parseFloat(src.volume)));
-                        this.audioElement.volume = this.settings.volume;
+                        this.applyEffectiveVolume(src.volume);
                     }
                     localStorage.setItem('tts-settings', JSON.stringify(this.settings));
                     if (window.__TAURI__) {

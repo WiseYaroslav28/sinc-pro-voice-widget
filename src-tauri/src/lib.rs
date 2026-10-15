@@ -828,6 +828,72 @@ static MODEL_REQUEST_LOGS: std::sync::LazyLock<Mutex<HashMap<String, Vec<i64>>>>
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 static LAST_WORKING_MODEL: Mutex<Option<String>> = Mutex::new(None);
 
+fn is_valid_multimodal_gemini_model(model: &str) -> bool {
+    let m = model.trim().to_lowercase();
+    if m.is_empty() || m.starts_with("local_") {
+        return false;
+    }
+    if m.contains("gemma")
+        || m.contains("tts")
+        || m.contains("native-audio")
+        || m.contains("antigravity")
+        || m.contains("3.5")
+        || m.contains("3.1")
+        || m.contains("embedding")
+        || m.contains("imagen")
+        || m.contains("veo")
+        || m.contains("aqa")
+        || m.contains("bisheng")
+    {
+        return false;
+    }
+    m.starts_with("gemini-")
+}
+
+fn build_audio_capable_models(primary_model: &str) -> Vec<String> {
+    let mut models = Vec::new();
+    if let Ok(last_model_lock) = LAST_WORKING_MODEL.lock() {
+        if let Some(ref last_model) = *last_model_lock {
+            if is_valid_multimodal_gemini_model(last_model) {
+                models.push(last_model.clone());
+            }
+        }
+    }
+    if is_valid_multimodal_gemini_model(primary_model) {
+        models.push(primary_model.trim().to_string());
+    }
+    for m in [
+        "gemini-2.5-flash-lite",
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-flash-latest",
+        "gemini-2.5-pro",
+        "gemini-pro-latest",
+    ] {
+        models.push(m.to_string());
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let deduped: Vec<String> = models
+        .into_iter()
+        .filter(|m| seen.insert(m.clone()))
+        .collect();
+
+    // Если все модели оказались временно заблокированы в памяти (например, после кратковременного сбоя сети),
+    // автоматически очищаем блокировки, чтобы приложение никогда не зависало до перезапуска.
+    if let Ok(mut locks) = MODEL_LOCKS.lock() {
+        let now = Instant::now();
+        locks.retain(|_, unlock_time| *unlock_time > now);
+        let all_locked = deduped.iter().all(|m| locks.contains_key(m));
+        if all_locked {
+            locks.clear();
+        }
+    }
+
+    deduped
+}
+
 fn check_and_record_rate_limit(model: &str) -> Result<(usize, usize), String> {
     let now = chrono::Utc::now().timestamp();
     let mut logs = MODEL_REQUEST_LOGS.lock().unwrap();
@@ -841,38 +907,31 @@ fn check_and_record_rate_limit(model: &str) -> Result<(usize, usize), String> {
     // Считаем RPD (за последние 24 часа)
     let rpd_count = timestamps.len();
 
-    // Динамические пороги в зависимости от модели
+    // Реалистичные пороги без искусственной блокировки после 19 запросов в сутки
     let (max_rpm, max_rpd) = match model {
-        "gemini-2.5-pro" => (4, 24),
-        "gemini-2.5-flash" => (4, 19),
-        "gemini-2.5-flash-lite" => (9, 19),
-        "gemini-2.0-flash" => (14, 1450),
-        "gemini-2.0-flash-lite" => (28, 1450),
-        "gemini-1.5-flash" => (14, 1450),
-        "gemini-1.5-pro" => (1, 48),
-        "gemini-3.5-flash" => (4, 19),
-        "gemini-3.1-flash-lite" => (14, 490),
-        "gemini-3-flash" => (4, 19),
-        "gemma-4-31b-it" | "gemma-4-26b-a4b-it" => (14, 1450),
+        "gemini-2.5-pro" | "gemini-pro-latest" => (5, 100),
+        "gemini-2.5-flash" | "gemini-flash-latest" => (15, 1500),
+        "gemini-2.5-flash-lite" => (30, 1500),
+        "gemini-2.0-flash" => (15, 1500),
+        "gemini-2.0-flash-lite" => (30, 1500),
+        "gemini-1.5-flash" => (15, 1500),
+        "gemini-1.5-pro" => (5, 100),
         _ => {
             if model.contains("lite") {
-                (28, 1450)
+                (30, 1500)
             } else if model.contains("pro") {
-                (2, 48)
+                (5, 100)
             } else {
-                (14, 1450)
+                (15, 1500)
             }
         }
     };
 
-    let actual_max_rpm_label = max_rpm + 1;
-    let actual_max_rpd_label = max_rpd + 10;
-
     if rpm_count >= max_rpm {
-        return Err(format!("лимит RPM ({}/{})", rpm_count, actual_max_rpm_label));
+        return Err(format!("лимит RPM ({}/{})", rpm_count, max_rpm));
     }
     if rpd_count >= max_rpd {
-        return Err(format!("лимит RPD ({}/{})", rpd_count, actual_max_rpd_label));
+        return Err(format!("лимит RPD ({}/{})", rpd_count, max_rpd));
     }
 
     // Записываем текущий запрос
@@ -1898,7 +1957,7 @@ unsafe extern "system" fn low_level_keyboard_proc(
 
         let mut state_changed = false;
 
-        if vk == VK_LCONTROL || vk == VK_RCONTROL {
+        if vk == VK_LCONTROL || vk == VK_RCONTROL || vk == 0x11 {
             let prev = CTRL_PRESSED.swap(is_key_down, Ordering::SeqCst);
             if prev != is_key_down {
                 state_changed = true;
@@ -1908,7 +1967,7 @@ unsafe extern "system" fn low_level_keyboard_proc(
             if prev != is_key_down {
                 state_changed = true;
             }
-        } else if vk == VK_LMENU || vk == VK_RMENU {
+        } else if vk == VK_LMENU || vk == VK_RMENU || vk == 0x12 {
             let prev = ALT_PRESSED.swap(is_key_down, Ordering::SeqCst);
             if prev != is_key_down {
                 state_changed = true;
@@ -1923,10 +1982,44 @@ unsafe extern "system" fn low_level_keyboard_proc(
                     }
                 }
             }
-        } else if vk == VK_LSHIFT || vk == VK_RSHIFT {
+        } else if vk == VK_LSHIFT || vk == VK_RSHIFT || vk == 0x10 {
             let prev = SHIFT_PRESSED.swap(is_key_down, Ordering::SeqCst);
             if prev != is_key_down {
                 state_changed = true;
+            }
+        }
+
+        // Защита от «залипания» модификаторов после переключения в окна с правами администратора (Диспетчер задач, UAC)
+        use winapi::um::winuser::GetAsyncKeyState;
+        if vk != VK_LCONTROL && vk != VK_RCONTROL && vk != 0x11 && CTRL_PRESSED.load(Ordering::Relaxed) {
+            let phys_down = (GetAsyncKeyState(VK_LCONTROL as i32) as u16 & 0x8000) != 0
+                || (GetAsyncKeyState(VK_RCONTROL as i32) as u16 & 0x8000) != 0
+                || (GetAsyncKeyState(0x11) as u16 & 0x8000) != 0;
+            if !phys_down {
+                CTRL_PRESSED.store(false, Ordering::SeqCst);
+            }
+        }
+        if vk != VK_LMENU && vk != VK_RMENU && vk != 0x12 && ALT_PRESSED.load(Ordering::Relaxed) {
+            let phys_down = (GetAsyncKeyState(VK_LMENU as i32) as u16 & 0x8000) != 0
+                || (GetAsyncKeyState(VK_RMENU as i32) as u16 & 0x8000) != 0
+                || (GetAsyncKeyState(0x12) as u16 & 0x8000) != 0;
+            if !phys_down {
+                ALT_PRESSED.store(false, Ordering::SeqCst);
+            }
+        }
+        if vk != VK_LSHIFT && vk != VK_RSHIFT && vk != 0x10 && SHIFT_PRESSED.load(Ordering::Relaxed) {
+            let phys_down = (GetAsyncKeyState(VK_LSHIFT as i32) as u16 & 0x8000) != 0
+                || (GetAsyncKeyState(VK_RSHIFT as i32) as u16 & 0x8000) != 0
+                || (GetAsyncKeyState(0x10) as u16 & 0x8000) != 0;
+            if !phys_down {
+                SHIFT_PRESSED.store(false, Ordering::SeqCst);
+            }
+        }
+        if vk != VK_LWIN && vk != VK_RWIN && WIN_PRESSED.load(Ordering::Relaxed) {
+            let phys_down = (GetAsyncKeyState(VK_LWIN as i32) as u16 & 0x8000) != 0
+                || (GetAsyncKeyState(VK_RWIN as i32) as u16 & 0x8000) != 0;
+            if !phys_down {
+                WIN_PRESSED.store(false, Ordering::SeqCst);
             }
         }
 
@@ -2700,6 +2793,12 @@ async fn save_config(app_handle: tauri::AppHandle, config: AppConfig) -> Result<
     CAPSULE_ENABLED.store(config.capsule_mode, Ordering::SeqCst);
     WIDGET_ENABLED.store(config.widget_mode, Ordering::SeqCst);
     OCR_ENABLED.store(config.ocr_mode_switch, Ordering::SeqCst);
+    if let Ok(mut locks) = MODEL_LOCKS.lock() {
+        locks.clear();
+    }
+    if let Ok(mut last_m) = LAST_WORKING_MODEL.lock() {
+        *last_m = None;
+    }
     sync_layout_config(&config);
     let _ = app_handle.emit("config-updated", &config);
 
@@ -2753,8 +2852,8 @@ async fn update_config_fields(app_handle: tauri::AppHandle, fields: serde_json::
             else if let Some(n) = val.as_u64() { config.tts_speed = n as f32; }
         }
         if let Some(val) = obj.get("tts_volume") {
-            if let Some(f) = val.as_f64() { config.tts_volume = (f as f32).clamp(0.0, 1.0); }
-            else if let Some(n) = val.as_u64() { config.tts_volume = (n as f32).clamp(0.0, 1.0); }
+            if let Some(f) = val.as_f64() { config.tts_volume = (f as f32).clamp(0.0, 2.0); }
+            else if let Some(n) = val.as_u64() { config.tts_volume = (n as f32).clamp(0.0, 2.0); }
         }
         if let Some(val) = obj.get("tts_voice") {
             if let Some(s) = val.as_str() { config.tts_voice = s.to_string(); }
@@ -3419,6 +3518,30 @@ async fn open_audio_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+async fn get_audio_base64(path: String) -> Result<String, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("Путь к аудиофайлу пуст".to_string());
+    }
+    let p = std::path::Path::new(trimmed);
+    if !p.exists() {
+        return Err("Аудиофайл не существует на диске".to_string());
+    }
+    let bytes = std::fs::read(p).map_err(|e| format!("Ошибка чтения файла: {}", e))?;
+    if bytes.len() < 64 {
+        return Err("Аудиофайл пуст или поврежден".to_string());
+    }
+    let mime = if trimmed.to_lowercase().ends_with(".wav") {
+        "audio/wav"
+    } else if trimmed.to_lowercase().ends_with(".mp3") {
+        "audio/mpeg"
+    } else {
+        "audio/webm"
+    };
+    Ok(format!("data:{};base64,{}", mime, STANDARD.encode(&bytes)))
+}
+
 fn get_preset_prompt_and_label(preset: &str) -> (&'static str, &'static str) {
     match preset {
         "tasks" => (
@@ -3456,7 +3579,11 @@ fn parse_retry_delay(body: &str) -> Option<Duration> {
 }
 
 fn is_stub_transcript(text: &str) -> bool {
-    let lower = text.to_lowercase();
+    let trimmed = text.trim();
+    if trimmed == "0" || trimmed == "null" || trimmed == "undefined" || trimmed == "{}" || trimmed == "[]" {
+        return true;
+    }
+    let lower = trimmed.to_lowercase();
     lower.contains("предоставьте аудиозапись")
         || lower.contains("входные данные отсутствуют")
         || lower.contains("отсутствует аудиозапись")
@@ -3467,6 +3594,14 @@ fn is_stub_transcript(text: &str) -> bool {
         || lower.contains("здесь будет дословная транскрипция")
         || lower.contains("очищенная от слов-паразитов")
         || lower.contains("сохранением всех мыслей")
+        || lower.contains("на записи тишина")
+        || lower.contains("в аудиозаписи нет речи")
+        || lower.contains("речь отсутствует")
+        || lower.contains("не удалось распознать речь")
+        || lower.contains("аудио не содержит речи")
+        || lower.contains("тишина на записи")
+        || lower.contains("предоставьте текст")
+        || lower.contains("пожалуйста, укажите текст")
 }
 
 static RECORDING_FILE: std::sync::LazyLock<Mutex<Option<String>>> =
@@ -3843,7 +3978,7 @@ async fn save_audio(
             if config.api_key.trim().is_empty() {
                 ("[Ошибка: API-ключ Gemini не настроен]".to_string(), true)
             } else {
-                let combined_prompt = "Сделай дословную транскрипцию аудиозаписи на русском языке. Запиши речь точно так, как она звучит, без комментариев и постобработки.";
+                let combined_prompt = "Сделай точную дословную транскрипцию речи из этой аудиозаписи на русском языке. Запиши речь точно так, как она звучит, без комментариев и постобработки. ВАЖНО: если на записи тишина, только фоновый шум, вздохи или нет разборчивой человеческой речи — верни строго пустую строку (ничего не выдумывай).";
                 let request_payload = serde_json::json!({
                     "contents": [{
                         "parts": [
@@ -3858,38 +3993,7 @@ async fn save_audio(
 
                 let mut gemini_text: Option<String> = None;
                 let mut last_err = String::new();
-                
-                let mut primary_model = if config.ai_model.is_empty() || config.ai_model.starts_with("local_") {
-                    "gemini-2.5-flash-lite".to_string()
-                } else {
-                    config.ai_model.clone()
-                };
-                if primary_model.contains("tts-preview") {
-                    primary_model = "gemini-2.0-flash".to_string();
-                }
-                let mut fallback_models = Vec::new();
-                if let Ok(last_model_lock) = LAST_WORKING_MODEL.lock() {
-                    if let Some(ref last_model) = *last_model_lock {
-                        fallback_models.push(last_model.clone());
-                    }
-                }
-                fallback_models.push(primary_model.clone());
-                fallback_models.push("gemini-2.0-flash-lite".to_string());
-                fallback_models.push("gemini-flash-latest".to_string());
-                fallback_models.push("gemini-2.0-flash".to_string());
-                fallback_models.push("gemini-3.1-flash-lite".to_string());
-                fallback_models.push("gemini-3.5-flash".to_string());
-                fallback_models.push("gemini-2.5-flash-lite".to_string());
-                fallback_models.push("gemini-2.5-flash".to_string());
-                fallback_models.push("gemini-2.5-flash-native-audio-latest".to_string());
-                fallback_models.push("gemini-pro-latest".to_string());
-                fallback_models.push("gemini-2.5-pro".to_string());
-
-                let mut seen = std::collections::HashSet::new();
-                let fallback_models: Vec<String> = fallback_models
-                    .into_iter()
-                    .filter(|m| seen.insert(m.clone()))
-                    .collect();
+                let fallback_models = build_audio_capable_models(&config.ai_model);
 
                 let client = reqwest::Client::builder()
                     .timeout(Duration::from_secs(20))
@@ -3909,7 +4013,7 @@ async fn save_audio(
                     }
 
                     // Проверяем локальные лимиты RPM/RPD перед запросом
-                    let (rpm, rpd) = match check_and_record_rate_limit(model) {
+                    let (rpm, _rpd) = match check_and_record_rate_limit(model) {
                         Ok((rpm, rpd)) => (rpm, rpd),
                         Err(limit_err) => {
                             last_err = format!("Модель {} пропущена: {}", model, limit_err);
@@ -3934,6 +4038,10 @@ async fn save_audio(
                                         .and_then(|p| p.into_iter().next())
                                         .and_then(|p| p.text)
                                     {
+                                        if is_stub_transcript(&text) {
+                                            last_err = format!("Модель {} вернула заглушку: {}", model, text);
+                                            continue;
+                                        }
                                         if let Ok(mut last_model_lock) = LAST_WORKING_MODEL.lock() {
                                             *last_model_lock = Some(model.clone());
                                         }
@@ -3945,11 +4053,11 @@ async fn save_audio(
                             } else {
                                 let err_text = res.text().await.unwrap_or_default();
                                 if status.as_u16() == 429 || err_text.contains("RESOURCE_EXHAUSTED") {
-                                    let unlock_time = std::time::Instant::now() + std::time::Duration::from_secs(90); // Блокируем на 90 секунд
+                                    let unlock_time = std::time::Instant::now() + std::time::Duration::from_secs(25);
                                     if let Ok(mut locks) = MODEL_LOCKS.lock() {
                                         locks.insert(model.clone(), unlock_time);
                                     }
-                                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                                 }
                                 last_err = format!("Ошибка {} ({}): {}", status, model, err_text);
                                 log_tts_error("Gemini STT API error status", &last_err);
@@ -3974,7 +4082,7 @@ async fn save_audio(
                                 (t, false)
                             }
                             Err(local_err) => {
-                                (format!("[Ошибка распознавания (облако и локально): {}; {}]", last_err, local_err), true)
+                                (format!("[Ошибка распознавания (облако и локально): {}; {}]", clean_gemini_error(&last_err), local_err), true)
                             }
                         }
                     }
@@ -3982,14 +4090,19 @@ async fn save_audio(
             }
         };
 
+        if !is_error && (raw_transcript.trim().is_empty() || is_stub_transcript(&raw_transcript)) {
+            let _ = std::fs::remove_file(&file_path);
+            return Err("На записи не обнаружена разборчивая речь (тишина или фоновый шум)".to_string());
+        }
+
         let entry = HistoryEntry {
             id: id.clone(),
             timestamp,
             duration_secs,
             raw_transcript: raw_transcript.clone(),
-            transcript: raw_transcript.clone(),
-            preset: "transcript".to_string(),
-            preset_label: "Транскрипция".to_string(),
+            transcript: if is_error { String::new() } else { raw_transcript.clone() },
+            preset: if is_error { "error".to_string() } else { "transcript".to_string() },
+            preset_label: if is_error { "Ошибка".to_string() } else { "Транскрипция".to_string() },
             ai_results: vec![],
             audio_path: file_path.to_string_lossy().to_string(),
             stt_model: used_stt_model,
@@ -4030,6 +4143,11 @@ async fn save_audio(
                 return Ok(entry);
             }
         };
+
+        if local_transcript.trim().is_empty() || is_stub_transcript(&local_transcript) {
+            let _ = std::fs::remove_file(&file_path);
+            return Err("На записи не обнаружена разборчивая речь (тишина или фоновый шум)".to_string());
+        }
 
         let (raw_transcript, ai_result_text, is_error) = if config.ai_model.starts_with("local_") {
             if let Some(server) = config.ai_servers.iter().find(|s| s.id == config.ai_model) {
@@ -4086,40 +4204,12 @@ async fn save_audio(
             let mut gemini_text: Option<String> = None;
             let mut last_err = String::new();
             
-            // Получаем HTTP клиент
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(20))
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new());
             let api_key = config.api_key.trim().to_string();
-
-            // Fallback цепочка моделей
-            let mut primary_model = if config.ai_model.is_empty() {
-                "gemini-2.5-flash-lite".to_string()
-            } else {
-                config.ai_model.clone()
-            };
-            if primary_model.contains("tts-preview") {
-                primary_model = "gemini-2.0-flash".to_string();
-            }
-            let fallback_models = vec![
-                primary_model.clone(),
-                "antigravity-preview-05-2026".to_string(),
-                "gemini-3.5-flash".to_string(),
-                "gemini-3.1-flash-lite".to_string(),
-                "gemini-flash-latest".to_string(),
-                "gemini-2.0-flash-lite".to_string(),
-                "gemini-2.0-flash".to_string(),
-                "gemini-2.5-flash-lite".to_string(),
-                "gemini-2.5-flash".to_string(),
-                "gemini-pro-latest".to_string(),
-                "gemini-2.5-pro".to_string(),
-            ];
-            let mut seen = std::collections::HashSet::new();
-            let fallback_models: Vec<String> = fallback_models
-                .into_iter()
-                .filter(|m| seen.insert(m.clone()))
-                .collect();
+            let fallback_models = build_audio_capable_models(&config.ai_model);
 
             for model in &fallback_models {
                 if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
@@ -4212,14 +4302,19 @@ async fn save_audio(
         return Ok(entry);
     }
 
-    // Единый JSON-промпт: транскрипция + AI-результат в одном запросе
+    // Единый JSON-промпт: транскрипция + AI-результат в одном запросе с жесткой защитой от галлюцинаций на тишине
     let combined_prompt = format!(
         r#"Ответь СТРОГО в формате JSON без markdown, без пояснений, без ```json, только чистый JSON:
 {{"transcript":"...","ai_result":"..."}}
 
-Правила:
-- "transcript": абсолютная дословная транскрипция аудио (включая все слова-паразиты, заикания, повторы, оговорки и т.д.). Запиши речь точно так, как она звучит, без художественной обработки и без удаления слов.
-- "ai_result": {}
+КРИТИЧЕСКИ ВАЖНОЕ ПРАВИЛО ПРОТИВ ГАЛЛЮЦИНАЦИЙ:
+Сначала прослушай аудиозапись. Если на записи тишина, только фоновый шум, шорохи, вздохи, щелчки микрофона или нет разборчивой человеческой речи — верни СТРОГО пустые строки в обоих полях:
+{{"transcript":"","ai_result":""}}
+Категорически запрещено выдумывать текст, отвечать на сам промпт или генерировать примеры, если в аудио нет речи!
+
+Правила (только если в аудио ЕСТЬ разборчивая речь):
+- "transcript": абсолютная дословная транскрипция речи из аудио (включая все слова-паразиты, заикания, повторы, оговорки и т.д.). Запиши только то, что реально произнесено голосом, без художественной обработки.
+- "ai_result": примени следующую инструкцию ТОЛЬКО к распознанной речи из поля transcript: {}
 
 В JSON-строках экранируй кавычки через \" и переносы строк через \n."#,
         user_preset_prompt
@@ -4233,43 +4328,13 @@ async fn save_audio(
             ]
         }],
         "generationConfig": {
-            "temperature": 0.2,
+            "temperature": 0.15,
             "responseMimeType": "application/json"
         }
     });
 
-    // Fallback цепочка моделей: расширяем до максимальной отказоустойчивости на бесплатном тарифе
-    let mut primary_model = if config.ai_model.is_empty() || config.ai_model.starts_with("local_") {
-        "gemini-2.5-flash-lite".to_string()
-    } else {
-        config.ai_model.clone()
-    };
-    if primary_model.contains("tts-preview") {
-        primary_model = "gemini-2.0-flash".to_string();
-    }
-    let mut fallback_models = Vec::new();
-    if let Ok(last_model_lock) = LAST_WORKING_MODEL.lock() {
-        if let Some(ref last_model) = *last_model_lock {
-            fallback_models.push(last_model.clone());
-        }
-    }
-    fallback_models.push(primary_model.clone());
-    fallback_models.push("gemini-2.0-flash-lite".to_string());
-    fallback_models.push("gemini-flash-latest".to_string());
-    fallback_models.push("gemini-2.0-flash".to_string());
-    fallback_models.push("gemini-3.1-flash-lite".to_string());
-    fallback_models.push("gemini-3.5-flash".to_string());
-    fallback_models.push("gemini-2.5-flash-lite".to_string());
-    fallback_models.push("gemini-2.5-flash".to_string());
-    fallback_models.push("gemini-2.5-flash-native-audio-latest".to_string());
-    fallback_models.push("gemini-pro-latest".to_string());
-    fallback_models.push("gemini-2.5-pro".to_string());
-    // Убираем дубли, сохраняем порядок
-    let mut seen = std::collections::HashSet::new();
-    let fallback_models: Vec<String> = fallback_models
-        .into_iter()
-        .filter(|m| seen.insert(m.clone()))
-        .collect();
+    // Цепочка проверенных мультимодальных моделей Gemini, поддерживающих аудио
+    let fallback_models = build_audio_capable_models(&config.ai_model);
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
@@ -4280,6 +4345,8 @@ async fn save_audio(
     // Пробуем модели по очереди
     let mut last_err = String::new();
     let mut gemini_text: Option<String> = None;
+    let mut detected_silence = false;
+
     for model in &fallback_models {
         if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
             last_err = "Запрос отменен пользователем".to_string();
@@ -4297,7 +4364,7 @@ async fn save_audio(
         }
 
         // Проверяем локальные лимиты RPM/RPD перед запросом
-        let (rpm, rpd) = match check_and_record_rate_limit(model) {
+        let (rpm, _rpd) = match check_and_record_rate_limit(model) {
             Ok((rpm, rpd)) => (rpm, rpd),
             Err(limit_err) => {
                 last_err = format!("Модель {} пропущена: {}", model, limit_err);
@@ -4320,7 +4387,9 @@ async fn save_audio(
                 let status = res.status();
                 if status.as_u16() == 429 {
                     let err_text = res.text().await.unwrap_or_default();
-                    let delay = parse_retry_delay(&err_text).unwrap_or(Duration::from_secs(90)); // Кулдаун 90 секунд по умолчанию
+                    let delay = parse_retry_delay(&err_text)
+                        .unwrap_or(Duration::from_secs(25))
+                        .min(Duration::from_secs(45));
                     let unlock_time = Instant::now() + delay;
                     {
                         let mut locks = MODEL_LOCKS.lock().unwrap();
@@ -4328,7 +4397,7 @@ async fn save_audio(
                     }
                     last_err = format!("Модель {} заблокирована (429) на {:?}", model, delay);
                     log_tts_error("Gemini rate limit 429", &last_err);
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                     continue;
                 }
                 if status.as_u16() == 503 {
@@ -4341,12 +4410,12 @@ async fn save_audio(
                     last_err = format!("Ошибка {} ({}): {}", status, model, err_text);
                     log_tts_error("Gemini API error status", &last_err);
                     if err_text.contains("RESOURCE_EXHAUSTED") || err_text.contains("quota") {
-                        let unlock_time = Instant::now() + Duration::from_secs(90); // Блокируем на 90 секунд
+                        let unlock_time = Instant::now() + Duration::from_secs(30);
                         {
                             let mut locks = MODEL_LOCKS.lock().unwrap();
                             locks.insert(model.clone(), unlock_time);
                         }
-                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                     }
                     continue;
                 }
@@ -4365,16 +4434,29 @@ async fn save_audio(
                             .and_then(|p| p.into_iter().next())
                             .and_then(|p| p.text)
                         {
-                            // Проверяем, не является ли транскрипция заглушкой
-                            let transcript = match serde_json::from_str::<serde_json::Value>(&text)
-                            {
-                                Ok(v) => v["transcript"].as_str().unwrap_or("").to_string(),
-                                Err(_) => text.clone(),
-                            };
+                            let mut probe_clean = text.trim().to_string();
+                            if let (Some(start), Some(end)) = (probe_clean.find('{'), probe_clean.rfind('}')) {
+                                if start <= end {
+                                    probe_clean = probe_clean[start..=end].to_string();
+                                }
+                            }
 
-                            if is_stub_transcript(&transcript) {
-                                last_err =
-                                    format!("Модель {} вернула заглушку: {}", model, transcript);
+                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&probe_clean) {
+                                let tr = v.get("transcript").and_then(|val| val.as_str()).unwrap_or("").trim();
+                                let ai = v.get("ai_result").and_then(|val| val.as_str()).unwrap_or("").trim();
+
+                                if tr.is_empty() && ai.is_empty() {
+                                    detected_silence = true;
+                                    break;
+                                }
+                                if tr.is_empty() || is_stub_transcript(tr) || is_stub_transcript(ai) {
+                                    last_err = format!("Модель {} вернула пустую речь или заглушку", model);
+                                    log_tts_error("Gemini stub/empty transcript returned", &last_err);
+                                    detected_silence = true;
+                                    break;
+                                }
+                            } else if is_stub_transcript(&text) {
+                                last_err = format!("Модель {} вернула заглушку: {}", model, text);
                                 log_tts_error("Gemini stub returned", &last_err);
                                 continue;
                             }
@@ -4396,6 +4478,11 @@ async fn save_audio(
         }
     }
 
+    if detected_silence && gemini_text.is_none() {
+        let _ = std::fs::remove_file(&file_path);
+        return Err("На записи не обнаружена разборчивая речь (тишина или фоновый шум)".to_string());
+    }
+
     // Парсим JSON-ответ от Gemini
     let (raw_transcript, ai_result_text, is_error) = match gemini_text {
         None => {
@@ -4407,6 +4494,10 @@ async fn save_audio(
                 let _ = app_handle.emit("stt-fallback", format!("Сбой Gemini ({friendly_err}). Включен локальный Whisper."));
                 match run_local_stt(&app_handle, &file_path.to_string_lossy()).await {
                     Ok(local_tr) => {
+                        if local_tr.trim().is_empty() || is_stub_transcript(&local_tr) {
+                            let _ = std::fs::remove_file(&file_path);
+                            return Err("На записи не обнаружена разборчивая речь (тишина или фоновый шум)".to_string());
+                        }
                         used_stt_model = format!("Whisper Local ({}) (Offline Fallback)", config.stt_local_model);
                         let combined_prompt = format!(
                             "Выполни постобработку текста по правилу: \"{}\". \
@@ -4425,8 +4516,8 @@ async fn save_audio(
                             }
                         }
                     }
-                    Err(local_err) => {
-                        (format!("[Ошибка распознавания (облако и локально): {}; {}]", last_err, local_err), String::new(), true)
+                    Err(_local_err) => {
+                        (format!("[Ошибка связи с сервером ИИ: {}]", friendly_err), String::new(), true)
                     }
                 }
             }
@@ -4454,8 +4545,12 @@ async fn save_audio(
             // Пытаемся распарсить JSON
             match serde_json::from_str::<serde_json::Value>(&cleaned) {
                 Ok(v) => {
-                    let tr = v["transcript"].as_str().unwrap_or("").to_string();
-                    let ai = v["ai_result"].as_str().unwrap_or("").to_string();
+                    let tr = v.get("transcript").and_then(|val| val.as_str()).unwrap_or("").trim().to_string();
+                    let ai = v.get("ai_result").and_then(|val| val.as_str()).unwrap_or("").trim().to_string();
+                    if tr.is_empty() || is_stub_transcript(&tr) || is_stub_transcript(&ai) {
+                        let _ = std::fs::remove_file(&file_path);
+                        return Err("На записи не обнаружена разборчивая речь (тишина или фоновый шум)".to_string());
+                    }
                     (tr, ai, false)
                 }
                 Err(e) => {
@@ -4468,22 +4563,23 @@ async fn save_audio(
                     let re_ai = regex::Regex::new(r#""ai_result"\s*:\s*"((?:[^"\\]|\\.)*)""#).unwrap();
                     
                     let tr = if let Some(cap) = re_tr.captures(&cleaned) {
-                        cap.get(1).map(|m| m.as_str().replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\")).unwrap_or_default()
+                        cap.get(1).map(|m| m.as_str().replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\").trim().to_string()).unwrap_or_default()
                     } else {
                         String::new()
                     };
                     
                     let ai = if let Some(cap) = re_ai.captures(&cleaned) {
-                        cap.get(1).map(|m| m.as_str().replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\")).unwrap_or_default()
+                        cap.get(1).map(|m| m.as_str().replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\").trim().to_string()).unwrap_or_default()
                     } else {
                         String::new()
                     };
 
-                    if !tr.is_empty() || !ai.is_empty() {
+                    if !tr.is_empty() && !is_stub_transcript(&tr) && !is_stub_transcript(&ai) {
                         (tr, ai, false)
                     } else {
-                        // Если регулярки тоже не сработали, возвращаем raw_json как транскрипцию
-                        (raw_json, String::new(), false)
+                        // Никогда не вставляем сырой нераспарсенный JSON или нули в курсор пользователя
+                        let _ = std::fs::remove_file(&file_path);
+                        return Err("На записи не обнаружена разборчивая речь (тишина или некорректный ответ модели)".to_string());
                     }
                 }
             }
@@ -4723,33 +4819,8 @@ async fn process_ai_request(
         })
     };
 
-    // 4. Подготавливаем цепочку моделей
-    let mut primary_model = if config.ai_model.is_empty() {
-        "gemini-2.5-flash-lite".to_string()
-    } else {
-        config.ai_model.clone()
-    };
-    if primary_model.contains("tts-preview") {
-        primary_model = "gemini-2.0-flash".to_string();
-    }
-    let fallback_models = vec![
-        primary_model.clone(),
-        "antigravity-preview-05-2026".to_string(),
-        "gemini-2.0-flash-lite".to_string(),
-        "gemini-flash-latest".to_string(),
-        "gemini-2.0-flash".to_string(),
-        "gemini-3.1-flash-lite".to_string(),
-        "gemini-3.5-flash".to_string(),
-        "gemini-2.5-flash-lite".to_string(),
-        "gemini-2.5-flash".to_string(),
-        "gemini-pro-latest".to_string(),
-        "gemini-2.5-pro".to_string(),
-    ];
-    let mut seen = std::collections::HashSet::new();
-    let fallback_models: Vec<String> = fallback_models
-        .into_iter()
-        .filter(|m| seen.insert(m.clone()))
-        .collect();
+    // 4. Подготавливаем цепочку проверенных моделей
+    let fallback_models = build_audio_capable_models(&config.ai_model);
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
@@ -4793,7 +4864,9 @@ async fn process_ai_request(
                 let status = res.status();
                 if status.as_u16() == 429 {
                     let err_text = res.text().await.unwrap_or_default();
-                    let delay = parse_retry_delay(&err_text).unwrap_or(Duration::from_secs(60));
+                    let delay = parse_retry_delay(&err_text)
+                        .unwrap_or(Duration::from_secs(25))
+                        .min(Duration::from_secs(45));
                     let unlock_time = Instant::now() + delay;
                     {
                         let mut locks = MODEL_LOCKS.lock().unwrap();
@@ -4813,7 +4886,7 @@ async fn process_ai_request(
                     last_err = format!("Ошибка {} ({}): {}", status, model, err_text);
                     log_tts_error("Gemini API error status", &last_err);
                     if err_text.contains("RESOURCE_EXHAUSTED") || err_text.contains("quota") {
-                        let unlock_time = Instant::now() + Duration::from_secs(3600);
+                        let unlock_time = Instant::now() + Duration::from_secs(30);
                         let mut locks = MODEL_LOCKS.lock().unwrap();
                         locks.insert(model.clone(), unlock_time);
                     }
@@ -5210,51 +5283,65 @@ fn simulate_ctrl_c() {
         dwExtraInfo: usize,
     }
     const INPUT_KEYBOARD: u32 = 1;
-    const KEYEVENTF_KEYUP: u32 = 2;
-    const VK_CONTROL: u16 = 17;
-    const VK_C: u16 = 67;
+    const KEYEVENTF_EXTENDEDKEY: u32 = 0x0001;
+    const KEYEVENTF_KEYUP: u32 = 0x0002;
+    const VK_CONTROL: u16 = 0x11;
+    const VK_LCONTROL: u16 = 0xA2;
+    const VK_C: u16 = 0x43;
 
     #[link(name = "user32")]
     extern "system" {
         fn SendInput(cInputs: u32, pInputs: *const INPUT, cbSize: i32) -> u32;
+        fn MapVirtualKeyW(uCode: u32, uMapType: u32) -> u32;
     }
 
     unsafe {
         let mut inputs: Vec<INPUT> = Vec::new();
-        // Принудительно отпускаем все модификаторы
-        let release_keys = [
-            0x10, 0xA0, 0xA1, // Shift
-            0x11, 0xA2, 0xA3, // Ctrl
-            0x12, 0xA4, 0xA5, // Alt
-            0x5B, 0x5C,       // Win
-        ];
-        for k in release_keys.iter() {
-            inputs.push(INPUT {
+        let make_key = |vk: u16, is_up: bool| -> INPUT {
+            let scan = MapVirtualKeyW(vk as u32, 0) as u16;
+            let is_extended = matches!(vk, 0xA3 | 0xA5 | 0x5B | 0x5C);
+            let mut flags = if is_up { KEYEVENTF_KEYUP } else { 0 };
+            if is_extended {
+                flags |= KEYEVENTF_EXTENDEDKEY;
+            }
+            INPUT {
                 type_: INPUT_KEYBOARD,
-                u: INPUT_UNION { ki: KEYBDINPUT { wVk: *k, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0x12345678 } },
-            });
+                u: INPUT_UNION {
+                    ki: KEYBDINPUT {
+                        wVk: vk,
+                        wScan: scan,
+                        dwFlags: flags,
+                        time: 0,
+                        dwExtraInfo: 0x12345678,
+                    },
+                },
+            }
+        };
+
+        // КРИТИЧНО: Сначала гарантированно удерживаем Ctrl нажатым ПЕРЕД отпусканием Alt!
+        // Если отпустить Ctrl раньше Alt, то при отпускании Alt окно получит чистый WM_SYSKEYUP (VK_MENU),
+        // что активирует верхнее меню окна (File/Edit/...) и сбросит фокус выделения текста!
+        inputs.push(make_key(VK_CONTROL, false));
+        inputs.push(make_key(VK_LCONTROL, false));
+
+        // Отпускаем Alt, Shift и Win при зажатом Ctrl (меню окна НЕ активируется)
+        let release_non_ctrl = [
+            0x12, 0xA4, 0xA5, // Alt / LAlt / RAlt
+            0x10, 0xA0, 0xA1, // Shift / LShift / RShift
+            0x5B, 0x5C,       // LWin / RWin
+            0xA3,             // RCtrl
+        ];
+        for &k in &release_non_ctrl {
+            inputs.push(make_key(k, true));
         }
 
-        // Зажимаем логический Ctrl
-        inputs.push(INPUT {
-            type_: INPUT_KEYBOARD,
-            u: INPUT_UNION { ki: KEYBDINPUT { wVk: VK_CONTROL, wScan: 0, dwFlags: 0, time: 0, dwExtraInfo: 0x12345678 } },
-        });
-        // Зажимаем C
-        inputs.push(INPUT {
-            type_: INPUT_KEYBOARD,
-            u: INPUT_UNION { ki: KEYBDINPUT { wVk: VK_C, wScan: 0, dwFlags: 0, time: 0, dwExtraInfo: 0x12345678 } },
-        });
-        // Отпускаем C
-        inputs.push(INPUT {
-            type_: INPUT_KEYBOARD,
-            u: INPUT_UNION { ki: KEYBDINPUT { wVk: VK_C, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0x12345678 } },
-        });
-        // Отпускаем логический Ctrl
-        inputs.push(INPUT {
-            type_: INPUT_KEYBOARD,
-            u: INPUT_UNION { ki: KEYBDINPUT { wVk: VK_CONTROL, wScan: 0, dwFlags: KEYEVENTF_KEYUP, time: 0, dwExtraInfo: 0x12345678 } },
-        });
+        // Нажимаем и отпускаем C при чистом зажатом Ctrl
+        inputs.push(make_key(VK_C, false));
+        inputs.push(make_key(VK_C, true));
+
+        // Отпускаем Ctrl
+        inputs.push(make_key(VK_LCONTROL, true));
+        inputs.push(make_key(VK_CONTROL, true));
 
         SendInput(inputs.len() as u32, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32);
     }
@@ -5425,25 +5512,64 @@ async fn translate_with_cache(
 async fn capture_clipboard_text(app_handle: tauri::AppHandle, translate: bool) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
+        let prior_clipboard_text = get_clipboard_text_raw().unwrap_or_default();
         let backup = backup_clipboard().unwrap_or_default();
         let _ = set_clipboard_text("");
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Если физический Alt ещё зажат (например, хоткей Ctrl+Alt), ждём до 180 мс или маскируем через simulate_ctrl_c
+        for _ in 0..6 {
+            let alt_down = unsafe {
+                use winapi::um::winuser::GetAsyncKeyState;
+                (GetAsyncKeyState(0x12) as u16 & 0x8000) != 0
+                    || (GetAsyncKeyState(0xA4) as u16 & 0x8000) != 0
+                    || (GetAsyncKeyState(0xA5) as u16 & 0x8000) != 0
+            };
+            if !alt_down {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
         simulate_ctrl_c();
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-        
+        tokio::time::sleep(std::time::Duration::from_millis(140)).await;
+
+        let mut text = get_clipboard_text_raw().unwrap_or_default();
+
+        // Повторная попытка, если целевое приложение не успело обработать первый Ctrl+C
+        if text.trim().is_empty() {
+            tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+            simulate_ctrl_c();
+            tokio::time::sleep(std::time::Duration::from_millis(160)).await;
+            text = get_clipboard_text_raw().unwrap_or_default();
+        }
+
         CTRL_PRESSED.store(false, Ordering::SeqCst);
         SHIFT_PRESSED.store(false, Ordering::SeqCst);
         ALT_PRESSED.store(false, Ordering::SeqCst);
-        
-        let text = get_clipboard_text_raw().unwrap_or_default();
+
         let _ = restore_clipboard(backup);
 
-        if text.trim().is_empty() { return Ok("".to_string()); }
+        // Если выделение не скопировалось (например, текст уже был скопирован в буфер заранее), используем текст из буфера
+        if text.trim().is_empty() && !prior_clipboard_text.trim().is_empty() {
+            log_to_file("capture_clipboard_text: Selection copy empty, falling back to existing clipboard text");
+            text = prior_clipboard_text;
+        }
+
+        if text.trim().is_empty() {
+            return Ok("".to_string());
+        }
 
         if translate {
             let config = load_config_internal(&app_handle)?;
-            let translated = translate_with_cache(&app_handle, &text, &config.api_key, &config.ai_model).await?;
-            return Ok(translated);
+            match translate_with_cache(&app_handle, &text, &config.api_key, &config.ai_model).await {
+                Ok(translated) if !translated.trim().is_empty() => return Ok(translated),
+                Ok(_) => return Ok(text),
+                Err(e) => {
+                    log_to_file(&format!("capture_clipboard_text: Translation error ({}), returning original text", e));
+                    return Ok(text);
+                }
+            }
         }
         Ok(text)
     }
@@ -5577,33 +5703,7 @@ async fn process_ocr_vision(
         }
     });
 
-    let mut primary_model = if config.ai_model.is_empty() {
-        "gemini-2.5-flash-lite".to_string()
-    } else {
-        config.ai_model.clone()
-    };
-    if primary_model.contains("tts-preview") {
-        primary_model = "gemini-2.0-flash".to_string();
-    }
-    
-    let fallback_models = vec![
-        primary_model.clone(),
-        "gemini-2.0-flash-lite".to_string(),
-        "gemini-flash-latest".to_string(),
-        "gemini-2.0-flash".to_string(),
-        "gemini-3.1-flash-lite".to_string(),
-        "gemini-3.5-flash".to_string(),
-        "gemini-2.5-flash-lite".to_string(),
-        "gemini-2.5-flash".to_string(),
-        "gemini-pro-latest".to_string(),
-        "gemini-2.5-pro".to_string(),
-    ];
-    
-    let mut seen = std::collections::HashSet::new();
-    let fallback_models: Vec<String> = fallback_models
-        .into_iter()
-        .filter(|m| seen.insert(m.clone()))
-        .collect();
+    let fallback_models = build_audio_capable_models(&config.ai_model);
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
@@ -6166,34 +6266,7 @@ async fn process_ocr_hybrid(
         }
     });
 
-    let mut primary_model = if config.ai_model.is_empty() {
-        "gemini-2.5-flash-lite".to_string()
-    } else {
-        config.ai_model.clone()
-    };
-    if primary_model.contains("tts-preview") {
-        primary_model = "gemini-2.0-flash".to_string();
-    }
-    
-    let fallback_models = vec![
-        primary_model.clone(),
-        "antigravity-preview-05-2026".to_string(),
-        "gemini-2.0-flash-lite".to_string(),
-        "gemini-flash-latest".to_string(),
-        "gemini-2.0-flash".to_string(),
-        "gemini-3.1-flash-lite".to_string(),
-        "gemini-3.5-flash".to_string(),
-        "gemini-2.5-flash-lite".to_string(),
-        "gemini-2.5-flash".to_string(),
-        "gemini-pro-latest".to_string(),
-        "gemini-2.5-pro".to_string(),
-    ];
-    
-    let mut seen = std::collections::HashSet::new();
-    let fallback_models: Vec<String> = fallback_models
-        .into_iter()
-        .filter(|m| seen.insert(m.clone()))
-        .collect();
+    let fallback_models = build_audio_capable_models(&config.ai_model);
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
@@ -6322,31 +6395,7 @@ async fn call_gemini_text_api(
     prompt: &str,
     text: &str,
 ) -> Result<(Vec<String>, String), String> {
-    let mut fallback_models = Vec::new();
-    if let Ok(last_model_lock) = LAST_WORKING_MODEL.lock() {
-        if let Some(ref last_model) = *last_model_lock {
-            fallback_models.push(last_model.clone());
-        }
-    }
-    fallback_models.push(primary_model.to_string());
-    fallback_models.push("antigravity-preview-05-2026".to_string());
-    fallback_models.push("gemini-2.0-flash-lite".to_string());
-    fallback_models.push("gemini-flash-latest".to_string());
-    fallback_models.push("gemini-2.0-flash".to_string());
-    fallback_models.push("gemini-3.1-flash-lite".to_string());
-    fallback_models.push("gemini-3.5-flash".to_string());
-    fallback_models.push("gemini-2.5-flash-lite".to_string());
-    fallback_models.push("gemini-2.5-flash".to_string());
-    fallback_models.push("gemini-pro-latest".to_string());
-    fallback_models.push("gemini-2.5-pro".to_string());
-    fallback_models.push("gemma-4-31b-it".to_string());
-    fallback_models.push("gemma-4-26b-a4b-it".to_string());
-    
-    let mut seen = std::collections::HashSet::new();
-    let fallback_models: Vec<String> = fallback_models
-        .into_iter()
-        .filter(|m| seen.insert(m.clone()))
-        .collect();
+    let fallback_models = build_audio_capable_models(primary_model);
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(12))
@@ -6393,16 +6442,12 @@ async fn call_gemini_text_api(
 
         let (max_rpm_label, max_rpd_label) = match model.as_str() {
             "gemini-2.5-pro" => (5, 34),
-            "gemini-2.5-flash" => (5, 20),
-            "gemini-2.5-flash-lite" => (10, 20),
+            "gemini-2.5-flash" => (10, 250),
+            "gemini-2.5-flash-lite" => (15, 1000),
             "gemini-2.0-flash" => (15, 1500),
             "gemini-2.0-flash-lite" => (30, 1500),
             "gemini-1.5-flash" => (15, 1500),
             "gemini-1.5-pro" => (2, 58),
-            "gemini-3.5-flash" => (5, 20),
-            "gemini-3.1-flash-lite" => (15, 500),
-            "gemini-3-flash" => (5, 20),
-            "gemma-4-31b-it" | "gemma-4-26b-a4b-it" => (15, 1500),
             _ => {
                 if model.contains("lite") { (30, 1500) }
                 else if model.contains("pro") { (3, 58) }
@@ -6528,28 +6573,7 @@ async fn call_gemini_vision_api(
     prompt: &str,
     base64_image: &str,
 ) -> Result<serde_json::Value, String> {
-    let mut fallback_models = Vec::new();
-    if let Ok(last_model_lock) = LAST_WORKING_MODEL.lock() {
-        if let Some(ref last_model) = *last_model_lock {
-            fallback_models.push(last_model.clone());
-        }
-    }
-    fallback_models.push(primary_model.to_string());
-    fallback_models.push("gemini-2.0-flash-lite".to_string());
-    fallback_models.push("gemini-flash-latest".to_string());
-    fallback_models.push("gemini-2.0-flash".to_string());
-    fallback_models.push("gemini-3.1-flash-lite".to_string());
-    fallback_models.push("gemini-3.5-flash".to_string());
-    fallback_models.push("gemini-2.5-flash-lite".to_string());
-    fallback_models.push("gemini-2.5-flash".to_string());
-    fallback_models.push("gemini-pro-latest".to_string());
-    fallback_models.push("gemini-2.5-pro".to_string());
-    
-    let mut seen = std::collections::HashSet::new();
-    let fallback_models: Vec<String> = fallback_models
-        .into_iter()
-        .filter(|m| seen.insert(m.clone()))
-        .collect();
+    let fallback_models = build_audio_capable_models(primary_model);
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
@@ -9060,6 +9084,7 @@ pub fn run() {
             fetch_gemini_models,
             set_module_mode,
             load_history,
+            get_audio_base64,
             delete_history_entry,
             open_audio_folder,
             start_recording_session,

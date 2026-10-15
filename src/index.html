@@ -492,17 +492,17 @@
           </section>
 
           <!-- ВКЛАДКА 4: НАСТРОЙКИ (SETTINGS) -->
-          <section class="tab-content flex flex-col gap-4 flex-1 overflow-y-auto py-4" id="tab-settings" style="display: none;">
-            <!-- Панель быстрого сохранения настроек -->
-            <div class="flex items-center justify-between bg-[#13131a] rounded-xl border border-[#8e52ff]/30 px-5 py-3">
+          <section class="tab-content flex flex-col gap-4 flex-1 overflow-y-auto pb-6 pt-0 relative" id="tab-settings" style="display: none;">
+            <!-- Закреплённая (Sticky) панель быстрого сохранения настроек -->
+            <div class="sticky top-0 z-30 flex items-center justify-between bg-[#13131a]/95 backdrop-blur-md rounded-xl border border-[#8e52ff]/40 px-5 py-3 shadow-[0_10px_28px_rgba(0,0,0,0.75)]">
               <div class="flex items-center gap-2.5">
                 <span class="material-symbols-outlined text-[#d2bbff] text-[18px]">tune</span>
                 <div>
                   <div class="text-[13px] font-semibold text-white">Параметры и конфигурация SincPro</div>
-                  <div class="text-[11px] text-[#ccc3d8]">Изменения применяются автоматически или по нажатию кнопки «Сохранить»</div>
+                  <div class="text-[11px] text-[#ccc3d8]">Панель закреплена — вы можете сохранить настройки в любой точке страницы</div>
                 </div>
               </div>
-              <button id="btn-save-settings-top" class="bg-gradient-to-r from-[#8e52ff] to-[#a377ff] hover:from-[#9d66ff] hover:to-[#b388ff] text-white font-semibold px-4 py-2 rounded-lg text-[12px] flex items-center gap-1.5 shadow-lg shadow-[#8e52ff]/20 transition-all cursor-pointer focus:outline-none">
+              <button id="btn-save-settings-top" class="bg-gradient-to-r from-[#8e52ff] to-[#a377ff] hover:from-[#9d66ff] hover:to-[#b388ff] active:scale-95 text-white font-semibold px-4 py-2 rounded-lg text-[12px] flex items-center gap-1.5 shadow-lg shadow-[#8e52ff]/25 transition-all cursor-pointer focus:outline-none">
                 <span class="material-symbols-outlined text-[15px]">check_circle</span>
                 <span>Сохранить настройки</span>
               </button>
@@ -537,11 +537,36 @@
 
             <!-- Блок 2: Параметры ИИ -->
             <div class="bg-[#0e0e13] rounded-xl border border-[#4a4455]/30 p-5">
-              <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest mb-4">Параметры Gemini ИИ</h3>
+              <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+                <h3 class="text-[11px] font-bold text-[#d2bbff] uppercase tracking-widest">Параметры Gemini ИИ</h3>
+                <div class="flex items-center gap-2">
+                  <button type="button" id="btn-get-gemini-key" class="bg-[#8e52ff]/20 hover:bg-[#8e52ff]/35 border border-[#8e52ff]/50 text-[#d2bbff] hover:text-white px-3 py-1.5 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer">
+                    <span class="material-symbols-outlined text-[14px]">key</span>
+                    <span>Получить бесплатный ключ (Google AI Studio)</span>
+                    <span class="material-symbols-outlined text-[13px]">open_in_new</span>
+                  </button>
+                  <button type="button" id="btn-paste-gemini-key" class="bg-[#1b1b24] hover:bg-[#2a2935] border border-[#4a4455]/50 text-[#7bd6d1] px-3 py-1.5 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer" title="Вставить скопированный ключ AIza... из буфера обмена и сразу проверить">
+                    <span class="material-symbols-outlined text-[14px]">content_paste_go</span>
+                    <span>Вставить из буфера</span>
+                  </button>
+                </div>
+              </div>
               <div class="flex flex-col gap-4">
                 <div class="flex flex-col gap-2">
-                  <label class="text-[11px] text-[#ccc3d8]">Ключ API (Gemini API Key)</label>
-                  <input type="password" id="setting-api-key" placeholder="Введите ваш API ключ от Google AI Studio" class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#d2bbff]" />
+                  <div class="flex items-center justify-between">
+                    <label class="text-[11px] text-[#ccc3d8]">Ключ API (Gemini API Key)</label>
+                    <span id="gemini-key-status-badge" class="text-[10px] text-[#7bd6d1] hidden">✓ Ключ активен</span>
+                  </div>
+                  <div class="relative flex items-center">
+                    <input type="password" id="setting-api-key" placeholder="AIzaSy... (вставьте вручную или скопируйте в Google AI Studio — SincPro подхватит сам)" class="w-full bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 pr-10 text-[13px] font-mono focus:outline-none focus:border-[#d2bbff]" />
+                    <button type="button" id="btn-toggle-api-key-vis" class="absolute right-2.5 text-[#ccc3d8]/60 hover:text-white transition-colors cursor-pointer bg-transparent border-0 p-1 flex items-center justify-center" title="Показать / скрыть ключ">
+                      <span class="material-symbols-outlined text-[16px]" id="icon-api-key-vis">visibility</span>
+                    </button>
+                  </div>
+                  <div class="bg-[#15151e] border border-[#8e52ff]/20 rounded-lg px-3 py-2 text-[11px] text-[#ccc3d8]/90 flex items-center gap-2">
+                    <span class="material-symbols-outlined text-[#7bd6d1] text-[16px] flex-shrink-0">bolt</span>
+                    <span><b>Умный авто-захват ключа:</b> нажмите «Получить бесплатный ключ», в открывшемся окне Google нажмите <b>Create API key → Copy</b> и просто вернитесь в окно SincPro — приложение само обнаружит ключ `AIza...` в буфере обмена, вставит и проверит его!</span>
+                  </div>
                 </div>
                 <div class="flex flex-col gap-2">
                   <label class="text-[11px] text-[#ccc3d8]">Ключ API Yandex (Резервный переводчик и Yandex SpeechKit TTS)</label>
@@ -1432,6 +1457,9 @@
       }
 
       function updateApiStatus(apiKey) {
+        if (typeof updateGeminiKeyStatusBadge === 'function') {
+          updateGeminiKeyStatusBadge(apiKey);
+        }
         const statusText = document.getElementById('api-status-text');
         const statusDot = document.getElementById('api-status-dot');
         const statusContainer = document.getElementById('status-container-api');
@@ -1872,13 +1900,113 @@
           document.getElementById('btn-layout-add-app').click();
         }
       });
-      document.getElementById('setting-api-key').addEventListener('input', debounce(async () => {
-        const key = document.getElementById('setting-api-key').value;
+      let awaitingClipboardApiKey = false;
+
+      function updateGeminiKeyStatusBadge(key) {
+        const badge = document.getElementById('gemini-key-status-badge');
+        if (!badge) return;
+        const trimmed = (key || '').trim();
+        if (/^AIza[0-9A-Za-z\-_]{30,45}$/.test(trimmed)) {
+          badge.textContent = '✓ Ключ задан (' + trimmed.slice(0, 8) + '…' + trimmed.slice(-4) + ')';
+          badge.className = 'text-[10px] text-[#7bd6d1] font-semibold';
+        } else if (trimmed.length > 0) {
+          badge.textContent = '⚠️ Проверьте формат ключа (должен начинаться с AIza...)';
+          badge.className = 'text-[10px] text-[#ffd166] font-semibold';
+        } else {
+          badge.className = 'text-[10px] text-[#7bd6d1] hidden';
+        }
+      }
+
+      async function applyAndVerifyGeminiKey(rawKey, sourceLabel = '') {
+        const key = (rawKey || '').trim();
+        const inputEl = document.getElementById('setting-api-key');
+        if (inputEl) inputEl.value = key;
         localStorage.setItem('apiKey', key);
+        updateGeminiKeyStatusBadge(key);
+        const currentModel = document.getElementById('setting-ai-model')?.value || 'gemini-2.5-flash';
+        await fetchAndPopulateModels(key, currentModel);
+        await saveConfig(true);
+        if (sourceLabel && key) {
+          showToast(sourceLabel, false);
+        }
+      }
+
+      const btnGetGeminiKey = document.getElementById('btn-get-gemini-key');
+      if (btnGetGeminiKey) {
+        btnGetGeminiKey.addEventListener('click', () => {
+          awaitingClipboardApiKey = true;
+          window.open('https://aistudio.google.com/app/apikey', '_blank');
+          showToast('🔑 Создайте и скопируйте ключ в Google AI Studio — при возврате в SincPro он подставится автоматически!', false);
+        });
+      }
+
+      const btnPasteGeminiKey = document.getElementById('btn-paste-gemini-key');
+      if (btnPasteGeminiKey) {
+        btnPasteGeminiKey.addEventListener('click', async () => {
+          try {
+            let clipText = '';
+            if (invoke) {
+              clipText = await invoke('read_clipboard_text').catch(() => '');
+            }
+            if (!clipText && navigator.clipboard) {
+              clipText = await navigator.clipboard.readText().catch(() => '');
+            }
+            const match = (clipText || '').match(/AIza[0-9A-Za-z\-_]{30,45}/);
+            if (match) {
+              awaitingClipboardApiKey = false;
+              await applyAndVerifyGeminiKey(match[0], '✨ Ключ Gemini вставлен из буфера и сохранён!');
+            } else if (clipText && clipText.trim().length > 10) {
+              await applyAndVerifyGeminiKey(clipText.trim(), '📋 Ключ вставлен из буфера обмена');
+            } else {
+              showToast('В буфере обмена не найден ключ формата AIzaSy...', true);
+            }
+          } catch (e) {
+            showToast('Не удалось прочитать буфер обмена', true);
+          }
+        });
+      }
+
+      const btnToggleApiKeyVis = document.getElementById('btn-toggle-api-key-vis');
+      if (btnToggleApiKeyVis) {
+        btnToggleApiKeyVis.addEventListener('click', () => {
+          const inputEl = document.getElementById('setting-api-key');
+          const iconEl = document.getElementById('icon-api-key-vis');
+          if (!inputEl) return;
+          const isPwd = inputEl.type === 'password';
+          inputEl.type = isPwd ? 'text' : 'password';
+          if (iconEl) iconEl.textContent = isPwd ? 'visibility_off' : 'visibility';
+        });
+      }
+
+      // Авто-захват ключа AIza... из буфера обмена при возвращении пользователя в окно SincPro
+      window.addEventListener('focus', async () => {
+        const inputEl = document.getElementById('setting-api-key');
+        const currentVal = (inputEl?.value || '').trim();
+        if (!awaitingClipboardApiKey && currentVal.length > 0) return;
+        try {
+          let clipText = '';
+          if (invoke) {
+            clipText = await invoke('read_clipboard_text').catch(() => '');
+          }
+          if (!clipText && navigator.clipboard) {
+            clipText = await navigator.clipboard.readText().catch(() => '');
+          }
+          const match = (clipText || '').match(/AIza[0-9A-Za-z\-_]{33,39}/);
+          if (match && match[0] !== currentVal) {
+            awaitingClipboardApiKey = false;
+            await applyAndVerifyGeminiKey(match[0], '✨ Ключ Gemini автоматически распознан из буфера и подключён!');
+          }
+        } catch (_) {}
+      });
+
+      document.getElementById('setting-api-key').addEventListener('input', debounce(async () => {
+        const key = document.getElementById('setting-api-key').value.trim();
+        localStorage.setItem('apiKey', key);
+        updateGeminiKeyStatusBadge(key);
         const currentModel = document.getElementById('setting-ai-model').value;
         await fetchAndPopulateModels(key, currentModel);
         saveConfig(true);
-      }, 1200));
+      }, 900));
       document.getElementById('setting-yandex-api-key').addEventListener('input', debounce(() => {
         saveConfig(true);
       }, 1000));
@@ -1888,7 +2016,7 @@
       });
       // Кнопка ручного обновления списка моделей
       document.getElementById('btn-refresh-models').addEventListener('click', () => {
-        const key = document.getElementById('setting-api-key').value;
+        const key = document.getElementById('setting-api-key').value.trim();
         const currentModel = document.getElementById('setting-ai-model').value;
         fetchAndPopulateModels(key, currentModel);
       });
@@ -2089,14 +2217,31 @@
         const playerTime = document.getElementById('player-time');
         const scrubberContainer = document.getElementById('player-scrubber-container');
         
-        playBtn.addEventListener('click', () => {
-          if (!audioPlayerElement.src) return;
-          
+        playBtn.addEventListener('click', async () => {
           if (isPlaying) {
             audioPlayerElement.pause();
-          } else {
-            audioPlayerElement.play().catch(err => console.error("Ошибка запуска аудио:", err));
+            return;
           }
+          if (!audioPlayerElement.hasAttribute('src') || !audioPlayerElement.src) {
+            const pendingPath = audioPlayerElement.dataset.audioPath || (currentActiveEntry && currentActiveEntry.audio_path) || '';
+            if (!pendingPath) {
+              showToast('Для этой записи нет сохранённого аудиофайла', true);
+              return;
+            }
+            if (window.__TAURI__ && invoke) {
+              try {
+                const dataUri = await invoke('get_audio_base64', { path: pendingPath });
+                audioPlayerElement.src = dataUri;
+              } catch (err) {
+                console.warn('Не удалось загрузить аудиофайл:', err);
+                showToast(typeof err === 'string' ? err : 'Аудиофайл записи не найден на диске', true);
+                return;
+              }
+            } else {
+              return;
+            }
+          }
+          audioPlayerElement.play().catch(err => console.error("Ошибка запуска аудио:", err));
         });
         
         audioPlayerElement.addEventListener('play', () => {
@@ -2137,8 +2282,9 @@
           }
         });
 
-        // Диагностика ошибок загрузки аудио
+        // Диагностика ошибок загрузки аудио (только когда реально запрошено воспроизведение)
         audioPlayerElement.addEventListener('error', () => {
+          if (!audioPlayerElement.hasAttribute('src') || !audioPlayerElement.getAttribute('src')) return;
           const err = audioPlayerElement.error;
           let errMsg = 'Ошибка воспроизведения аудио';
           if (err) {
@@ -2453,27 +2599,49 @@
         }
       }
 
-      function toggleHistoryPlay(id, audioPath) {
+      async function toggleHistoryPlay(id, audioPath) {
+        const iconEl = document.getElementById(`hplay-icon-${id}`);
         if (historyPlayingId === id && historyAudio) {
           historyAudio.pause();
           historyPlayingId = null;
-          document.getElementById(`hplay-icon-${id}`).textContent = 'play_arrow';
+          if (iconEl) iconEl.textContent = 'play_arrow';
           return;
         }
-        if (historyAudio) historyAudio.pause();
-        historyAudio = new Audio(audioPath);
+        if (!audioPath) {
+          showToast('Для этой записи нет сохранённого аудиофайла', true);
+          return;
+        }
+        if (historyAudio) {
+          historyAudio.pause();
+          if (historyPlayingId) {
+            const prevIcon = document.getElementById(`hplay-icon-${historyPlayingId}`);
+            if (prevIcon) prevIcon.textContent = 'play_arrow';
+          }
+        }
+        let audioSrc = audioPath;
+        if (window.__TAURI__ && invoke) {
+          try {
+            audioSrc = await invoke('get_audio_base64', { path: audioPath });
+          } catch (err) {
+            showToast(typeof err === 'string' ? err : 'Аудиофайл записи не найден на диске', true);
+            return;
+          }
+        }
+        historyAudio = new Audio(audioSrc);
         historyPlayingId = id;
-        document.getElementById(`hplay-icon-${id}`).textContent = 'pause';
+        if (iconEl) iconEl.textContent = 'pause';
         
         historyAudio.addEventListener('timeupdate', () => {
-          if (historyAudio.duration) {
+          if (historyAudio.duration && isFinite(historyAudio.duration)) {
             const pct = (historyAudio.currentTime / historyAudio.duration) * 100;
-            document.getElementById(`hprogress-${id}`).style.width = `${pct}%`;
+            const progEl = document.getElementById(`hprogress-${id}`);
+            if (progEl) progEl.style.width = `${pct}%`;
           }
         });
         historyAudio.addEventListener('ended', () => {
           historyPlayingId = null;
-          document.getElementById(`hplay-icon-${id}`).textContent = 'play_arrow';
+          const curIcon = document.getElementById(`hplay-icon-${id}`);
+          if (curIcon) curIcon.textContent = 'play_arrow';
         });
         historyAudio.play().catch(e => console.error('Аудио ошибка:', e));
       }
@@ -2734,16 +2902,12 @@
           activityModel.textContent = firstAi ? firstAi.preset_label : 'Транскрипция';
         }
         
-        if (window.__TAURI__) {
-          try {
-            const audioUrl = window.__TAURI__.core.convertFileSrc(entry.audio_path);
-            audioPlayerElement.src = audioUrl;
-            audioPlayerElement.load();
-          } catch (e) {
-            console.error("Ошибка конвертации локального пути аудио:", e);
-          }
-        } else {
-          audioPlayerElement.src = ""; 
+        // Ленивая привязка аудиофайла: НЕ вызываем convertFileSrc/load() при отрисовке карточки,
+        // чтобы не вызывать ложный toast «Аудиофайл не найден или формат не поддерживается».
+        if (audioPlayerElement) {
+          audioPlayerElement.pause();
+          audioPlayerElement.removeAttribute('src');
+          audioPlayerElement.dataset.audioPath = entry.audio_path || '';
         }
         
         const mins = Math.floor(entry.duration_secs / 60);
@@ -3484,13 +3648,13 @@
             console.error("Failed to load app version:", err);
             const versionDisplay = document.getElementById('app-version-display');
             if (versionDisplay) {
-              versionDisplay.textContent = `Текущая версия: 3.5.5`;
+              versionDisplay.textContent = `Текущая версия: 3.5.18`;
             }
           });
         } else {
           const versionDisplay = document.getElementById('app-version-display');
           if (versionDisplay) {
-            versionDisplay.textContent = `Текущая версия: 3.5.5 (Mock)`;
+            versionDisplay.textContent = `Текущая версия: 3.5.18 (Mock)`;
           }
         }
 

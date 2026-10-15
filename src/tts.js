@@ -59,6 +59,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         engine.audioElement.playbackRate = engine.settings.speed;
                     }
                 }
+                if (payload.volume !== undefined) {
+                    engine.applyEffectiveVolume(payload.volume);
+                    engine.broadcastState('setting', { volume: engine.settings.volume });
+                }
                 if (payload.voice !== undefined || payload.tts_local_voice !== undefined || payload.tts_engine !== undefined) {
                     if (payload.voice !== undefined) engine.settings.voice = payload.voice;
                     if (payload.tts_engine !== undefined) engine.settings.tts_engine = payload.tts_engine;
@@ -266,7 +270,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         listen('tts-action-read', async () => {
             try {
-                const text = await invoke('capture_clipboard_text', { translate: false });
+                const shouldTranslate = !!(engine.settings && engine.settings.translate);
+                const text = await invoke('capture_clipboard_text', { translate: shouldTranslate });
+                if (!text || !text.trim()) {
+                    console.warn('[TTS] tts-action-read: clipboard/selection empty');
+                    return;
+                }
                 handleNewText(text);
                 
                 let widgetMode = 2;
@@ -290,6 +299,10 @@ document.addEventListener('DOMContentLoaded', () => {
         listen('tts-action-translate', async () => {
             try {
                 const text = await invoke('capture_clipboard_text', { translate: true });
+                if (!text || !text.trim()) {
+                    console.warn('[TTS] tts-action-translate: clipboard/selection empty');
+                    return;
+                }
                 handleNewText(text);
                 
                 let widgetMode = 2;
@@ -312,7 +325,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         listen('tts-action-append', async () => {
             try {
-                const text = await invoke('capture_clipboard_text', { translate: false });
+                const shouldTranslate = !!(engine.settings && engine.settings.translate);
+                const text = await invoke('capture_clipboard_text', { translate: shouldTranslate });
+                if (!text || !text.trim()) return;
                 handleAppendText(text);
                 
                 let widgetMode = 2;
