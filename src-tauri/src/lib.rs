@@ -828,7 +828,7 @@ static MODEL_REQUEST_LOGS: std::sync::LazyLock<Mutex<HashMap<String, Vec<i64>>>>
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 static LAST_WORKING_MODEL: Mutex<Option<String>> = Mutex::new(None);
 
-fn is_valid_multimodal_gemini_model(model: &str) -> bool {
+pub(crate) fn is_valid_multimodal_gemini_model(model: &str) -> bool {
     let m = model.trim().to_lowercase();
     if m.is_empty() || m.starts_with("local_") {
         return false;
@@ -836,58 +836,141 @@ fn is_valid_multimodal_gemini_model(model: &str) -> bool {
     if m.contains("gemma")
         || m.contains("tts")
         || m.contains("native-audio")
+        || m.contains("live")
+        || m.contains("image")
+        || m.contains("imagen")
+        || m.contains("veo")
+        || m.contains("embedding")
+        || m.contains("aqa")
+        || m.contains("bisheng")
+        || m.contains("learnlm")
+        || m.contains("robotics")
+        || m.contains("computer-use")
+        || m.contains("thinking")
+        || m.contains("-exp")
+        || m.contains("preview")
+        || m.contains("latest")
         || m.contains("antigravity")
         || m.contains("3.5")
         || m.contains("3.1")
-        || m.contains("embedding")
-        || m.contains("imagen")
-        || m.contains("veo")
-        || m.contains("aqa")
-        || m.contains("bisheng")
     {
         return false;
     }
     m.starts_with("gemini-")
 }
 
-fn build_audio_capable_models(primary_model: &str) -> Vec<String> {
-    let mut models = Vec::new();
+pub(crate) fn is_model_locked(model: &str) -> bool {
+    if let Ok(mut locks) = MODEL_LOCKS.lock() {
+        if let Some(&unlock_time) = locks.get(model) {
+            if Instant::now() < unlock_time {
+                return true;
+            } else {
+                locks.remove(model);
+            }
+        }
+    }
+    false
+}
+
+pub(crate) fn record_model_success(model: &str) {
+    if is_valid_multimodal_gemini_model(model) {
+        if let Ok(mut last_model_lock) = LAST_WORKING_MODEL.lock() {
+            *last_model_lock = Some(model.to_string());
+        }
+    }
+}
+
+pub(crate) fn record_model_failure(model: &str, status: u16, err_text: &str) -> Duration {
+    let lower = err_text.to_lowercase();
+    let is_daily_or_zero = lower.contains("perday")
+        || lower.contains("per_day")
+        || lower.contains("per day")
+        || lower.contains("daily")
+        || lower.contains("limit: 0")
+        || lower.contains("limit:0")
+        || lower.contains("quota_limit_value\":\"0\"");
+
+    let delay = if status == 404 || status == 400 {
+        // Неподдерживаемая или удаленная модель — блокируем на 2 часа
+        Duration::from_secs(7200)
+    } else if is_daily_or_zero {
+        // Дневная квота (RPD) исчерпана или лимит 0 на Free Tier — блокируем на 30 минут,
+        // чтобы не переключаться обратно на эту же модель каждые 25 секунд
+        Duration::from_secs(1800)
+    } else if status == 429 || lower.contains("resource_exhausted") || lower.contains("quota") {
+        // Минутный лимит (RPM) — используем retryDelay от сервера (минимум 45с, максимум 120с)
+        parse_retry_delay(err_text)
+            .unwrap_or(Duration::from_secs(60))
+            .clamp(Duration::from_secs(45), Duration::from_secs(120))
+    } else {
+        Duration::from_secs(30)
+    };
+
+    if let Ok(mut locks) = MODEL_LOCKS.lock() {
+        locks.insert(model.to_string(), Instant::now() + delay);
+    }
+    if let Ok(mut last_model_lock) = LAST_WORKING_MODEL.lock() {
+        if last_model_lock.as_deref() == Some(model) {
+            *last_model_lock = None;
+        }
+    }
+    delay
+}
+
+pub(crate) fn build_audio_capable_models(primary_model: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
     if let Ok(last_model_lock) = LAST_WORKING_MODEL.lock() {
         if let Some(ref last_model) = *last_model_lock {
             if is_valid_multimodal_gemini_model(last_model) {
-                models.push(last_model.clone());
+                candidates.push(last_model.clone());
             }
         }
     }
     if is_valid_multimodal_gemini_model(primary_model) {
-        models.push(primary_model.trim().to_string());
+        candidates.push(primary_model.trim().to_string());
     }
+    // Только проверенные мультимодальные модели с отдельными пулами квот Free Tier
+    // (без алиасов *-latest, которые делят квоту с базовой моделью, и без *-pro с нулевым/минимальным Free Tier)
     for m in [
-        "gemini-2.5-flash-lite",
         "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
         "gemini-2.0-flash",
         "gemini-2.0-flash-lite",
-        "gemini-flash-latest",
-        "gemini-2.5-pro",
-        "gemini-pro-latest",
+        "gemini-1.5-flash",
     ] {
-        models.push(m.to_string());
+        candidates.push(m.to_string());
     }
 
     let mut seen = std::collections::HashSet::new();
-    let deduped: Vec<String> = models
+    let deduped: Vec<String> = candidates
         .into_iter()
         .filter(|m| seen.insert(m.clone()))
         .collect();
 
-    // Если все модели оказались временно заблокированы в памяти (например, после кратковременного сбоя сети),
-    // автоматически очищаем блокировки, чтобы приложение никогда не зависало до перезапуска.
     if let Ok(mut locks) = MODEL_LOCKS.lock() {
         let now = Instant::now();
         locks.retain(|_, unlock_time| *unlock_time > now);
-        let all_locked = deduped.iter().all(|m| locks.contains_key(m));
-        if all_locked {
-            locks.clear();
+
+        // Сначала берем только модели, у которых НЕ превышена квота
+        let unlocked: Vec<String> = deduped
+            .iter()
+            .filter(|m| !locks.contains_key(*m))
+            .cloned()
+            .collect();
+
+        if !unlocked.is_empty() {
+            return unlocked;
+        }
+
+        // Если абсолютно все модели заблокированы, НЕ сбрасываем все блокировки (чтобы не биться в суточные лимиты),
+        // а выбираем одну модель с самым ранним временем разблокировки
+        if let Some(soonest_model) = deduped
+            .iter()
+            .min_by_key(|m| locks.get(*m).copied().unwrap_or(now))
+            .cloned()
+        {
+            locks.remove(&soonest_model);
+            return vec![soonest_model];
         }
     }
 
@@ -3409,6 +3492,31 @@ async fn uninstall_extension(app_handle: tauri::AppHandle, ext_type: String) -> 
 }
 
 #[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    let trimmed = url.trim();
+    if !trimmed.starts_with("https://") && !trimmed.starts_with("http://") {
+        return Err("Разрешены только http/https ссылки".to_string());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", trimmed])
+            .creation_flags(0x08000000)
+            .spawn()
+            .map_err(|e| format!("Не удалось открыть браузер: {}", e))?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(trimmed)
+            .spawn()
+            .map_err(|e| format!("Не удалось открыть браузер: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn fetch_gemini_models(api_key: String) -> Result<serde_json::Value, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -3431,9 +3539,22 @@ async fn fetch_gemini_models(api_key: String) -> Result<serde_json::Value, Strin
         return Err(format!("Google AI вернул ошибку {}: {}", status, err_body));
     }
 
-    let data: serde_json::Value = resp.json()
+    let mut data: serde_json::Value = resp.json()
         .await
         .map_err(|e| format!("Ошибка парсинга JSON: {}", e))?;
+
+    if let Some(models_arr) = data.get_mut("models").and_then(|v| v.as_array_mut()) {
+        models_arr.retain(|m| {
+            let name = m.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            let id = name.strip_prefix("models/").unwrap_or(name);
+            let has_generate = m
+                .get("supportedGenerationMethods")
+                .and_then(|arr| arr.as_array())
+                .map(|arr| arr.iter().any(|x| x.as_str() == Some("generateContent")))
+                .unwrap_or(false);
+            has_generate && is_valid_multimodal_gemini_model(id)
+        });
+    }
 
     Ok(data)
 }
@@ -4216,6 +4337,10 @@ async fn save_audio(
                     last_err = "Запрос отменен пользователем".to_string();
                     break;
                 }
+                if is_model_locked(model) {
+                    last_err = format!("Модель {} временно заблокирована из-за квоты", model);
+                    continue;
+                }
                 let url = format!(
                     "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
                     model, api_key
@@ -4226,8 +4351,20 @@ async fn save_audio(
                         continue;
                     }
                     Ok(res) => {
-                        if !res.status().is_success() {
-                            last_err = format!("Status {}", res.status());
+                        let status = res.status();
+                        if !status.is_success() {
+                            let err_text = res.text().await.unwrap_or_default();
+                            if status.as_u16() == 429
+                                || status.as_u16() == 404
+                                || status.as_u16() == 400
+                                || err_text.contains("RESOURCE_EXHAUSTED")
+                                || err_text.contains("quota")
+                            {
+                                let delay = record_model_failure(model, status.as_u16(), &err_text);
+                                last_err = format!("Модель {} заблокирована ({}) на {:?}", model, status, delay);
+                            } else {
+                                last_err = format!("Status {} ({})", status, model);
+                            }
                             continue;
                         }
                         if let Ok(resp_struct) = res.json::<GeminiResponse>().await {
@@ -4237,6 +4374,7 @@ async fn save_audio(
                                         if let Some(ref parts) = content.parts {
                                             if let Some(first_part) = parts.first() {
                                                 if let Some(ref text) = first_part.text {
+                                                    record_model_success(model);
                                                     gemini_text = Some(text.clone());
                                                     used_llm_model = format!("Gemini Cloud ({})", model);
                                                     break;
@@ -4353,14 +4491,9 @@ async fn save_audio(
             break;
         }
         // Проверяем блокировку модели по времени разблокировки
-        {
-            let locks = MODEL_LOCKS.lock().unwrap();
-            if let Some(unlock_time) = locks.get(model) {
-                if Instant::now() < *unlock_time {
-                    last_err = format!("Модель {} временно заблокирована из-за 429", model);
-                    continue;
-                }
-            }
+        if is_model_locked(model) {
+            last_err = format!("Модель {} временно заблокирована из-за 429", model);
+            continue;
         }
 
         // Проверяем локальные лимиты RPM/RPD перед запросом
@@ -4387,17 +4520,10 @@ async fn save_audio(
                 let status = res.status();
                 if status.as_u16() == 429 {
                     let err_text = res.text().await.unwrap_or_default();
-                    let delay = parse_retry_delay(&err_text)
-                        .unwrap_or(Duration::from_secs(25))
-                        .min(Duration::from_secs(45));
-                    let unlock_time = Instant::now() + delay;
-                    {
-                        let mut locks = MODEL_LOCKS.lock().unwrap();
-                        locks.insert(model.clone(), unlock_time);
-                    }
+                    let delay = record_model_failure(model, 429, &err_text);
                     last_err = format!("Модель {} заблокирована (429) на {:?}", model, delay);
                     log_tts_error("Gemini rate limit 429", &last_err);
-                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                     continue;
                 }
                 if status.as_u16() == 503 {
@@ -4409,13 +4535,13 @@ async fn save_audio(
                     let err_text = res.text().await.unwrap_or_default();
                     last_err = format!("Ошибка {} ({}): {}", status, model, err_text);
                     log_tts_error("Gemini API error status", &last_err);
-                    if err_text.contains("RESOURCE_EXHAUSTED") || err_text.contains("quota") {
-                        let unlock_time = Instant::now() + Duration::from_secs(30);
-                        {
-                            let mut locks = MODEL_LOCKS.lock().unwrap();
-                            locks.insert(model.clone(), unlock_time);
-                        }
-                        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    if status.as_u16() == 404
+                        || status.as_u16() == 400
+                        || err_text.contains("RESOURCE_EXHAUSTED")
+                        || err_text.contains("quota")
+                    {
+                        record_model_failure(model, status.as_u16(), &err_text);
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                     }
                     continue;
                 }
@@ -4461,9 +4587,7 @@ async fn save_audio(
                                 continue;
                             }
 
-                            if let Ok(mut last_model_lock) = LAST_WORKING_MODEL.lock() {
-                                *last_model_lock = Some(model.clone());
-                            }
+                            record_model_success(model);
                             gemini_text = Some(text);
                             used_stt_model = format!("Gemini Cloud ({}) (RPM: {})", model, rpm);
                             used_llm_model = format!("Gemini Cloud ({})", model);
@@ -4839,14 +4963,9 @@ async fn process_ai_request(
         }
 
         // Проверяем блокировку модели
-        {
-            let locks = MODEL_LOCKS.lock().unwrap();
-            if let Some(unlock_time) = locks.get(model) {
-                if Instant::now() < *unlock_time {
-                    last_err = format!("Модель {} временно заблокирована из-за 429", model);
-                    continue;
-                }
-            }
+        if is_model_locked(model) {
+            last_err = format!("Модель {} временно заблокирована из-за 429", model);
+            continue;
         }
 
         let url = format!(
@@ -4864,14 +4983,7 @@ async fn process_ai_request(
                 let status = res.status();
                 if status.as_u16() == 429 {
                     let err_text = res.text().await.unwrap_or_default();
-                    let delay = parse_retry_delay(&err_text)
-                        .unwrap_or(Duration::from_secs(25))
-                        .min(Duration::from_secs(45));
-                    let unlock_time = Instant::now() + delay;
-                    {
-                        let mut locks = MODEL_LOCKS.lock().unwrap();
-                        locks.insert(model.clone(), unlock_time);
-                    }
+                    let delay = record_model_failure(model, 429, &err_text);
                     last_err = format!("Модель {} заблокирована (429) на {:?}", model, delay);
                     log_tts_error("Gemini rate limit 429", &last_err);
                     continue;
@@ -4885,10 +4997,12 @@ async fn process_ai_request(
                     let err_text = res.text().await.unwrap_or_default();
                     last_err = format!("Ошибка {} ({}): {}", status, model, err_text);
                     log_tts_error("Gemini API error status", &last_err);
-                    if err_text.contains("RESOURCE_EXHAUSTED") || err_text.contains("quota") {
-                        let unlock_time = Instant::now() + Duration::from_secs(30);
-                        let mut locks = MODEL_LOCKS.lock().unwrap();
-                        locks.insert(model.clone(), unlock_time);
+                    if status.as_u16() == 404
+                        || status.as_u16() == 400
+                        || err_text.contains("RESOURCE_EXHAUSTED")
+                        || err_text.contains("quota")
+                    {
+                        record_model_failure(model, status.as_u16(), &err_text);
                     }
                     continue;
                 }
@@ -4908,6 +5022,7 @@ async fn process_ai_request(
                             .and_then(|p| p.into_iter().next())
                             .and_then(|p| p.text)
                         {
+                            record_model_success(model);
                             gemini_text = Some(text);
                             used_model = model.clone();
                             break;
@@ -5714,14 +5829,9 @@ async fn process_ocr_vision(
     
     for model in &fallback_models {
         // Проверяем блокировку модели по времени разблокировки
-        {
-            let locks = MODEL_LOCKS.lock().unwrap();
-            if let Some(unlock_time) = locks.get(model) {
-                if std::time::Instant::now() < *unlock_time {
-                    last_err = format!("Модель {} временно заблокирована из-за 429", model);
-                    continue;
-                }
-            }
+        if is_model_locked(model) {
+            last_err = format!("Модель {} временно заблокирована из-за 429", model);
+            continue;
         }
 
         let url = format!(
@@ -5737,22 +5847,20 @@ async fn process_ocr_vision(
             Ok(res) => {
                 let status = res.status();
                 if status.as_u16() == 429 {
-                    let delay = std::time::Duration::from_secs(60);
-                    let unlock_time = std::time::Instant::now() + delay;
-                    {
-                        let mut locks = MODEL_LOCKS.lock().unwrap();
-                        locks.insert(model.clone(), unlock_time);
-                    }
-                    last_err = format!("Модель {} заблокирована (429)", model);
+                    let err_text = res.text().await.unwrap_or_default();
+                    let delay = record_model_failure(model, 429, &err_text);
+                    last_err = format!("Модель {} заблокирована (429) на {:?}", model, delay);
                     continue;
                 }
                 if !status.is_success() {
                     let err_text = res.text().await.unwrap_or_default();
                     last_err = format!("Ошибка {} для {}: {}", status, model, err_text);
-                    if err_text.contains("RESOURCE_EXHAUSTED") || err_text.contains("quota") {
-                        let unlock_time = std::time::Instant::now() + std::time::Duration::from_secs(3600);
-                        let mut locks = MODEL_LOCKS.lock().unwrap();
-                        locks.insert(model.clone(), unlock_time);
+                    if status.as_u16() == 404
+                        || status.as_u16() == 400
+                        || err_text.contains("RESOURCE_EXHAUSTED")
+                        || err_text.contains("quota")
+                    {
+                        record_model_failure(model, status.as_u16(), &err_text);
                     }
                     continue;
                 }
@@ -5784,6 +5892,7 @@ async fn process_ocr_vision(
                         if !found {
                             last_err = format!("Пустой ответ кандидатов от {}", model);
                         } else {
+                            record_model_success(model);
                             break;
                         }
                     }
@@ -6276,14 +6385,9 @@ async fn process_ocr_hybrid(
     let mut gemini_response_text: Option<String> = None;
     
     for model in &fallback_models {
-        {
-            let locks = MODEL_LOCKS.lock().unwrap();
-            if let Some(unlock_time) = locks.get(model) {
-                if std::time::Instant::now() < *unlock_time {
-                    last_err = format!("Модель {} заблокирована", model);
-                    continue;
-                }
-            }
+        if is_model_locked(model) {
+            last_err = format!("Модель {} заблокирована", model);
+            continue;
         }
 
         let url = format!(
@@ -6299,15 +6403,21 @@ async fn process_ocr_hybrid(
             Ok(res) => {
                 let status = res.status();
                 if status.as_u16() == 429 {
-                    let unlock_time = std::time::Instant::now() + std::time::Duration::from_secs(60);
-                    let mut locks = MODEL_LOCKS.lock().unwrap();
-                    locks.insert(model.clone(), unlock_time);
-                    last_err = format!("Модель {} 429", model);
+                    let err_text = res.text().await.unwrap_or_default();
+                    let delay = record_model_failure(model, 429, &err_text);
+                    last_err = format!("Модель {} 429 ({:?})", model, delay);
                     continue;
                 }
                 if !status.is_success() {
                     let err_text = res.text().await.unwrap_or_default();
                     last_err = format!("Код {} от {}: {}", status, model, err_text);
+                    if status.as_u16() == 404
+                        || status.as_u16() == 400
+                        || err_text.contains("RESOURCE_EXHAUSTED")
+                        || err_text.contains("quota")
+                    {
+                        record_model_failure(model, status.as_u16(), &err_text);
+                    }
                     continue;
                 }
                 match res.json::<GeminiResponse>().await {
@@ -6335,7 +6445,10 @@ async fn process_ocr_hybrid(
                                 if found { break; }
                             }
                         }
-                        if found { break; }
+                        if found {
+                            record_model_success(model);
+                            break;
+                        }
                     }
                 }
             }
@@ -6419,14 +6532,9 @@ async fn call_gemini_text_api(
     let mut used_model_info = String::new();
 
     for model in &fallback_models {
-        {
-            let locks = MODEL_LOCKS.lock().unwrap();
-            if let Some(unlock_time) = locks.get(model) {
-                if std::time::Instant::now() < *unlock_time {
-                    last_err = format!("Модель {} заблокирована", model);
-                    continue;
-                }
-            }
+        if is_model_locked(model) {
+            last_err = format!("Модель {} заблокирована", model);
+            continue;
         }
 
         // Проверяем локальные лимиты RPM/RPD перед запросом
@@ -6469,22 +6577,14 @@ async fn call_gemini_text_api(
             Err(e) => {
                 last_err = format!("Ошибка сети для {}: {}", model, e);
                 let _ = app_handle.emit("ocr-status-update", format!("⚠️ Ошибка сети {}. Ожидание 1с...", model));
-                let unlock_time = std::time::Instant::now() + std::time::Duration::from_secs(60);
-                {
-                    let mut locks = MODEL_LOCKS.lock().unwrap();
-                    locks.insert(model.clone(), unlock_time);
-                }
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 continue;
             }
             Ok(res) => {
                 let status = res.status();
                 if status.as_u16() == 429 {
-                    let unlock_time = std::time::Instant::now() + std::time::Duration::from_secs(60);
-                    {
-                        let mut locks = MODEL_LOCKS.lock().unwrap();
-                        locks.insert(model.clone(), unlock_time);
-                    }
+                    let err_text = res.text().await.unwrap_or_default();
+                    record_model_failure(model, 429, &err_text);
                     last_err = format!("Модель {} 429", model);
                     let _ = app_handle.emit("ocr-status-update", format!("⚠️ Сбой {} (429). Ожидание 1с перед следующей попыткой...", model));
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -6494,10 +6594,12 @@ async fn call_gemini_text_api(
                     let err_text = res.text().await.unwrap_or_default();
                     last_err = format!("Код {} от {}: {}", status, model, err_text);
                     let _ = app_handle.emit("ocr-status-update", format!("⚠️ Сбой {} ({}). Ожидание 1с...", model, status));
-                    let unlock_time = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                    if status.as_u16() == 404
+                        || status.as_u16() == 400
+                        || err_text.contains("RESOURCE_EXHAUSTED")
+                        || err_text.contains("quota")
                     {
-                        let mut locks = MODEL_LOCKS.lock().unwrap();
-                        locks.insert(model.clone(), unlock_time);
+                        record_model_failure(model, status.as_u16(), &err_text);
                     }
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                     continue;
@@ -6529,9 +6631,7 @@ async fn call_gemini_text_api(
                             }
                         }
                         if found {
-                            if let Ok(mut last_model_lock) = LAST_WORKING_MODEL.lock() {
-                                *last_model_lock = Some(model.clone());
-                            }
+                            record_model_success(model);
                             break;
                         }
                     }
@@ -7839,14 +7939,25 @@ unsafe extern "system" fn overlay_subclass_proc(
     use winapi::um::winuser::{
         FillRect, GetClientRect, GWL_EXSTYLE, GWL_STYLE, WS_BORDER, WS_CAPTION, WS_CLIPCHILDREN,
         WS_CLIPSIBLINGS, WS_DLGFRAME, WS_EX_APPWINDOW, WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME,
-        WS_EX_STATICEDGE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
-        WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
+        WS_EX_STATICEDGE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_WINDOWEDGE, WS_MAXIMIZEBOX,
+        WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
     };
 
     #[repr(C)]
     struct STYLESTRUCT {
         style_old: u32,
         style_new: u32,
+    }
+
+    #[repr(C)]
+    struct WINDOWPOS {
+        hwnd: isize,
+        hwnd_insert_after: isize,
+        x: i32,
+        y: i32,
+        cx: i32,
+        cy: i32,
+        flags: u32,
     }
 
     #[repr(C)]
@@ -7879,12 +7990,31 @@ unsafe extern "system" fn overlay_subclass_proc(
     const WM_SETTEXT: u32 = 0x000C;
     const WM_PAINT: u32 = 0x000F;
     const WM_ERASEBKGND: u32 = 0x0014;
+    const WM_WINDOWPOSCHANGING: u32 = 0x0046;
     const WM_STYLECHANGING: u32 = 0x007C;
     const WM_NCCALCSIZE: u32 = 0x0083;
     const WM_NCPAINT: u32 = 0x0085;
     const WM_NCACTIVATE: u32 = 0x0086;
+    const WM_NCLBUTTONDOWN: u32 = 0x00A1;
+    const HTCAPTION: usize = 2;
+    const SWP_NOZORDER: u32 = 0x0004;
 
     match msg {
+        WM_NCLBUTTONDOWN => {
+            // Блокируем нативный цикл перетаскивания Windows (HTCAPTION), который при отпускании мыши
+            // принудительно отталкивает верхнюю границу окна (HWND.top) к Y >= 0 и создает отступ сверху
+            if wparam == HTCAPTION {
+                return 0;
+            }
+        }
+        WM_WINDOWPOSCHANGING => {
+            let wp = lparam as *mut WINDOWPOS;
+            if !wp.is_null() {
+                // Гарантируем, что оверлей всегда остается в самом верху HWND_TOPMOST (-1), поверх панели задач
+                (*wp).hwnd_insert_after = -1;
+                (*wp).flags &= !SWP_NOZORDER;
+            }
+        }
         WM_STYLECHANGING => {
             let ss = lparam as *mut STYLESTRUCT;
             if !ss.is_null() {
@@ -7904,7 +8034,7 @@ unsafe extern "system" fn overlay_subclass_proc(
                         | WS_EX_CLIENTEDGE
                         | WS_EX_STATICEDGE
                         | WS_EX_APPWINDOW;
-                    (*ss).style_new = ((*ss).style_new & !bad_ex) | WS_EX_TOOLWINDOW;
+                    (*ss).style_new = ((*ss).style_new & !bad_ex) | WS_EX_TOOLWINDOW | WS_EX_TOPMOST;
                 }
             }
             return 0;
@@ -7964,10 +8094,10 @@ fn make_overlay_borderless(hwnd: isize) {
     use winapi::um::wingdi::{CreateRectRgn, DeleteObject, GetStockObject, BLACK_BRUSH};
     use winapi::um::winuser::{
         FillRect, GetClientRect, GetWindowDC, GetWindowLongW, ReleaseDC, SetWindowLongW,
-        SetWindowPos, SetWindowRgn, SetWindowTextW, GWL_EXSTYLE, GWL_STYLE, SWP_FRAMECHANGED,
-        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, WS_BORDER,
+        SetWindowPos, SetWindowRgn, SetWindowTextW, GWL_EXSTYLE, GWL_STYLE, HWND_TOPMOST,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, WS_BORDER,
         WS_CAPTION, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_DLGFRAME, WS_EX_APPWINDOW,
-        WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_EX_STATICEDGE, WS_EX_TOOLWINDOW,
+        WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_EX_STATICEDGE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
         WS_EX_WINDOWEDGE, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
     };
 
@@ -8036,7 +8166,7 @@ fn make_overlay_borderless(hwnd: isize) {
             | WS_EX_CLIENTEDGE
             | WS_EX_STATICEDGE
             | WS_EX_APPWINDOW;
-        let new_ex_style = (ex_style & !bad_ex) | WS_EX_TOOLWINDOW;
+        let new_ex_style = (ex_style & !bad_ex) | WS_EX_TOOLWINDOW | WS_EX_TOPMOST;
         if new_ex_style != ex_style {
             SetWindowLongW(hwnd as _, GWL_EXSTYLE, new_ex_style as i32);
             changed = true;
@@ -8071,14 +8201,13 @@ fn make_overlay_borderless(hwnd: isize) {
 
             SetWindowPos(
                 hwnd as _,
-                std::ptr::null_mut(),
+                HWND_TOPMOST,
                 0,
                 0,
                 0,
                 0,
                 SWP_NOMOVE
                     | SWP_NOSIZE
-                    | SWP_NOZORDER
                     | SWP_NOACTIVATE
                     | SWP_NOOWNERZORDER
                     | SWP_FRAMECHANGED,
@@ -8103,6 +8232,51 @@ fn make_overlay_borderless(hwnd: isize) {
 }
 
 #[cfg(target_os = "windows")]
+fn ensure_overlay_topmost(hwnd: isize) {
+    use winapi::um::processthreadsapi::GetCurrentProcessId;
+    use winapi::um::winuser::{
+        GetWindow, GetWindowLongW, GetWindowThreadProcessId, IsWindowVisible, SetWindowPos,
+        GWL_EXSTYLE, GW_HWNDPREV, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER,
+        SWP_NOSIZE, WS_EX_TOPMOST,
+    };
+
+    unsafe {
+        let ex_style = GetWindowLongW(hwnd as _, GWL_EXSTYLE) as u32;
+        let mut needs_topmost = (ex_style & WS_EX_TOPMOST) == 0;
+
+        if !needs_topmost {
+            let my_pid = GetCurrentProcessId();
+            let mut prev = GetWindow(hwnd as _, GW_HWNDPREV);
+            let mut steps = 0;
+            while !prev.is_null() && steps < 24 {
+                if IsWindowVisible(prev) != 0 {
+                    let mut prev_pid: u32 = 0;
+                    GetWindowThreadProcessId(prev, &mut prev_pid);
+                    if prev_pid != my_pid {
+                        needs_topmost = true;
+                        break;
+                    }
+                }
+                prev = GetWindow(prev, GW_HWNDPREV);
+                steps += 1;
+            }
+        }
+
+        if needs_topmost {
+            SetWindowPos(
+                hwnd as _,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+            );
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn ensure_webview_window_borderless(w: &tauri::WebviewWindow) {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     if let Ok(handle) = w.window_handle() {
@@ -8119,13 +8293,14 @@ fn ensure_webview_window_borderless(w: &tauri::WebviewWindow) {
 #[cfg(target_os = "windows")]
 fn set_ignore_cursor_events_hwnd(hwnd: isize, ignore: bool) {
     use winapi::um::winuser::{
-        GetWindowLongW, SetWindowLongW, GWL_EXSTYLE, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
+        GetWindowLongW, SetWindowLongW, SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE,
+        SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
         WS_EX_TRANSPARENT,
     };
     unsafe {
         make_overlay_borderless(hwnd);
         let ex_style = GetWindowLongW(hwnd as _, GWL_EXSTYLE) as u32;
-        let mut new_ex = ex_style | WS_EX_TOOLWINDOW | WS_EX_LAYERED;
+        let mut new_ex = ex_style | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_TOPMOST;
         if ignore {
             new_ex |= WS_EX_TRANSPARENT;
         } else {
@@ -8133,6 +8308,15 @@ fn set_ignore_cursor_events_hwnd(hwnd: isize, ignore: bool) {
         }
         if new_ex != ex_style {
             SetWindowLongW(hwnd as _, GWL_EXSTYLE, new_ex as i32);
+            SetWindowPos(
+                hwnd as _,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+            );
         }
     }
 }
@@ -8163,6 +8347,9 @@ where
         fn ClientToScreen(hWnd: isize, lpPoint: *mut POINT) -> i32;
         fn GetAsyncKeyState(vKey: i32) -> i16;
     }
+
+    // Гарантируем, что оверлей всегда остается поверх панели задач (Shell_TrayWnd) и меню Пуск
+    ensure_overlay_topmost(hwnd);
 
     let rects_opt = {
         let guard = WINDOW_HIT_RECTS.lock().unwrap();
@@ -8350,6 +8537,17 @@ async fn start_custom_drag(
             _ => return Err("Не Win32 окно".into()),
         };
 
+        let label_str = window.label().to_string();
+        let hit_top_offset = {
+            let guard = WINDOW_HIT_RECTS.lock().unwrap();
+            guard
+                .get(&label_str)
+                .and_then(|rects| rects.first())
+                .map(|r| r.y)
+                .unwrap_or(0)
+        };
+        let effective_top_offset = top_glow_offset_phys.max(hit_top_offset);
+
         CUSTOM_DRAG_ACTIVE.store(true, Ordering::SeqCst);
         set_ignore_cursor_events_hwnd(hwnd, false);
 
@@ -8426,8 +8624,8 @@ async fn start_custom_drag(
                             dw_flags: 0,
                         };
                         if GetMonitorInfoW(hmon, &mut mi) != 0 {
-                            let min_y = mi.rc_monitor.top - top_glow_offset_phys;
-                            if new_y < min_y + 8 {
+                            let min_y = mi.rc_monitor.top - effective_top_offset;
+                            if cur.y <= mi.rc_monitor.top + 4 || new_y <= min_y + 4 {
                                 new_y = min_y;
                             }
                         }
@@ -8449,6 +8647,16 @@ async fn start_custom_drag(
 
                     std::thread::sleep(std::time::Duration::from_millis(8));
                 }
+
+                SetWindowPos(
+                    hwnd,
+                    HWND_TOPMOST,
+                    last_x,
+                    last_y,
+                    0,
+                    0,
+                    SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+                );
 
                 CUSTOM_DRAG_ACTIVE.store(false, Ordering::SeqCst);
                 let _ = window.emit(
@@ -8879,12 +9087,72 @@ fn get_virtual_desktop_rect() -> Result<serde_json::Value, String> {
     Ok(serde_json::json!({ "x": 0, "y": 0, "width": 1920, "height": 1080 }))
 }
 
+fn show_and_focus_main_window(app: &tauri::AppHandle) {
+    MINIMIZED_STARTUP.store(false, std::sync::atomic::Ordering::SeqCst);
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+
+        #[cfg(target_os = "windows")]
+        {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            if let Ok(handle) = w.window_handle() {
+                if let RawWindowHandle::Win32(win_handle) = handle.as_raw() {
+                    let hwnd = win_handle.hwnd.get() as isize;
+                    unsafe {
+                        use winapi::um::winuser::{
+                            BringWindowToTop, IsIconic, SetFocus, SetForegroundWindow,
+                            SetWindowPos, ShowWindow, HWND_NOTOPMOST, HWND_TOPMOST,
+                            SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_RESTORE, SW_SHOW,
+                        };
+                        let hwnd_ptr = hwnd as winapi::shared::windef::HWND;
+                        if IsIconic(hwnd_ptr) != 0 {
+                            ShowWindow(hwnd_ptr, SW_RESTORE);
+                        } else {
+                            ShowWindow(hwnd_ptr, SW_SHOW);
+                        }
+                        SetWindowPos(
+                            hwnd_ptr,
+                            HWND_TOPMOST,
+                            0,
+                            0,
+                            0,
+                            0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+                        );
+                        SetWindowPos(
+                            hwnd_ptr,
+                            HWND_NOTOPMOST,
+                            0,
+                            0,
+                            0,
+                            0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+                        );
+                        BringWindowToTop(hwnd_ptr);
+                        SetForegroundWindow(hwnd_ptr);
+                        SetFocus(hwnd_ptr);
+                    }
+                }
+            }
+        }
+
+        use tauri::Emitter;
+        let _ = w.emit("main-shown", ());
+    }
+}
+
 pub fn run() {
     let minimize_startup = std::env::args().any(|arg| arg == "--minimized");
     MINIMIZED_STARTUP.store(minimize_startup, std::sync::atomic::Ordering::SeqCst);
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {}))
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if !args.iter().any(|arg| arg == "--minimized") {
+                show_and_focus_main_window(app);
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -8998,12 +9266,7 @@ pub fn run() {
                             app.exit(0);
                         }
                         "show_main" => {
-                            if let Some(w) = app.get_webview_window("main") {
-                                let _ = w.show();
-                                let _ = w.set_focus();
-                                use tauri::Emitter;
-                                let _ = w.emit("main-shown", ());
-                            }
+                            show_and_focus_main_window(app);
                         }
                         "show_widget" => {
                             if let Some(w) = app.get_webview_window("widget") {
@@ -9023,18 +9286,19 @@ pub fn run() {
                     }
                 })
                 .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event {
-                        let app = tray.app_handle();
-                        if let Some(w) = app.get_webview_window("main") {
-                            let _ = w.show();
-                            let _ = w.set_focus();
-                            use tauri::Emitter;
-                            let _ = w.emit("main-shown", ());
+                    match event {
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
                         }
+                        | TrayIconEvent::DoubleClick {
+                            button: MouseButton::Left,
+                            ..
+                        } => {
+                            show_and_focus_main_window(tray.app_handle());
+                        }
+                        _ => {}
                     }
                 });
 
@@ -9081,6 +9345,7 @@ pub fn run() {
             install_extension,
             uninstall_extension,
             uninstall_model,
+            open_external_url,
             fetch_gemini_models,
             set_module_mode,
             load_history,

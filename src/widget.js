@@ -104,14 +104,16 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
           const parsed = JSON.parse(savedPos);
           if (parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number') {
-            const monitors = await appWindow.availableMonitors();
+            const monitors = typeof appWindow.availableMonitors === 'function'
+              ? await appWindow.availableMonitors()
+              : (window.__TAURI__.window?.availableMonitors ? await window.__TAURI__.window.availableMonitors() : []);
             let isInsideAnyMonitor = false;
             for (const mon of monitors) {
               const mx = mon.position.x;
               const my = mon.position.y;
               const mw = mon.size.width;
               const mh = mon.size.height;
-              if (parsed.x >= mx - 80 && parsed.x < mx + mw && parsed.y >= my - 80 && parsed.y < my + mh) {
+              if (parsed.x >= mx - 300 && parsed.x < mx + mw && parsed.y >= my - 300 && parsed.y < my + mh) {
                 isInsideAnyMonitor = true;
                 break;
               }
@@ -142,10 +144,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!window.__TAURI__) return;
     const { invoke } = window.__TAURI__.core;
     const dpr = window.devicePixelRatio || 1;
-    // Позволяем поднимать окно на 22 логических пикселя выше верхней границы экрана,
-    // чтобы видимая капсула (#widget-container) примагничивалась ровно к 0px от верха экрана,
-    // а при отступе от верха сохранялось полное свечение кнопки Play (.play-pulse)
-    const topGlowOffsetPhys = Math.round(PAD_TOP * dpr);
+    // Вычисляем точный физический отступ от верха HWND до верхней границы видимой капсулы (#widget-container),
+    // чтобы капсулу можно было прижать к самому верху экрана вплотную (0px без зазора)
+    const domRect = widgetContainer ? widgetContainer.getBoundingClientRect() : null;
+    const topCss = (domRect && domRect.top > 0) ? domRect.top : PAD_TOP;
+    const topGlowOffsetPhys = Math.ceil(topCss * dpr);
     invoke('start_custom_drag', { topGlowOffsetPhys }).catch(console.error);
   }
 
@@ -176,17 +179,20 @@ document.addEventListener('DOMContentLoaded', () => {
       dragHandle.addEventListener('mousedown', (e) => {
         if (e.buttons === 1) {
           e.preventDefault();
+          e.stopPropagation();
           startWidgetDrag();
         }
       });
     }
   }
 
-  // Централизованное перетаскивание виджета за фон и элементы с data-tauri-drag-region
+  // Централизованное перетаскивание виджета за фон и элементы с data-sinc-drag-region
   if (widgetContainer && window.__TAURI__ && appWindow) {
     widgetContainer.addEventListener('mousedown', (e) => {
-      const isDragTarget = e.target.hasAttribute('data-tauri-drag-region') || 
+      const isDragTarget = e.target.hasAttribute('data-sinc-drag-region') || 
+                           e.target.hasAttribute('data-tauri-drag-region') || 
                            e.target === widgetContainer || 
+                           e.target.closest('[data-sinc-drag-region]') ||
                            e.target.closest('[data-tauri-drag-region]');
       if (isDragTarget) {
         if (!e.target.closest('button, select, input, a, .voice-item, .speed-item, .volume-item')) {
@@ -539,6 +545,19 @@ document.addEventListener('DOMContentLoaded', () => {
         btnTranslate.style.color = translateEnabled ? '#45a29e' : '';
       });
     }
+
+    // Мгновенный отклик кнопки Play -> Pause (0 мс) прямо по нажатию глобального хоткея Ctrl+Shift / Ctrl+Alt
+    const activateImmediatePlayState = () => {
+      if (root && root.updateState) {
+        root.updateState({ isPlaying: true, isPaused: false, percentBuffered: 6, percentPlayed: 0 });
+      }
+      if (widgetContainer && widgetContainer.classList.contains('hover-collapsed') && hoveredPlayWhileCollapsed) {
+        widgetContainer.classList.add('stop-peek');
+        updateClickRegion('hover_collapsed');
+      }
+    };
+    listen('tts-action-read', activateImmediatePlayState);
+    listen('tts-action-translate', activateImmediatePlayState);
 
     // Слушаем прилетающие обновления из главного окна
     listen('tts-state-sync', (event) => {

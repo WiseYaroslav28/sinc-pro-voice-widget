@@ -92,14 +92,14 @@ window.renderTtsWidget = function(container, isMain = false) {
         50%       { transform: scale(1.12); }
       }
     </style>
-    <div class="flex items-center py-2 gap-1 h-[52px] w-fit" style="${isMain ? 'padding-left: 20px; padding-right: 20px;' : 'padding-left: 14px; padding-right: 14px;'}" data-tauri-drag-region>
+    <div class="flex items-center py-2 gap-1 h-[52px] w-fit" style="${isMain ? 'padding-left: 20px; padding-right: 20px;' : 'padding-left: 14px; padding-right: 14px;'}" data-sinc-drag-region>
       
       <!-- Drag Handle -->
       ${isMain ? '' : `
-      <div class="flex items-center justify-center w-7 h-7 cursor-move opacity-30 hover:opacity-100 text-[#ccc3d8]" id="tts-widget-drag" title="Перетащить виджет" data-tauri-drag-region>
+      <div class="flex items-center justify-center w-7 h-7 cursor-move opacity-30 hover:opacity-100 text-[#ccc3d8]" id="tts-widget-drag" title="Перетащить виджет" data-sinc-drag-region>
         <span class="material-symbols-outlined text-[18px]" style="pointer-events: none;">drag_indicator</span>
       </div>
-      <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
+      <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-sinc-drag-region></div>
       `}
 
       <!-- ▶ Play/Pause + Hover Stop (в начале) -->
@@ -127,8 +127,8 @@ window.renderTtsWidget = function(container, isMain = false) {
       </div>
 
       <!-- Вся остальная часть, которая в плавающем виджете скрывается при hover-collapsed -->
-      <div class="flex items-center gap-0.5 tts-extra-content" data-tauri-drag-region>
-        <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
+      <div class="flex items-center gap-0.5 tts-extra-content" data-sinc-drag-region>
+        <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-sinc-drag-region></div>
 
         <!-- 🗣️ Голос -->
         <div class="relative w-[134px] flex-shrink-0" id="tts-voice-wrapper">
@@ -143,7 +143,7 @@ window.renderTtsWidget = function(container, isMain = false) {
           </div>
         </div>
 
-        <div class="w-px h-5 bg-[#4a4455]/30 mx-0.5 flex-shrink-0" data-tauri-drag-region></div>
+        <div class="w-px h-5 bg-[#4a4455]/30 mx-0.5 flex-shrink-0" data-sinc-drag-region></div>
 
         <!-- ⚡ Скорость -->
         <div class="relative w-[62px] flex-shrink-0" id="tts-speed-wrapper">
@@ -166,7 +166,7 @@ window.renderTtsWidget = function(container, isMain = false) {
           </div>
         </div>
 
-        <div class="w-px h-5 bg-[#4a4455]/30 mx-0.5 flex-shrink-0" data-tauri-drag-region></div>
+        <div class="w-px h-5 bg-[#4a4455]/30 mx-0.5 flex-shrink-0" data-sinc-drag-region></div>
 
         <!-- 🔊 Громкость озвучки -->
         <div class="relative w-[64px] flex-shrink-0" id="tts-volume-wrapper">
@@ -190,7 +190,7 @@ window.renderTtsWidget = function(container, isMain = false) {
         </div>
 
         <!-- Divider перед Translate -->
-        <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-tauri-drag-region></div>
+        <div class="w-px h-5 bg-[#4a4455]/30 mx-1 flex-shrink-0" data-sinc-drag-region></div>
 
         <!-- 文A Перевод -->
         <button class="bg-transparent text-[#ccc3d8] border-none flex items-center justify-center w-7 h-7 rounded-md cursor-pointer transition-all hover:bg-[#3a3545] hover:text-[#7bd6d1] outline-none ${isMain ? 'mx-2' : 'mx-0.5'}" id="tts-btn-translate" title="Переводить перед чтением">
@@ -198,7 +198,7 @@ window.renderTtsWidget = function(container, isMain = false) {
         </button>
 
         ${isMain ? '' : `
-        <div class="w-px h-5 bg-[#4a4455]/30 mx-0.5 flex-shrink-0" data-tauri-drag-region></div>
+        <div class="w-px h-5 bg-[#4a4455]/30 mx-0.5 flex-shrink-0" data-sinc-drag-region></div>
         <button class="bg-transparent text-[#ccc3d8] border-none flex items-center justify-center w-7 h-7 rounded-md cursor-pointer transition-all hover:bg-[#3a3545] hover:text-white outline-none" id="tts-btn-expand" title="Дополнительно">
           <span class="material-symbols-outlined text-[18px]" id="tts-expand-icon">open_in_full</span>
         </button>

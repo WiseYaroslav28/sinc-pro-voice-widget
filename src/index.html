@@ -1522,12 +1522,32 @@
               data = await resp.json();
             }
 
-            // Фильтруем только generateContent модели
-            models = (data.models || []).filter(m =>
-              m.supportedGenerationMethods?.includes('generateContent') &&
-              !m.name.includes('embedding') &&
-              !m.name.includes('aqa')
-            ).map(m => {
+            // Фильтруем только проверенные мультимодальные модели Gemini (поддерживающие аудио + JSON)
+            const isValidMultimodalModel = (id) => {
+              const m = (id || '').trim().toLowerCase();
+              if (!m.startsWith('gemini-')) return false;
+              const blocked = [
+                'gemma', 'tts', 'native-audio', 'live', 'image', 'imagen', 'veo',
+                'embedding', 'aqa', 'bisheng', 'learnlm', 'robotics', 'computer-use',
+                'thinking', '-exp', 'preview', 'latest', 'antigravity', '3.5', '3.1'
+              ];
+              return !blocked.some(b => m.includes(b));
+            };
+
+            const priorityOrder = [
+              'gemini-2.5-flash',
+              'gemini-2.5-flash-lite',
+              'gemini-2.0-flash',
+              'gemini-2.0-flash-lite',
+              'gemini-1.5-flash',
+              'gemini-2.5-pro',
+              'gemini-1.5-pro'
+            ];
+
+            models = (data.models || []).filter(m => {
+              const id = (m.name || '').replace('models/', '');
+              return m.supportedGenerationMethods?.includes('generateContent') && isValidMultimodalModel(id);
+            }).map(m => {
               const id = m.name.replace('models/', '');
               const display = m.displayName || id;
               const limits = MODEL_LIMITS_KNOWN[id];
@@ -1536,11 +1556,22 @@
               return { id, label };
             });
 
-            // Сортируем: сначала новее
-            models.sort((a, b) => b.label.localeCompare(a.label));
+            // Сортируем: сначала рекомендуемые мультимодальные модели с высокой квотой
+            models.sort((a, b) => {
+              const idxA = priorityOrder.indexOf(a.id);
+              const idxB = priorityOrder.indexOf(b.id);
+              if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+              if (idxA !== -1) return -1;
+              if (idxB !== -1) return 1;
+              return b.label.localeCompare(a.label);
+            });
           } catch (err) {
             console.error('Ошибка загрузки моделей Gemini:', err);
-            models = [{ id: 'gemini-2.0-flash', label: 'gemini-2.0-flash (офлайн-фолбек)' }];
+            models = [
+              { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (офлайн-фолбек)' },
+              { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite (офлайн-фолбек)' },
+              { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (офлайн-фолбек)' }
+            ];
           }
         }
 
@@ -1569,12 +1600,12 @@
         loadingBadge.classList.add('hidden');
         refreshBtn.classList.remove('hidden');
 
-        // Восстанавливаем сохранённую модель
+        // Восстанавливаем сохранённую модель (если она валидна и есть в списке)
         if (savedModel && select.querySelector(`option[value="${savedModel}"]`)) {
           select.value = savedModel;
         } else if (select.options.length > 0) {
-          // Автовыбор
-          const preferred = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-3.1-flash-lite', 'gemini-2.0-flash'];
+          // Автовыбор оптимальной мультимодальной модели
+          const preferred = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'];
           let set = false;
           for (const p of preferred) {
             if (select.querySelector(`option[value="${p}"]`)) { select.value = p; set = true; break; }
@@ -1936,9 +1967,18 @@
 
       const btnGetGeminiKey = document.getElementById('btn-get-gemini-key');
       if (btnGetGeminiKey) {
-        btnGetGeminiKey.addEventListener('click', () => {
+        btnGetGeminiKey.addEventListener('click', async () => {
           awaitingClipboardApiKey = true;
-          window.open('https://aistudio.google.com/app/apikey', '_blank');
+          const targetUrl = 'https://aistudio.google.com/app/apikey';
+          if (invoke) {
+            try {
+              await invoke('open_external_url', { url: targetUrl });
+            } catch (e) {
+              window.open(targetUrl, '_blank');
+            }
+          } else {
+            window.open(targetUrl, '_blank');
+          }
           showToast('🔑 Создайте и скопируйте ключ в Google AI Studio — при возврате в SincPro он подставится автоматически!', false);
         });
       }
@@ -3651,13 +3691,13 @@
             console.error("Failed to load app version:", err);
             const versionDisplay = document.getElementById('app-version-display');
             if (versionDisplay) {
-              versionDisplay.textContent = `Текущая версия: 3.5.18`;
+              versionDisplay.textContent = `Текущая версия: 3.5.20`;
             }
           });
         } else {
           const versionDisplay = document.getElementById('app-version-display');
           if (versionDisplay) {
-            versionDisplay.textContent = `Текущая версия: 3.5.18 (Mock)`;
+            versionDisplay.textContent = `Текущая версия: 3.5.20 (Mock)`;
           }
         }
 
@@ -3779,7 +3819,9 @@
             if (savedState) {
               const state = JSON.parse(savedState);
               if (state && typeof state.x === 'number' && typeof state.y === 'number') {
-                const monitors = await appWindow.availableMonitors();
+                const monitors = typeof appWindow.availableMonitors === 'function'
+                  ? await appWindow.availableMonitors()
+                  : (window.__TAURI__.window?.availableMonitors ? await window.__TAURI__.window.availableMonitors() : []);
                 let isInsideAnyMonitor = false;
                 for (const mon of monitors) {
                   const mx = mon.position.x;
@@ -3807,9 +3849,13 @@
           // Умный запуск (свернутый в трей или видимый)
           try {
             const isMin = await window.__TAURI__.core.invoke('is_minimized_startup');
-            const mainSavedVisible = localStorage.getItem('main_window_visible');
-            const shouldShow = !isMin || (mainSavedVisible === null || mainSavedVisible === 'true');
-            if (shouldShow) {
+            if (!isMin) {
+              localStorage.setItem('main_window_visible', 'true');
+              try {
+                if (await appWindow.isMinimized()) {
+                  await appWindow.unminimize();
+                }
+              } catch (_) {}
               await appWindow.show();
               await appWindow.setFocus();
             } else {
@@ -3870,8 +3916,15 @@
         });
 
         // Слушаем события
-        window.__TAURI__.event.listen('main-shown', () => {
+        window.__TAURI__.event.listen('main-shown', async () => {
           localStorage.setItem('main_window_visible', 'true');
+          try {
+            if (await appWindow.isMinimized()) {
+              await appWindow.unminimize();
+            }
+            await appWindow.show();
+            await appWindow.setFocus();
+          } catch (_) {}
         });
 
         window.__TAURI__.event.listen('open-settings', () => {

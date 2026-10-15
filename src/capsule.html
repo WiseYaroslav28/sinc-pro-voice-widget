@@ -187,7 +187,25 @@
       }
       .error-wrapper:hover .error-tooltip { opacity: 1; pointer-events: auto; }
 
-      /* Dictation Orb Стили */
+      /* Dictation Orb Стили и волновая аура обертонов */
+      #active-orb-aura {
+        position: absolute;
+        bottom: 0;
+        left: 50%;
+        width: 56px;
+        height: 56px;
+        margin-left: -28px;
+        border-radius: 9999px;
+        pointer-events: none;
+        z-index: 25;
+        opacity: 0;
+        background: radial-gradient(circle, rgba(186, 140, 255, 0.85) 0%, rgba(142, 82, 255, 0.55) 42%, rgba(123, 214, 209, 0.28) 72%, rgba(142, 82, 255, 0) 100%);
+        filter: blur(7px);
+        transform: scale(1);
+        transition: opacity 0.06s linear, transform 0.06s ease-out;
+        will-change: transform, opacity;
+      }
+
       #active-pill {
         position: relative;
         z-index: 30;
@@ -198,15 +216,16 @@
         align-items: center;
         justify-content: center;
         background: #1b1b25;
-        border: 1px solid rgba(142, 82, 255, 0.4);
+        border: 1.5px solid rgba(142, 82, 255, 0.45);
         box-shadow: 0 0 15px rgba(142, 82, 255, 0.35), inset 0 0 10px rgba(142, 82, 255, 0.15);
         transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), 
                     height 0.35s cubic-bezier(0.4, 0, 0.2, 1), 
-                    border-color 0.35s cubic-bezier(0.4, 0, 0.2, 1), 
+                    border-color 0.07s ease-out, 
+                    box-shadow 0.07s ease-out,
                     background-color 0.35s cubic-bezier(0.4, 0, 0.2, 1), 
                     border-radius 0.35s cubic-bezier(0.4, 0, 0.2, 1), 
                     padding 0.35s cubic-bezier(0.4, 0, 0.2, 1),
-                    transform 0.1s ease-out;
+                    transform 0.06s ease-out;
         overflow: hidden;
         pointer-events: auto;
         margin: 0 auto;
@@ -452,6 +471,8 @@
             </div>
           </div>
           
+          <!-- Волновая аура сияния вокруг капсулы записи (реагирует на голос и обертоны) -->
+          <div id="active-orb-aura" aria-hidden="true"></div>
           <!-- Единая пилюля (Dictation Orb) -->
           <div class="gpu-layer" id="active-pill">
             
@@ -927,7 +948,7 @@
                   const my = mon.position.y;
                   const mw = mon.size.width;
                   const mh = mon.size.height;
-                  if (parsed.x >= mx - 60 && parsed.x < mx + mw && parsed.y >= my - 220 && parsed.y < my + mh) {
+                  if (parsed.x >= mx - 300 && parsed.x < mx + mw && parsed.y >= my - 450 && parsed.y < my + mh) {
                     isInsideAnyMonitor = true;
                     break;
                   }
@@ -2013,10 +2034,14 @@
           // Если Магнит включён — перетаскивание заблокировано
           if (isMagnetEnabled) return;
           if (e.buttons === 1 && !e.target.closest('button') && !e.target.closest('input') && !e.target.closest('.preset-btn')) {
+            e.preventDefault();
             maybeDragging = true;
-            invoke('start_custom_drag', { topGlowOffsetPhys: 0 }).catch(() => {
-              if (appWindow) appWindow.startDragging().catch(() => {});
-            });
+            const dpr = window.devicePixelRatio || cachedScaleFactor || 1;
+            const visibleEl = (stateActive && stateActive.offsetWidth > 0) ? stateActive
+                            : ((stateHover && stateHover.offsetWidth > 0) ? stateHover : stateIdle);
+            const rect = visibleEl ? visibleEl.getBoundingClientRect() : null;
+            const topGlowOffsetPhys = rect && rect.top > 0 ? Math.ceil(rect.top * dpr) : 0;
+            invoke('start_custom_drag', { topGlowOffsetPhys }).catch(() => {});
           }
         });
         container.addEventListener('mouseup', () => { maybeDragging = false; });
@@ -2299,8 +2324,12 @@
 
       let lastOrbScale = 1.0;
       let orbShadowApplied = false;
+      let orbWavePhase = 0;
+      let smoothedVoiceEnergy = 0;
+      let smoothedOvertoneEnergy = 0;
       const lastBarScales = [0.25, 0.25, 0.25, 0.25, 0.25];
       let timeDomainArray = null;
+      const activeOrbAura = document.getElementById('active-orb-aura');
 
       function drawVisualizer() {
         if (!analyser) return;
@@ -2316,7 +2345,7 @@
           }
         }
 
-        // Вычисляем истинную RMS-амплитуду сигнала во временной области (для фильтрации фонового шума комнаты)
+        // Вычисляем истинную RMS-амплитуду сигнала во временной области
         let rms = 0;
         if (timeDomainArray) {
           let sqSum = 0;
@@ -2330,62 +2359,152 @@
           }
         }
 
-        // Вычисляем среднюю и пиковую громкость речевого спектра для детекции речи и пульсации Orb
-        let sum = 0;
+        // Разделяем спектр (fftSize=128 -> 64 бина, ~375 Гц на бин) на 3 вокальные полосы:
+        // 1) Основной тон и грудной голос (бины 1..5: ~350–1850 Гц)
+        // 2) Форманты разборчивости речи (бины 6..14: ~2.2–5.2 кГц)
+        // 3) Обертоны, гармоники и звонкость голоса (бины 15..32: ~5.6–12 кГц)
+        let lowSum = 0, lowPeak = 0;
+        let midSum = 0, midPeak = 0;
+        let highSum = 0, highPeak = 0;
+        let totalSum = 0;
         let peakBin = 0;
-        for (let i = 0; i < dataArray.length; i++) {
+
+        const len = dataArray.length;
+        for (let i = 0; i < len; i++) {
           const val = dataArray[i];
-          sum += val;
-          if (i >= 1 && i <= 14 && val > peakBin) {
+          totalSum += val;
+          if (i >= 1 && i <= 28 && val > peakBin) {
             peakBin = val;
           }
+          if (i >= 1 && i <= 5) {
+            lowSum += val;
+            if (val > lowPeak) lowPeak = val;
+          } else if (i >= 6 && i <= 14) {
+            midSum += val;
+            if (val > midPeak) midPeak = val;
+          } else if (i >= 15 && i <= 32) {
+            highSum += val;
+            if (val > highPeak) highPeak = val;
+          }
         }
-        const avgVolume = sum / dataArray.length; // от 0 до 255
+
+        const avgVolume = totalSum / len;
         if (peakBin > maxRecordedVolume) {
           maxRecordedVolume = peakBin;
         }
-        if ((peakBin >= 32 || avgVolume >= 12) && rms >= 2.2) {
+        if ((peakBin >= 32 || avgVolume >= 10) && rms >= 2.0) {
           speechFramesCount++;
         }
 
+        // Высокочувствительная перцептивная кривая для голоса и обертонов:
+        // отсекаем только полный покой (< 1.2 RMS и < 16 peakBin), а даже тихую речь и обертоны усиливаем по гамма-кривой
+        const isVoiceActive = rms >= 1.25 || peakBin >= 18;
+        const lowNorm = Math.max(0, ((lowSum / 5) * 0.55 + lowPeak * 0.45 - 10) / 200);
+        const midNorm = Math.max(0, ((midSum / 9) * 0.50 + midPeak * 0.50 - 8) / 185);
+        const highNorm = Math.max(0, ((highSum / 18) * 0.45 + highPeak * 0.55 - 6) / 160);
+        const rmsNorm = Math.max(0, (rms - 1.1) / 18);
+
+        const rawVoice = isVoiceActive
+          ? Math.min(1.0, Math.max(lowNorm * 0.5 + midNorm * 0.35 + rmsNorm * 0.45, rmsNorm * 0.8))
+          : 0;
+        const rawOvertone = isVoiceActive
+          ? Math.min(1.0, midNorm * 0.45 + highNorm * 0.75)
+          : 0;
+
+        // Нелинейное усиление тихих и средних звуков (Math.pow(..., 0.46)), чтобы обычная речь давала яркий отклик
+        const targetVoice = rawVoice > 0 ? Math.min(1.0, Math.pow(rawVoice, 0.46) * 1.28) : 0;
+        const targetOvertone = rawOvertone > 0 ? Math.min(1.0, Math.pow(rawOvertone, 0.44) * 1.38) : 0;
+
+        // Быстрая атака (0.62) и плавное волновое затухание (0.28)
+        smoothedVoiceEnergy += (targetVoice - smoothedVoiceEnergy) * (targetVoice > smoothedVoiceEnergy ? 0.62 : 0.28);
+        smoothedOvertoneEnergy += (targetOvertone - smoothedOvertoneEnergy) * (targetOvertone > smoothedOvertoneEnergy ? 0.68 : 0.30);
+
+        // Волновая фаза ускоряется от энергии голоса и обертонов, создавая живое волнообразное колебание сияния
+        orbWavePhase += 0.16 + smoothedVoiceEnergy * 0.42 + smoothedOvertoneEnergy * 0.34;
+        const wavePrimary = Math.sin(orbWavePhase);
+        const waveHarmonic = Math.sin(orbWavePhase * 2.35 + smoothedOvertoneEnergy * 2.8);
+        const waveRipple = 0.5 + 0.32 * wavePrimary + 0.18 * waveHarmonic; // 0.0 .. 1.0
+
         const isExpanded = activePill && activePill.classList.contains('expanded');
 
-        // 1. Компактный Orb: обновляем ТОЛЬКО GPU-свойство transform: scale() при значимом изменении,
-        // без перерисовки box-shadow на каждом кадре (0 Repaint)
+        // 1. Компактный Orb: яркое волнообразное сияние и пульсация с реакцией на основной тон и обертоны
         if (activePill) {
           if (!isExpanded) {
-            if (!orbShadowApplied) {
-              activePill.style.boxShadow = '0 0 26px rgba(142, 82, 255, 0.65), inset 0 0 10px rgba(142, 82, 255, 0.18)';
-              orbShadowApplied = true;
+            const v = smoothedVoiceEnergy;
+            const ov = smoothedOvertoneEnergy;
+
+            // Масштаб самой капсулы: упругое колебание с волновой модуляцией
+            const scale = 1.0 + v * 0.22 + (v * waveRipple * 0.09) + ov * 0.05;
+            lastOrbScale = scale;
+            activePill.style.transform = `scale(${scale.toFixed(3)})`;
+
+            // Многослойное свечение вокруг капсулы:
+            // - внутренний и ближний неоново-фиолетовый слой (основной голос)
+            // - внешний волновой ореол с бирюзово-сиреневым отливом (обертоны и гармоники)
+            const glowRadius1 = Math.round(16 + v * 28 + waveRipple * v * 12);
+            const glowSpread1 = Math.round(v * 6 + ov * 3);
+            const glowAlpha1 = (0.42 + v * 0.48 + waveRipple * v * 0.10).toFixed(2);
+
+            const glowRadius2 = Math.round(24 + (v * 0.6 + ov * 0.8) * 34 + waveHarmonic * ov * 10);
+            const glowAlpha2 = (0.15 + ov * 0.65 + v * 0.20).toFixed(2);
+
+            const innerRadius = Math.round(10 + v * 14 + ov * 8);
+            const innerAlpha = (0.18 + v * 0.38 + ov * 0.24).toFixed(2);
+
+            const borderAlpha = (0.50 + v * 0.45 + ov * 0.25).toFixed(2);
+            // При высоких обертонах граница переливается от фиолетового к светло-бирюзовому/сиреневому
+            const borderR = Math.round(142 + ov * 45);
+            const borderG = Math.round(82 + ov * 120 + v * 35);
+            const borderB = 255;
+
+            activePill.style.borderColor = `rgba(${borderR}, ${borderG}, ${borderB}, ${borderAlpha})`;
+            activePill.style.boxShadow = `0 0 ${glowRadius1}px ${glowSpread1}px rgba(148, 92, 255, ${glowAlpha1}), 0 0 ${glowRadius2}px rgba(123, 214, 209, ${glowAlpha2}), inset 0 0 ${innerRadius}px rgba(210, 187, 255, ${innerAlpha})`;
+            orbShadowApplied = true;
+
+            if (activeOrbAura) {
+              const auraScale = 1.06 + v * 0.68 + (v * waveRipple * 0.30) + ov * 0.24;
+              const auraOpacity = Math.min(1.0, 0.22 + v * 0.62 + ov * 0.25 + (v * wavePrimary * 0.15));
+              activeOrbAura.style.opacity = auraOpacity.toFixed(2);
+              activeOrbAura.style.transform = `scale(${auraScale.toFixed(3)})`;
             }
-            const scale = 1 + (avgVolume / 255) * 0.34;
-            if (Math.abs(scale - lastOrbScale) >= 0.012) {
-              lastOrbScale = scale;
-              activePill.style.transform = `scale(${scale.toFixed(3)})`;
-            }
-            // В сжатом состоянии полоски эквалайзера скрыты — не тратим ресурсы на их DOM-обновление
             return;
-          } else if (orbShadowApplied || lastOrbScale !== 1.0) {
-            activePill.style.transform = '';
-            activePill.style.boxShadow = '';
-            orbShadowApplied = false;
-            lastOrbScale = 1.0;
+          } else {
+            if (orbShadowApplied || lastOrbScale !== 1.0) {
+              activePill.style.transform = '';
+              activePill.style.boxShadow = '';
+              activePill.style.borderColor = '';
+              orbShadowApplied = false;
+              lastOrbScale = 1.0;
+            }
+            if (activeOrbAura) {
+              activeOrbAura.style.opacity = '0';
+              activeOrbAura.style.transform = 'scale(1)';
+            }
           }
         }
 
-        // 2. Раскрытая капсула: обновляем 5 полосочек эквалайзера только при изменении высоты >= 1.5%
+        // 2. Раскрытая капсула: чувствительные полоски эквалайзера с реакцией на голос и обертоны
         const bars = document.querySelectorAll('#recording-waveform .waveform-bar');
         if (bars.length === 0) return;
 
-        const indices = [1, 3, 5, 8, 11];
+        const bandValues = [
+          Math.max(dataArray[2] || 0, dataArray[3] || 0),
+          Math.max(dataArray[4] || 0, dataArray[5] || 0),
+          Math.max(dataArray[7] || 0, dataArray[9] || 0),
+          Math.max(dataArray[12] || 0, dataArray[15] || 0),
+          Math.max(dataArray[18] || 0, dataArray[24] || 0)
+        ];
         for (let i = 0; i < bars.length; i++) {
-          const value = dataArray[indices[i]] || 0;
+          const value = bandValues[i] || 0;
           let scale = 0.25;
-          if (value > 15) {
-            scale = 0.25 + ((value - 15) / 240) * 0.75;
+          if (value > 10) {
+            const norm = Math.min(1.0, (value - 10) / 180);
+            const boosted = Math.pow(norm, 0.52);
+            const waveOffset = Math.sin(orbWavePhase + i * 0.85) * 0.08 * boosted;
+            scale = 0.25 + boosted * 0.72 + waveOffset;
           }
           const clamped = Math.max(0.25, Math.min(1.0, scale));
-          if (Math.abs(clamped - lastBarScales[i]) >= 0.015) {
+          if (Math.abs(clamped - lastBarScales[i]) >= 0.012) {
             lastBarScales[i] = clamped;
             bars[i].style.transform = `scaleY(${clamped.toFixed(3)})`;
           }
@@ -2401,10 +2520,10 @@
         }
         if (!analyser) {
           analyser = audioCtx.createAnalyser();
-          analyser.fftSize = 64; // Дает 32 полосы частот
-          analyser.minDecibels = -75; // Отсекаем тепловой шум микрофона (-90..-76 dB)
-          analyser.maxDecibels = -10;
-          analyser.smoothingTimeConstant = 0.80;
+          analyser.fftSize = 128; // 64 полосы частот для точного разделения основного тона и обертонов
+          analyser.minDecibels = -85; // Высокая чувствительность к нормальной/тихой речи и обертонам
+          analyser.maxDecibels = -18;
+          analyser.smoothingTimeConstant = 0.62;
           dataArray = new Uint8Array(analyser.frequencyBinCount);
           timeDomainArray = new Uint8Array(analyser.fftSize);
         }
@@ -2416,8 +2535,8 @@
         currentSource.connect(analyser);
         
         if (visualizerRafId) clearInterval(visualizerRafId);
-        // Экономные 20 FPS (50 мс) вместо 30/60 FPS — полоски сглаживаются через CSS transition
-        visualizerRafId = setInterval(drawVisualizer, 50);
+        // 30 FPS (33 мс) только во время активной записи — плавная волновая динамика обертонов и 0% CPU в простое
+        visualizerRafId = setInterval(drawVisualizer, 33);
       }
 
       function stopVisualizer() {
@@ -2432,13 +2551,20 @@
           if (idx < lastBarScales.length) lastBarScales[idx] = 0.25;
         });
 
-        // Сброс пульсации Orb
+        // Сброс пульсации и волновой ауры Orb
         if (activePill) {
           activePill.style.transform = '';
           activePill.style.boxShadow = '';
+          activePill.style.borderColor = '';
+        }
+        if (activeOrbAura) {
+          activeOrbAura.style.opacity = '0';
+          activeOrbAura.style.transform = 'scale(1)';
         }
         orbShadowApplied = false;
         lastOrbScale = 1.0;
+        smoothedVoiceEnergy = 0;
+        smoothedOvertoneEnergy = 0;
 
         // Приостанавливаем AudioContext
         if (audioCtx && audioCtx.state === 'running') {

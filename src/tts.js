@@ -113,6 +113,36 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    let renderedSentencesRef = null;
+    let lastActiveSentenceIdx = -1;
+
+    function updateActiveSentenceHighlight(newIdx) {
+        if (!contentEditable || document.activeElement === contentEditable) return;
+        if (renderedSentencesRef !== engine.sentences) {
+            renderedSentencesRef = engine.sentences;
+            lastActiveSentenceIdx = -1;
+            const wordsCount = engine.sentences.join(" ").split(/\s+/).length;
+            if (statsLabel) statsLabel.textContent = `${engine.sentences.length} предложений, ~${wordsCount} слов`;
+            // Рендерим span-обертки один раз при смене массива предложений
+            contentEditable.innerHTML = engine.sentences.map((s, i) => {
+                const isActive = (i === newIdx);
+                return `<span class="transition-colors ${isActive ? 'bg-[#7bd6d1]/20 text-[#7bd6d1] font-semibold' : ''}" id="sentence-${i}">${s}</span>`;
+            }).join(' ');
+            lastActiveSentenceIdx = newIdx;
+            return;
+        }
+        if (lastActiveSentenceIdx === newIdx) return;
+        if (lastActiveSentenceIdx >= 0) {
+            const prevEl = document.getElementById(`sentence-${lastActiveSentenceIdx}`);
+            if (prevEl) prevEl.className = 'transition-colors';
+        }
+        if (newIdx >= 0) {
+            const nextEl = document.getElementById(`sentence-${newIdx}`);
+            if (nextEl) nextEl.className = 'transition-colors bg-[#7bd6d1]/20 text-[#7bd6d1] font-semibold';
+        }
+        lastActiveSentenceIdx = newIdx;
+    }
+
     // Обратные вызовы от движка для обновления UI
     engine.onStateChange = (isPlaying, isPaused) => {
         if (root && root.updateState) {
@@ -126,17 +156,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (document.activeElement === contentEditable) {
                     if (contentEditable.querySelector('span')) {
                         contentEditable.innerHTML = contentEditable.innerText;
+                        renderedSentencesRef = null;
                     }
                 } else if (engine.sentences.length > 0) {
-                    // Во всех остальных случаях (фокуса нет), если есть предложения, рисуем их со span
-                    const wordsCount = engine.sentences.join(" ").split(/\s+/).length;
-                    if (statsLabel) statsLabel.textContent = `${engine.sentences.length} предложений, ~${wordsCount} слов`;
-                    
-                    contentEditable.innerHTML = engine.sentences.map((s, i) => {
-                        // Подсвечиваем выбранное предложение ВСЕГДА (играет ли, на паузе или просто выбрано на шкале)
-                        const isActive = (i === engine.currentSentenceIndex);
-                        return `<span class="transition-colors ${isActive ? 'bg-[#7bd6d1]/20 text-[#7bd6d1] font-semibold' : ''}" id="sentence-${i}">${s}</span>`;
-                    }).join(' ');
+                    updateActiveSentenceHighlight(engine.currentSentenceIndex);
                 }
             } else {
                 if (statsLabel) statsLabel.textContent = `0 предложений`;
@@ -145,53 +168,87 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     engine.onSentenceActive = (index) => {
-        engine.onStateChange(engine.isPlaying, engine.isPaused);
+        if (root && root.updateState) {
+            root.updateState({ isPlaying: engine.isPlaying, isPaused: engine.isPaused });
+        }
+        if (engine.sentences.length > 0) {
+            updateActiveSentenceHighlight(index);
+        }
     };
 
+    let progressSegmentsRef = null;
+    let progressSegmentEls = [];
+
     engine.onProgress = (percentBuffered, percentPlayed) => {
-        if (progressContainer && engine.sentences.length > 0) {
-            progressContainer.innerHTML = '';
-            const totalChars = engine.currentText.length;
-            
+        if (!progressContainer) return;
+        if (engine.sentences.length === 0) {
             if (timeCurrent) {
-                if (engine.isPlaying || engine.isPaused) {
-                    timeCurrent.textContent = `Чтение: ${engine.currentSentenceIndex + 1} из ${engine.sentences.length}`;
-                } else {
-                    timeCurrent.textContent = 'Готово';
-                }
+                timeCurrent.textContent = engine.isPlaying ? 'Подготовка озвучки...' : 'Готово';
             }
-            
+            return;
+        }
+
+        if (timeCurrent) {
+            if (engine.isPlaying || engine.isPaused) {
+                timeCurrent.textContent = `Чтение: ${engine.currentSentenceIndex + 1} из ${engine.sentences.length}`;
+            } else {
+                timeCurrent.textContent = 'Готово';
+            }
+        }
+
+        // Для больших текстов (> 80 предложений) используем плавную единую шкалу без создания сотен DOM-элементов
+        if (engine.sentences.length > 80) {
+            if (progressSegmentsRef !== 'continuous') {
+                progressSegmentsRef = 'continuous';
+                progressSegmentEls = [];
+                progressContainer.innerHTML = `
+                    <div id="tts-cont-buf" class="absolute top-0 left-0 h-full transition-all" style="background-color: rgba(142, 82, 255, 0.25); width: 0%;"></div>
+                    <div id="tts-cont-play" class="absolute top-0 left-0 h-full bg-[#8e52ff] transition-all" style="width: 0%;"></div>
+                `;
+            }
+            const bufEl = document.getElementById('tts-cont-buf');
+            const playEl = document.getElementById('tts-cont-play');
+            if (bufEl) bufEl.style.width = `${Math.min(100, Math.max(0, percentBuffered || 0))}%`;
+            if (playEl) playEl.style.width = `${Math.min(100, Math.max(0, percentPlayed || 0))}%`;
+            return;
+        }
+
+        const totalChars = engine.currentText.length || 1;
+        if (progressSegmentsRef !== engine.sentences || progressSegmentEls.length !== engine.sentences.length) {
+            progressSegmentsRef = engine.sentences;
+            progressSegmentEls = [];
+            progressContainer.innerHTML = '';
             engine.sentences.forEach((s, i) => {
                 const widthPercent = (s.length / totalChars) * 100;
                 const segment = document.createElement('div');
                 segment.style.width = `${widthPercent}%`;
                 segment.className = 'h-full border-r border-[#1f1f24] last:border-0 relative cursor-pointer hover:bg-[#8e52ff]/30 transition-colors';
                 segment.title = 'Начать с этого предложения';
-                
-                // Цветовая индикация буферизации
-                const isDownloaded = !!engine.audioBuffers[i];
-                if (isDownloaded) {
-                    // Бледный фон, если предзагружено в кэш
-                    segment.style.backgroundColor = 'rgba(142, 82, 255, 0.2)';
-                }
-                
                 segment.addEventListener('click', () => {
                     engine.seek(i);
                 });
-                
-                let fillPercent = 0;
-                if (i < engine.currentSentenceIndex) fillPercent = 100;
-                else if (i === engine.currentSentenceIndex) {
-                    const currentAudioProgress = (engine.audioElement.duration && !isNaN(engine.audioElement.duration)) 
-                        ? (engine.audioElement.currentTime / engine.audioElement.duration) 
-                        : 0;
-                    fillPercent = currentAudioProgress * 100;
-                }
-                
-                // Яркий (заполненный) индикатор воспроизведения
-                segment.innerHTML = `<div class="absolute top-0 left-0 h-full bg-[#8e52ff] transition-all" style="width: ${fillPercent}%;"></div>`;
+                const fillEl = document.createElement('div');
+                fillEl.className = 'absolute top-0 left-0 h-full bg-[#8e52ff] transition-all';
+                fillEl.style.width = '0%';
+                segment.appendChild(fillEl);
                 progressContainer.appendChild(segment);
+                progressSegmentEls.push({ segment, fillEl });
             });
+        }
+
+        for (let i = 0; i < progressSegmentEls.length; i++) {
+            const { segment, fillEl } = progressSegmentEls[i];
+            const isDownloaded = !!engine.audioBuffers[i];
+            segment.style.backgroundColor = isDownloaded ? 'rgba(142, 82, 255, 0.2)' : '';
+            let fillPercent = 0;
+            if (i < engine.currentSentenceIndex) fillPercent = 100;
+            else if (i === engine.currentSentenceIndex) {
+                const currentAudioProgress = (engine.audioElement.duration && !isNaN(engine.audioElement.duration))
+                    ? (engine.audioElement.currentTime / engine.audioElement.duration)
+                    : 0;
+                fillPercent = currentAudioProgress * 100;
+            }
+            fillEl.style.width = `${fillPercent}%`;
         }
     };
 
@@ -205,20 +262,21 @@ document.addEventListener('DOMContentLoaded', () => {
     function handleNewText(text) {
         if (!text || !text.trim()) {
             console.warn('[TTS] handleNewText: empty text, skipping');
+            engine.stop();
             return;
         }
         console.log('[TTS] handleNewText: received text, length=' + text.length);
         if (window.switchTab) window.switchTab('tab-tts');
         
         isTextChanged = false;
+        renderedSentencesRef = null;
+        progressSegmentsRef = null;
         // По просьбе пользователя всегда стираем старый текст и начинаем заново
         if (contentEditable) contentEditable.innerText = text;
-        engine.loadText(text);
+        engine.loadText(text, true);
         console.log('[TTS] handleNewText: loadText done, sentences=' + engine.sentences.length);
-        engine.broadcastState('load', { text: text });
         engine.play();
         console.log('[TTS] handleNewText: play() called, isPlaying=' + engine.isPlaying);
-        engine.broadcastState('play');
     }
 
     function handleAppendText(text) {
@@ -230,6 +288,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (window.switchTab) window.switchTab('tab-tts');
         
         isTextChanged = false;
+        renderedSentencesRef = null;
+        progressSegmentsRef = null;
         if (contentEditable) {
             const currentVal = contentEditable.innerText.trim();
             if (currentVal.length > 0) {
@@ -243,17 +303,24 @@ document.addEventListener('DOMContentLoaded', () => {
         engine.appendText(text);
         console.log('[TTS] handleAppendText: appendText done, sentences=' + engine.sentences.length);
         
-        engine.broadcastState('append', { text: text });
-        
         if (!wasPlaying) {
             engine.play();
             console.log('[TTS] handleAppendText: play() called because it was not playing');
-            engine.broadcastState('play');
         }
     }
 
     // Слушатель хоткеев из Rust
     if (listen && invoke) {
+        let cachedWidgetMode = parseInt(localStorage.getItem('widgetMode') || '2', 10);
+        invoke('load_config').then(cfg => {
+            if (cfg && cfg.widget_mode !== undefined) cachedWidgetMode = cfg.widget_mode;
+        }).catch(() => {});
+        listen('config-updated', (e) => {
+            if (e.payload && e.payload.widget_mode !== undefined) {
+                cachedWidgetMode = e.payload.widget_mode;
+            }
+        });
+
         // Слушаем изменение текста снаружи (сквозной пайплайн OCR -> TTS)
         listen('tts-state-sync', (event) => {
             if (event.payload && event.payload.action === 'load') {
@@ -270,79 +337,56 @@ document.addEventListener('DOMContentLoaded', () => {
 
         listen('tts-action-read', async () => {
             try {
+                // МГНОВЕННО (0 мс) переключаем кнопку Play -> Pause и показываем активность до захвата буфера и синтеза!
+                if (cachedWidgetMode === 2) {
+                    invoke('show_widget_window').catch(() => {});
+                }
+                engine.preparePlayback();
+
                 const shouldTranslate = !!(engine.settings && engine.settings.translate);
                 const text = await invoke('capture_clipboard_text', { translate: shouldTranslate });
                 if (!text || !text.trim()) {
                     console.warn('[TTS] tts-action-read: clipboard/selection empty');
+                    engine.stop();
                     return;
                 }
                 handleNewText(text);
-                
-                let widgetMode = 2;
-                try {
-                    const config = await invoke('load_config');
-                    if (config.widget_mode !== undefined) {
-                        widgetMode = config.widget_mode;
-                    }
-                } catch (_) {
-                    widgetMode = parseInt(localStorage.getItem('widgetMode') || '2', 10);
-                }
-
-                if (widgetMode === 2) {
-                    await invoke('show_widget_window');
-                }
             } catch (e) {
                 console.error("Failed to capture and read:", e);
+                engine.stop();
             }
         });
         
         listen('tts-action-translate', async () => {
             try {
+                // МГНОВЕННО (0 мс) переключаем кнопку Play -> Pause и показываем активность!
+                if (cachedWidgetMode === 2) {
+                    invoke('show_widget_window').catch(() => {});
+                }
+                engine.preparePlayback();
+
                 const text = await invoke('capture_clipboard_text', { translate: true });
                 if (!text || !text.trim()) {
                     console.warn('[TTS] tts-action-translate: clipboard/selection empty');
+                    engine.stop();
                     return;
                 }
                 handleNewText(text);
-                
-                let widgetMode = 2;
-                try {
-                    const config = await invoke('load_config');
-                    if (config.widget_mode !== undefined) {
-                        widgetMode = config.widget_mode;
-                    }
-                } catch (_) {
-                    widgetMode = parseInt(localStorage.getItem('widgetMode') || '2', 10);
-                }
-
-                if (widgetMode === 2) {
-                    await invoke('show_widget_window');
-                }
             } catch (e) {
                 console.error("Failed to capture and translate:", e);
+                engine.stop();
             }
         });
 
         listen('tts-action-append', async () => {
             try {
+                if (cachedWidgetMode === 2) {
+                    invoke('show_widget_window').catch(() => {});
+                }
                 const shouldTranslate = !!(engine.settings && engine.settings.translate);
                 const text = await invoke('capture_clipboard_text', { translate: shouldTranslate });
                 if (!text || !text.trim()) return;
                 handleAppendText(text);
-                
-                let widgetMode = 2;
-                try {
-                    const config = await invoke('load_config');
-                    if (config.widget_mode !== undefined) {
-                        widgetMode = config.widget_mode;
-                    }
-                } catch (_) {
-                    widgetMode = parseInt(localStorage.getItem('widgetMode') || '2', 10);
-                }
-
-                if (widgetMode === 2) {
-                    await invoke('show_widget_window');
-                }
             } catch (e) {
                 console.error("Failed to capture and append:", e);
             }

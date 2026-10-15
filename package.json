@@ -1,7 +1,7 @@
 {
     "name":  "sinc-pro",
     "private":  true,
-    "version": "3.5.17",
+    "version": "3.5.20",
     "type":  "module",
     "scripts":  {
                     "tauri":  "tauri",

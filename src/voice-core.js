@@ -317,13 +317,44 @@ class VoiceCore {
         let rawSentences = processed.split(/(?<=[.!?])\s+(?=\p{Lu})|(?<=[:;])\s+|\n+/u);
         
         let sentences = [];
+        const MAX_CHUNK_LEN = 260;
         for (let s of rawSentences) {
             s = s.replace(/<DOT>/g, ".");
             s = s.replace(/<ELLIPSIS>/g, "...");
             const trimmed = s.trim();
             // Предложение должно содержать хотя бы одну букву или цифру для озвучки
             if (trimmed.length > 0 && /[\p{L}\p{N}]/u.test(trimmed)) {
-                sentences.push(trimmed);
+                if (trimmed.length <= MAX_CHUNK_LEN) {
+                    sentences.push(trimmed);
+                } else {
+                    // Длинные предложения без точек (например, в больших статьях или списках) делим по запятым/тире/пробелам,
+                    // чтобы первое предложение синтезировалось мгновенно без многосекундного ожидания
+                    let remaining = trimmed;
+                    while (remaining.length > MAX_CHUNK_LEN) {
+                        let splitIdx = -1;
+                        const slice = remaining.slice(0, MAX_CHUNK_LEN);
+                        const punctMatch = Math.max(
+                            slice.lastIndexOf(', '),
+                            slice.lastIndexOf(' — '),
+                            slice.lastIndexOf(' - '),
+                            slice.lastIndexOf('. ')
+                        );
+                        if (punctMatch >= 80) {
+                            splitIdx = punctMatch + 1;
+                        } else {
+                            const spaceIdx = slice.lastIndexOf(' ');
+                            splitIdx = spaceIdx >= 80 ? spaceIdx : MAX_CHUNK_LEN;
+                        }
+                        const chunk = remaining.slice(0, splitIdx).trim();
+                        if (chunk.length > 0 && /[\p{L}\p{N}]/u.test(chunk)) {
+                            sentences.push(chunk);
+                        }
+                        remaining = remaining.slice(splitIdx).trim();
+                    }
+                    if (remaining.length > 0 && /[\p{L}\p{N}]/u.test(remaining)) {
+                        sentences.push(remaining);
+                    }
+                }
             }
         }
         return sentences;
@@ -332,28 +363,35 @@ class VoiceCore {
     async loadCachedSentences(startIndex = 0) {
         const currentBuffersRef = this.audioBuffers;
         const voiceKey = this.settings.voice || 'ru-RU-SvetlanaNeural';
-        
-        // Создаем массив промисов для проверки кэша для всех предложений, начиная с startIndex
-        const promises = this.sentences.slice(startIndex).map(async (sentence, relativeIndex) => {
-            const i = startIndex + relativeIndex;
-            if (currentBuffersRef[i]) return;
-            
-            try {
-                const cachedAudio = await this.cache.get(voiceKey, sentence);
-                if (cachedAudio && this.audioBuffers === currentBuffersRef) {
-                    this.log(`Instant Cache load for sentence ${i}`);
-                    this.audioBuffers[i] = cachedAudio;
-                }
-            } catch (e) {
-                this.log(`Failed to instantly check cache for sentence ${i}: ${e}`);
-            }
-        });
+        const BATCH_SIZE = 8;
 
-        await Promise.all(promises);
-        
+        // Проверяем кэш небольшими порциями, чтобы не забивать очередь IndexedDB при больших текстах
+        for (let batchStart = startIndex; batchStart < this.sentences.length; batchStart += BATCH_SIZE) {
+            if (this.audioBuffers !== currentBuffersRef) return;
+            const end = Math.min(batchStart + BATCH_SIZE, this.sentences.length);
+            const batchPromises = [];
+            for (let i = batchStart; i < end; i++) {
+                if (currentBuffersRef[i] || this.currentlyLoading.has(i)) continue;
+                const sentence = this.sentences[i];
+                batchPromises.push((async () => {
+                    try {
+                        const cachedAudio = await this.cache.get(voiceKey, sentence);
+                        if (cachedAudio && this.audioBuffers === currentBuffersRef) {
+                            this.audioBuffers[i] = cachedAudio;
+                        }
+                    } catch (e) {
+                        this.log(`Failed to check cache for sentence ${i}: ${e}`);
+                    }
+                })());
+            }
+            if (batchPromises.length > 0) {
+                await Promise.all(batchPromises);
+            }
+        }
+
         if (this.audioBuffers === currentBuffersRef) {
             this.updateProgress();
-            
+
             // Если мы сейчас играем текущее предложение и оно только что подгрузилось из кэша, запустим его
             if (this.isPlaying && !this.audioElement.src) {
                 const currentBuffer = this.audioBuffers[this.currentSentenceIndex];
@@ -365,25 +403,52 @@ class VoiceCore {
         }
     }
 
-    loadText(text) {
-        this.stop(); // Жесткая остановка старого воспроизведения при загрузке нового текста
+    preparePlayback() {
+        this.audioElement.pause();
+        this.audioElement.removeAttribute('src');
+        this.isPlaying = true;
+        this.isPaused = false;
+        this.notifyState();
+        this.broadcastState('play');
+        if (this.onProgress) {
+            this.onProgress(6, 0);
+        }
+        if (window.__TAURI__) {
+            window.__TAURI__.event.emit('tts-state-sync', {
+                action: 'progress',
+                percentBuffered: 6,
+                percentPlayed: 0
+            });
+        }
+    }
+
+    loadText(text, autoPlay = false) {
+        if (autoPlay) {
+            this.audioElement.pause();
+            this.audioElement.removeAttribute('src');
+            this.currentlyLoading.clear();
+        } else {
+            this.stop(); // Остановка старого воспроизведения при ручной загрузке нового текста
+        }
         this.isPrefetching = false; // Останавливаем старую очередь загрузки
+        this.currentQueueId = null;
         this.currentText = this.cleanText(text);
         this.sentences = this.splitIntoSentences(this.currentText);
-        this.log(`loadText() called, sentences count: ${this.sentences.length}`);
+        this.log(`loadText() called, sentences count: ${this.sentences.length}, autoPlay=${autoPlay}`);
         this.audioBuffers = new Array(this.sentences.length).fill(null);
         this.audioDurations = new Array(this.sentences.length).fill(0);
         this.currentSentenceIndex = 0;
-        this.isPlaying = false;
+        this.isPlaying = autoPlay;
         this.isPaused = false;
         this.notifyState();
         
         if (this.sentences.length > 0) {
-            // Мгновенная массовая загрузка кэшированных предложений из IndexedDB
-            this.loadCachedSentences(0).then(() => {
-                // После того как кэшированные подгрузились, запускаем префетч очередь для недостающих предложений
-                this.startPrefetchQueue();
-            });
+            // СРАЗУ запускаем префетч с 0-го предложения (без ожидания проверки всех N предложений в IndexedDB!)
+            this.startPrefetchQueue();
+            // Остальные предложения проверяем в кэше фоново батчами
+            if (this.sentences.length > 1) {
+                this.loadCachedSentences(1);
+            }
         }
     }
 
@@ -402,13 +467,10 @@ class VoiceCore {
         
         this.updateProgress();
         
-        // Мгновенная массовая загрузка кэшированных предложений для новых индексов
-        this.loadCachedSentences(oldLength).then(() => {
-            // Перезапускаем очередь загрузки, если она остановилась
-            if (!this.isPrefetching) {
-                this.startPrefetchQueue();
-            }
-        });
+        if (!this.isPrefetching) {
+            this.startPrefetchQueue();
+        }
+        this.loadCachedSentences(oldLength);
     }
 
     async fetchSentence(i, queueId, currentBuffersRef) {

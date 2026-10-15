@@ -4,7 +4,7 @@
   <h1>SINC PRO — Audio Intelligence</h1>
   <p><strong>Умный голосовой ИИ-ассистент, студийная озвучка текста, экранный OCR-переводчик и интеллектуальный переключатель раскладки для Windows 10/11</strong></p>
   <p>
-    <a href="#ru">🇷🇺 Русский</a> • <a href="#en">🇺🇸 English</a> • <a href="https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/latest">📥 Скачать последний релиз (v3.5.19)</a>
+    <a href="#ru">🇷🇺 Русский</a> • <a href="#en">🇺🇸 English</a> • <a href="https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/latest">📥 Скачать последний релиз (v3.5.20)</a>
   </p>
 </div>
 
@@ -118,7 +118,7 @@ npm run tauri dev
   <h1>🇺🇸 SINC PRO — Audio Intelligence</h1>
   <p><strong>Smart AI Voice Dictation, Studio TTS Voiceover, Screen OCR Translator & Intelligent Layout Switcher for Windows 10/11</strong></p>
   <p>
-    <a href="#ru">🇷🇺 Русский</a> • <a href="#en">🇺🇸 English</a> • <a href="https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/latest">📥 Download Latest Release (v3.5.19)</a>
+    <a href="#ru">🇷🇺 Русский</a> • <a href="#en">🇺🇸 English</a> • <a href="https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/latest">📥 Download Latest Release (v3.5.20)</a>
   </p>
 </div>
 

@@ -79,21 +79,12 @@ pub async fn translate_hybrid(
             .build()
             .unwrap_or_else(|_| Client::new());
 
-        let mut candidate_models: Vec<&str> = Vec::new();
-        let trimmed_model = model.trim();
-        if !trimmed_model.is_empty()
-            && !trimmed_model.contains("native-audio")
-            && !trimmed_model.contains("antigravity")
-        {
-            candidate_models.push(trimmed_model);
-        }
-        for m in ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"] {
-            if !candidate_models.contains(&m) {
-                candidate_models.push(m);
-            }
-        }
+        let candidate_models = crate::build_audio_capable_models(model);
 
-        for m in candidate_models {
+        for m in &candidate_models {
+            if crate::is_model_locked(m) {
+                continue;
+            }
             let url = format!(
                 "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
                 m,
@@ -101,18 +92,30 @@ pub async fn translate_hybrid(
             );
 
             if let Ok(res) = client.post(&url).json(&req).send().await {
-                if res.status().is_success() {
-                    if let Ok(gr) = res.json::<GeminiResponse>().await {
-                        if let Some(mut cands) = gr.candidates {
-                            if let Some(cand) = cands.pop() {
-                                if let Some(content) = cand.content {
-                                    if let Some(mut parts) = content.parts {
-                                        if let Some(part) = parts.pop() {
-                                            if let Some(translated) = part.text {
-                                                let clean = translated.trim().to_string();
-                                                if !clean.is_empty() {
-                                                    return Ok(post_process_translation(text, clean));
-                                                }
+                let status = res.status();
+                if !status.is_success() {
+                    let err_text = res.text().await.unwrap_or_default();
+                    if status.as_u16() == 429
+                        || status.as_u16() == 404
+                        || status.as_u16() == 400
+                        || err_text.contains("RESOURCE_EXHAUSTED")
+                        || err_text.contains("quota")
+                    {
+                        crate::record_model_failure(m, status.as_u16(), &err_text);
+                    }
+                    continue;
+                }
+                if let Ok(gr) = res.json::<GeminiResponse>().await {
+                    if let Some(mut cands) = gr.candidates {
+                        if let Some(cand) = cands.pop() {
+                            if let Some(content) = cand.content {
+                                if let Some(mut parts) = content.parts {
+                                    if let Some(part) = parts.pop() {
+                                        if let Some(translated) = part.text {
+                                            let clean = translated.trim().to_string();
+                                            if !clean.is_empty() {
+                                                crate::record_model_success(m);
+                                                return Ok(post_process_translation(text, clean));
                                             }
                                         }
                                     }
