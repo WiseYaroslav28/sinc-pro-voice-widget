@@ -52,20 +52,22 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  const PAD_LEFT = 42;
-  const PAD_TOP = 24;
+  const PAD_LEFT = 44;
+  const PAD_TOP = 22;
   let widgetScale = 1.0;
   let cachedWindowPos = { x: 0, y: 0 };
 
   const root = document.getElementById('tts-widget-root');
   const widgetContainer = document.getElementById('widget-container');
-  const btnExpand = document.getElementById('tts-btn-expand');
   const expandedRow = document.getElementById('expanded-row');
-  const expandIcon = document.getElementById('tts-expand-icon');
+  let btnExpand = null;
+  let expandIcon = null;
 
   let isRowExpanded = false;
   let isDropdownOpen = false;
   let currentRegionState = 'hover_collapsed';
+  let hoveredPlayWhileCollapsed = false;
+  let playHoverStartX = null;
 
   async function applyWidgetScale(scale) {
     const clamped = Math.max(0.7, Math.min(1.5, parseFloat(scale) || 1.0));
@@ -76,7 +78,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (window.__TAURI__) {
       const { invoke } = window.__TAURI__.core;
       const dpr = window.devicePixelRatio || 1;
-      const winW = Math.round((500 * widgetScale + 84) * dpr);
+      const winW = Math.round((520 * widgetScale + 88) * dpr);
       const winH = Math.round((440 * widgetScale + 60) * dpr);
       try {
         await invoke('resize_window', { width: winW, height: winH });
@@ -92,7 +94,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       await new Promise(r => setTimeout(r, 80));
       const dpr = window.devicePixelRatio || 1;
-      const winW = Math.round((500 * widgetScale + 84) * dpr);
+      const winW = Math.round((520 * widgetScale + 88) * dpr);
       const winH = Math.round((440 * widgetScale + 60) * dpr);
       let pos = await appWindow.outerPosition();
 
@@ -140,7 +142,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!window.__TAURI__) return;
     const { invoke } = window.__TAURI__.core;
     const dpr = window.devicePixelRatio || 1;
-    // Позволяем поднимать окно на 24 логических пикселя выше верхней границы экрана,
+    // Позволяем поднимать окно на 22 логических пикселя выше верхней границы экрана,
     // чтобы видимая капсула (#widget-container) примагничивалась ровно к 0px от верха экрана,
     // а при отступе от верха сохранялось полное свечение кнопки Play (.play-pulse)
     const topGlowOffsetPhys = Math.round(PAD_TOP * dpr);
@@ -165,6 +167,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // Рендерим общий UI
   if (window.renderTtsWidget) {
     window.renderTtsWidget(root, false);
+    btnExpand = document.getElementById('tts-btn-expand');
+    expandIcon = document.getElementById('tts-expand-icon');
     
     // Навешиваем обработчик перетаскивания на drag handle
     const dragHandle = root.querySelector('#tts-widget-drag');
@@ -214,17 +218,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Передаем ТОЛЬКО саму капсулу виджета (со скруглением 24px), без области тени вокруг неё!
       // Вся область тени (слева, справа, сверху, снизу) остается на 100% прозрачной для кликов мыши.
-      const isHoverCollapsed = currentRegionState === 'hover_collapsed';
-      const pillW = Math.round((isHoverCollapsed ? 114 : 500) * widgetScale);
-      const basePillH = (currentRegionState === 'expanded' || isRowExpanded) ? 98 : 54;
       const domRect = widgetContainer ? widgetContainer.getBoundingClientRect() : null;
+      const pillX = domRect && domRect.left > 0 ? Math.round(domRect.left) : PAD_LEFT;
+      const pillY = domRect && domRect.top > 0 ? Math.round(domRect.top) : PAD_TOP;
+
+      const isHoverCollapsed = currentRegionState === 'hover_collapsed';
+      const isStopPeek = isHoverCollapsed && widgetContainer && widgetContainer.classList.contains('stop-peek');
+      const baseW = isHoverCollapsed ? (isStopPeek ? 148 : 114) : 500;
+      const pillW = Math.round(baseW * widgetScale);
+      const basePillH = (currentRegionState === 'expanded' || isRowExpanded) ? 100 : 54;
       const pillH = Math.round(Math.max(basePillH * widgetScale, domRect ? domRect.height : 0));
 
+      const pad = isHoverCollapsed ? 0 : 4;
       rects.push({
-        x: PAD_LEFT,
-        y: PAD_TOP,
-        width: pillW,
-        height: pillH,
+        x: Math.max(0, pillX - pad),
+        y: Math.max(0, pillY - pad),
+        width: pillW + pad * 2,
+        height: pillH + pad * 2,
         radius: Math.round(24 * widgetScale)
       });
 
@@ -240,12 +250,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (openMenu) {
           const mr = openMenu.getBoundingClientRect();
           if (mr.width > 0 && mr.height > 0) {
-            const topY = Math.min(Math.floor(mr.top), PAD_TOP + pillH - 2);
+            const topY = Math.min(Math.floor(mr.top), pillY + pillH - 2);
             rects.push({
-              x: Math.floor(mr.left),
+              x: Math.floor(mr.left) - 4,
               y: topY,
-              width: Math.ceil(mr.width),
-              height: Math.ceil(mr.bottom - topY),
+              width: Math.ceil(mr.width) + 8,
+              height: Math.ceil(mr.bottom - topY) + 4,
               radius: Math.round(14 * widgetScale)
             });
           }
@@ -269,6 +279,7 @@ document.addEventListener('DOMContentLoaded', () => {
       collapseDebounceTimer = null;
     }
     if (widgetContainer && widgetContainer.classList.contains('hover-collapsed')) {
+      widgetContainer.classList.remove('stop-peek');
       widgetContainer.classList.remove('hover-collapsed');
       updateClickRegion(isDropdownOpen ? 'dropdown' : (isRowExpanded ? 'expanded' : 'collapsed'));
     }
@@ -279,43 +290,103 @@ document.addEventListener('DOMContentLoaded', () => {
       clearTimeout(collapseDebounceTimer);
       collapseDebounceTimer = null;
     }
-    if (widgetContainer && !widgetContainer.classList.contains('hover-collapsed')) {
-      if (root && typeof root.closeMenus === 'function') {
-        root.closeMenus();
-      }
-      isDropdownOpen = false;
+    hoveredPlayWhileCollapsed = false;
+    playHoverStartX = null;
 
-      if (expandedRow) {
-        expandedRow.classList.remove('flex');
-        expandedRow.classList.add('hidden');
-      }
-      if (expandIcon) {
-        expandIcon.textContent = 'open_in_full';
-      }
-      isRowExpanded = false;
+    if (widgetContainer) {
+      const wasPeek = widgetContainer.classList.contains('stop-peek');
+      widgetContainer.classList.remove('stop-peek');
 
-      widgetContainer.classList.add('hover-collapsed');
-      updateClickRegion('hover_collapsed');
+      if (!widgetContainer.classList.contains('hover-collapsed')) {
+        if (root && typeof root.closeMenus === 'function') {
+          root.closeMenus();
+        }
+        isDropdownOpen = false;
+
+        if (expandedRow) {
+          expandedRow.classList.remove('flex');
+          expandedRow.classList.add('hidden');
+        }
+        if (expandIcon) {
+          expandIcon.textContent = 'open_in_full';
+        }
+        isRowExpanded = false;
+
+        widgetContainer.classList.add('hover-collapsed');
+        updateClickRegion('hover_collapsed');
+      } else if (wasPeek) {
+        updateClickRegion('hover_collapsed');
+      }
     }
   };
 
   if (widgetContainer) {
     widgetContainer.classList.add('hover-collapsed');
 
-    const playStopWrapper = root.querySelector('#tts-play-stop-wrapper');
-    const extraContent = root.querySelector('.tts-extra-content');
-    const dragHandle = root.querySelector('#tts-widget-drag');
+    const playStopWrapper = root ? root.querySelector('#tts-play-stop-wrapper') : null;
+    const playBtn = root ? root.querySelector('#tts-widget-play') : null;
+    const stopBtnContainer = root ? root.querySelector('.stop-btn-container') : null;
+    const extraContent = root ? root.querySelector('.tts-extra-content') : null;
 
-    if (playStopWrapper) {
-      playStopWrapper.addEventListener('mouseenter', expandWidget);
+    // Любое движение мыши внутри контейнера отменяет таймер сворачивания
+    widgetContainer.addEventListener('mousemove', (e) => {
+      if (collapseDebounceTimer) {
+        clearTimeout(collapseDebounceTimer);
+        collapseDebounceTimer = null;
+      }
+      if (!widgetContainer.classList.contains('hover-collapsed')) {
+        return;
+      }
+      if (playBtn) {
+        const pr = playBtn.getBoundingClientRect();
+        // Наведение на саму кнопку Play НЕ раскрывает всю панель сразу,
+        // а только показывает кнопку Стоп сбоку (если идет озвучка/пауза).
+        if (e.clientX >= pr.left && e.clientX <= pr.right - 3) {
+          hoveredPlayWhileCollapsed = true;
+          if (playHoverStartX === null) {
+            playHoverStartX = e.clientX;
+          }
+          if (playStopWrapper && playStopWrapper.classList.contains('can-stop') && !widgetContainer.classList.contains('stop-peek')) {
+            widgetContainer.classList.add('stop-peek');
+            updateClickRegion('hover_collapsed');
+          }
+        } else if (hoveredPlayWhileCollapsed && e.clientX > pr.right - 3 && (playHoverStartX === null || e.clientX >= playHoverStartX + 3)) {
+          // Когда пользователь уводит мышку от кнопки Play вправо (в сторону кнопки Стоп) — панель разъезжается!
+          expandWidget();
+        }
+      }
+    });
+
+    if (playBtn) {
+      playBtn.addEventListener('mouseenter', (e) => {
+        if (collapseDebounceTimer) {
+          clearTimeout(collapseDebounceTimer);
+          collapseDebounceTimer = null;
+        }
+        if (widgetContainer.classList.contains('hover-collapsed')) {
+          hoveredPlayWhileCollapsed = true;
+          playHoverStartX = e.clientX;
+          if (playStopWrapper && playStopWrapper.classList.contains('can-stop') && !widgetContainer.classList.contains('stop-peek')) {
+            widgetContainer.classList.add('stop-peek');
+            updateClickRegion('hover_collapsed');
+          }
+        }
+      });
     }
+
+    if (stopBtnContainer) {
+      stopBtnContainer.addEventListener('mouseenter', () => {
+        if (hoveredPlayWhileCollapsed) {
+          expandWidget();
+        }
+      });
+    }
+
     if (extraContent) {
-      extraContent.addEventListener('mouseenter', expandWidget);
-    }
-    if (dragHandle) {
-      dragHandle.addEventListener('mouseenter', () => {
-        // Если виджет уже раскрыт, не сворачиваем его мгновенно при случайном задевании ручки,
-        // а даем спокойно перетаскивать
+      extraContent.addEventListener('mouseenter', () => {
+        if (hoveredPlayWhileCollapsed) {
+          expandWidget();
+        }
       });
     }
   }
@@ -411,20 +482,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Нативные события входа/выхода курсора из интерактивной капсулы (от потока hit-test в Rust)
-    listen('cursor-entered-region', (e) => {
+    listen('cursor-entered-region', () => {
       if (collapseDebounceTimer) {
         clearTimeout(collapseDebounceTimer);
         collapseDebounceTimer = null;
-      }
-      if (e.payload && typeof e.payload.phys_x === 'number') {
-        const dpr = window.devicePixelRatio || 1;
-        const lx = e.payload.phys_x / dpr;
-        // Если виджет свернут и курсор вошел в левую часть (кнопка Play, а не точки перетаскивания справа) — раскрываем
-        if (widgetContainer && widgetContainer.classList.contains('hover-collapsed')) {
-          if (lx < PAD_LEFT + 78 * widgetScale) {
-            expandWidget();
-          }
-        }
       }
     });
 
@@ -432,7 +493,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (collapseDebounceTimer) clearTimeout(collapseDebounceTimer);
       collapseDebounceTimer = setTimeout(() => {
         collapseWidget();
-      }, 100);
+      }, 120);
     });
 
     // Сразу запрашиваем установленные голоса при загрузке
@@ -485,10 +546,22 @@ document.addEventListener('DOMContentLoaded', () => {
         const p = event.payload;
         if (p.action === 'play') {
           root.updateState({ isPlaying: true, isPaused: false });
+          if (widgetContainer && widgetContainer.classList.contains('hover-collapsed') && hoveredPlayWhileCollapsed) {
+            widgetContainer.classList.add('stop-peek');
+            updateClickRegion('hover_collapsed');
+          }
         } else if (p.action === 'pause') {
           root.updateState({ isPlaying: false, isPaused: true });
+          if (widgetContainer && widgetContainer.classList.contains('hover-collapsed') && hoveredPlayWhileCollapsed) {
+            widgetContainer.classList.add('stop-peek');
+            updateClickRegion('hover_collapsed');
+          }
         } else if (p.action === 'stop') {
           root.updateState({ isPlaying: false, isPaused: false });
+          if (widgetContainer && widgetContainer.classList.contains('stop-peek')) {
+            widgetContainer.classList.remove('stop-peek');
+            updateClickRegion('hover_collapsed');
+          }
         } else if (p.action === 'progress') {
           root.updateState({ percentBuffered: p.percentBuffered, percentPlayed: p.percentPlayed });
         } else if (p.action === 'settings' || p.action === 'setting') {

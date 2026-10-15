@@ -8,17 +8,28 @@
 
     <style>
       * { box-sizing: border-box; }
-      html, body {
-        margin: 0; padding: 0;
+      html {
+        margin: 0;
+        padding: 0;
         background: transparent !important;
         background-color: transparent !important;
-        width: 100vw; height: 100vh;
-        display: flex; 
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+      }
+      body {
+        margin: 0;
+        background: transparent !important;
+        background-color: transparent !important;
+        width: 100vw;
+        height: 100vh;
+        display: flex;
         align-items: flex-start; /* Примагничиваем к верху */
         justify-content: flex-start; /* Раскрытие вправо */
-        padding-top: 24px; /* Запас сверху для свечения кнопки Play (.play-pulse) и верхней тени */
-        padding-left: 42px; /* Запас слева для полного скругления 32px тени и свечения */
-        padding-right: 42px;
+        padding-top: 22px; /* Запас сверху для свечения кнопки Play (.play-pulse) и верхней тени */
+        padding-left: 44px; /* Запас слева для полного скругления 32px тени и свечения */
+        padding-right: 44px; /* Запас справа для полного скругления 32px тени */
+        overflow: hidden;
       }
       .play-pulse {
         box-shadow: 0 0 16px rgba(142,82,255,0.75) !important;
@@ -44,6 +55,11 @@
       /* Сворачивание плавающего виджета */
       #widget-container.hover-collapsed {
         width: 114px !important;
+      }
+
+      /* При наведении на Play во время озвучки/паузы чуть расширяем свернутую капсулу под всплывающую кнопку Stop */
+      #widget-container.hover-collapsed.stop-peek {
+        width: 148px !important;
       }
       
       #widget-container.hover-collapsed .tts-extra-content {

@@ -26,12 +26,12 @@ window.renderTtsWidget = function(container, isMain = false) {
         height: 36px;
         flex-shrink: 0;
       }
-      #tts-play-stop-wrapper.can-stop::after {
+      #tts-play-stop-wrapper::after {
         content: '';
         position: absolute;
         left: 36px;
         top: 0;
-        width: 14px;
+        width: 34px;
         height: 100%;
         background: transparent;
         z-index: 5;
@@ -570,11 +570,22 @@ function initTtsWidgetLogic(container, isMain) {
     }
 
     const wrapper = container.querySelector('#tts-play-stop-wrapper');
+    const stopContainer = container.querySelector('.stop-btn-container');
     if (wrapper) {
       if (isPlaying || isPaused) {
         wrapper.classList.add('can-stop');
+        if (stopContainer && wrapper.matches(':hover')) {
+          stopContainer.style.opacity = '1';
+          stopContainer.style.transform = 'translateY(-50%) translateX(0)';
+          stopContainer.style.pointerEvents = 'auto';
+        }
       } else {
         wrapper.classList.remove('can-stop');
+        if (stopContainer) {
+          stopContainer.style.opacity = '0';
+          stopContainer.style.transform = 'translateY(-50%) translateX(-10px)';
+          stopContainer.style.pointerEvents = 'none';
+        }
       }
     }
 

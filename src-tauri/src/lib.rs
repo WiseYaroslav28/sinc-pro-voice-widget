@@ -7799,33 +7799,252 @@ fn point_in_rounded_rect(px: i32, py: i32, r: &PhysicalHitRect) -> bool {
 }
 
 #[cfg(target_os = "windows")]
-fn make_overlay_borderless(hwnd: isize) {
+static SUBCLASSED_OVERLAY_HWNDS: std::sync::LazyLock<Mutex<std::collections::HashSet<isize>>> =
+    std::sync::LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn overlay_subclass_proc(
+    hwnd: isize,
+    msg: u32,
+    wparam: usize,
+    lparam: isize,
+    _uid_subclass: usize,
+    _ref_data: usize,
+) -> isize {
+    use winapi::um::wingdi::{GetStockObject, BLACK_BRUSH};
     use winapi::um::winuser::{
-        GetWindowLongW, SetWindowLongW, SetWindowPos, SetWindowRgn, GWL_EXSTYLE, GWL_STYLE,
-        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER,
-        WS_CAPTION, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX,
-        WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
+        FillRect, GetClientRect, GWL_EXSTYLE, GWL_STYLE, WS_BORDER, WS_CAPTION, WS_CLIPCHILDREN,
+        WS_CLIPSIBLINGS, WS_DLGFRAME, WS_EX_APPWINDOW, WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME,
+        WS_EX_STATICEDGE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
+        WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
     };
+
+    #[repr(C)]
+    struct STYLESTRUCT {
+        style_old: u32,
+        style_new: u32,
+    }
+
+    #[repr(C)]
+    struct PAINTSTRUCT {
+        hdc: isize,
+        f_erase: i32,
+        rc_paint: winapi::shared::windef::RECT,
+        f_restore: i32,
+        f_inc_update: i32,
+        rgb_reserved: [u8; 32],
+    }
+
+    #[link(name = "comctl32")]
+    extern "system" {
+        fn DefSubclassProc(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> isize;
+        fn RemoveWindowSubclass(
+            hwnd: isize,
+            pfn_subclass: unsafe extern "system" fn(isize, u32, usize, isize, usize, usize) -> isize,
+            uid_subclass: usize,
+        ) -> i32;
+    }
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn BeginPaint(hWnd: isize, lpPaint: *mut PAINTSTRUCT) -> isize;
+        fn EndPaint(hWnd: isize, lpPaint: *const PAINTSTRUCT) -> i32;
+    }
+
+    const WM_DESTROY: u32 = 0x0002;
+    const WM_SETTEXT: u32 = 0x000C;
+    const WM_PAINT: u32 = 0x000F;
+    const WM_ERASEBKGND: u32 = 0x0014;
+    const WM_STYLECHANGING: u32 = 0x007C;
+    const WM_NCCALCSIZE: u32 = 0x0083;
+    const WM_NCPAINT: u32 = 0x0085;
+    const WM_NCACTIVATE: u32 = 0x0086;
+
+    match msg {
+        WM_STYLECHANGING => {
+            let ss = lparam as *mut STYLESTRUCT;
+            if !ss.is_null() {
+                if wparam as i32 == GWL_STYLE {
+                    let bad_bits = WS_CAPTION
+                        | WS_THICKFRAME
+                        | WS_SYSMENU
+                        | WS_MINIMIZEBOX
+                        | WS_MAXIMIZEBOX
+                        | WS_BORDER
+                        | WS_DLGFRAME;
+                    (*ss).style_new =
+                        ((*ss).style_new & !bad_bits) | WS_POPUP | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
+                } else if wparam as i32 == GWL_EXSTYLE {
+                    let bad_ex = WS_EX_WINDOWEDGE
+                        | WS_EX_DLGMODALFRAME
+                        | WS_EX_CLIENTEDGE
+                        | WS_EX_STATICEDGE
+                        | WS_EX_APPWINDOW;
+                    (*ss).style_new = ((*ss).style_new & !bad_ex) | WS_EX_TOOLWINDOW;
+                }
+            }
+            return 0;
+        }
+        WM_NCCALCSIZE => {
+            if wparam != 0 {
+                return 0;
+            }
+        }
+        WM_NCPAINT => {
+            return 0;
+        }
+        WM_NCACTIVATE => {
+            // Передаем lparam = -1, чтобы DefWindowProcW не перерисовывал неклиентскую шапку окна
+            return DefSubclassProc(hwnd, msg, wparam, -1);
+        }
+        WM_SETTEXT => {
+            return 1;
+        }
+        WM_ERASEBKGND => {
+            let hdc = wparam as isize;
+            if hdc != 0 {
+                let mut rc = winapi::shared::windef::RECT {
+                    left: 0,
+                    top: 0,
+                    right: 4000,
+                    bottom: 4000,
+                };
+                GetClientRect(hwnd as _, &mut rc);
+                FillRect(hdc as _, &rc, GetStockObject(BLACK_BRUSH as i32) as _);
+            }
+            return 1;
+        }
+        WM_PAINT => {
+            let mut ps: PAINTSTRUCT = std::mem::zeroed();
+            let hdc = BeginPaint(hwnd, &mut ps);
+            if hdc != 0 {
+                FillRect(hdc as _, &ps.rc_paint, GetStockObject(BLACK_BRUSH as i32) as _);
+            }
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        WM_DESTROY => {
+            if let Ok(mut guard) = SUBCLASSED_OVERLAY_HWNDS.lock() {
+                guard.remove(&hwnd);
+            }
+            RemoveWindowSubclass(hwnd, overlay_subclass_proc, 0x53494E43);
+        }
+        _ => {}
+    }
+
+    DefSubclassProc(hwnd, msg, wparam, lparam)
+}
+
+#[cfg(target_os = "windows")]
+fn make_overlay_borderless(hwnd: isize) {
+    use winapi::um::wingdi::{CreateRectRgn, DeleteObject, GetStockObject, BLACK_BRUSH};
+    use winapi::um::winuser::{
+        FillRect, GetClientRect, GetWindowDC, GetWindowLongW, ReleaseDC, SetWindowLongW,
+        SetWindowPos, SetWindowRgn, SetWindowTextW, GWL_EXSTYLE, GWL_STYLE, SWP_FRAMECHANGED,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, WS_BORDER,
+        WS_CAPTION, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_DLGFRAME, WS_EX_APPWINDOW,
+        WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_EX_STATICEDGE, WS_EX_TOOLWINDOW,
+        WS_EX_WINDOWEDGE, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
+    };
+
+    #[repr(C)]
+    struct DWM_BLURBEHIND {
+        dw_flags: u32,
+        f_enable: i32,
+        h_rgn_blur: isize,
+        f_transition_on_maximized: i32,
+    }
+
+    #[link(name = "comctl32")]
+    extern "system" {
+        fn SetWindowSubclass(
+            hwnd: isize,
+            pfn_subclass: unsafe extern "system" fn(isize, u32, usize, isize, usize, usize) -> isize,
+            uid_subclass: usize,
+            dw_ref_data: usize,
+        ) -> i32;
+    }
+
+    #[link(name = "dwmapi")]
+    extern "system" {
+        fn DwmEnableBlurBehindWindow(hWnd: isize, pBlurBehind: *const DWM_BLURBEHIND) -> i32;
+        fn DwmSetWindowAttribute(
+            hwnd: isize,
+            dwAttribute: u32,
+            pvAttribute: *const std::ffi::c_void,
+            cbAttribute: u32,
+        ) -> i32;
+    }
+
     unsafe {
+        let already_subclassed = {
+            let guard = SUBCLASSED_OVERLAY_HWNDS.lock().unwrap();
+            guard.contains(&hwnd)
+        };
+
+        let mut newly_subclassed = false;
+        if !already_subclassed {
+            if SetWindowSubclass(hwnd, overlay_subclass_proc, 0x53494E43, 0) != 0 {
+                let mut guard = SUBCLASSED_OVERLAY_HWNDS.lock().unwrap();
+                guard.insert(hwnd);
+                newly_subclassed = true;
+            }
+        }
+
         let style = GetWindowLongW(hwnd as _, GWL_STYLE) as u32;
-        let bad_bits = WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
+        let bad_bits = WS_CAPTION
+            | WS_THICKFRAME
+            | WS_SYSMENU
+            | WS_MINIMIZEBOX
+            | WS_MAXIMIZEBOX
+            | WS_BORDER
+            | WS_DLGFRAME;
         let new_style = (style & !bad_bits) | WS_POPUP | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
-        let mut changed = false;
+        let mut changed = newly_subclassed;
         if new_style != style {
             SetWindowLongW(hwnd as _, GWL_STYLE, new_style as i32);
             changed = true;
         }
 
         let ex_style = GetWindowLongW(hwnd as _, GWL_EXSTYLE) as u32;
-        let new_ex_style = ex_style | WS_EX_TOOLWINDOW;
+        let bad_ex = WS_EX_WINDOWEDGE
+            | WS_EX_DLGMODALFRAME
+            | WS_EX_CLIENTEDGE
+            | WS_EX_STATICEDGE
+            | WS_EX_APPWINDOW;
+        let new_ex_style = (ex_style & !bad_ex) | WS_EX_TOOLWINDOW;
         if new_ex_style != ex_style {
             SetWindowLongW(hwnd as _, GWL_EXSTYLE, new_ex_style as i32);
             changed = true;
         }
 
         if changed {
-            // Сбрасываем любой GDI-регион, чтобы DWM DirectComposition сохранял 100% попиксельную прозрачность
+            let empty_title: [u16; 1] = [0];
+            SetWindowTextW(hwnd as _, empty_title.as_ptr());
+
+            // Отключаем DWM non-client рендеринг (DWMWA_NCRENDERING_POLICY = 2, DWMNCRP_DISABLED = 1)
+            let ncrp_disabled: u32 = 1;
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                2,
+                &ncrp_disabled as *const u32 as *const std::ffi::c_void,
+                std::mem::size_of::<u32>() as u32,
+            );
+
+            // Сбрасываем любой GDI-регион и восстанавливаем DwmEnableBlurBehindWindow с пустым регионом (-1)
             SetWindowRgn(hwnd as _, std::ptr::null_mut(), 1);
+            let hrgn = CreateRectRgn(0, 0, -1, -1) as isize;
+            let bb = DWM_BLURBEHIND {
+                dw_flags: 0x00000001 | 0x00000002, // DWM_BB_ENABLE | DWM_BB_BLURREGION
+                f_enable: 1,
+                h_rgn_blur: hrgn,
+                f_transition_on_maximized: 0,
+            };
+            let _ = DwmEnableBlurBehindWindow(hwnd, &bb);
+            if hrgn != 0 {
+                DeleteObject(hrgn as _);
+            }
+
             SetWindowPos(
                 hwnd as _,
                 std::ptr::null_mut(),
@@ -7833,8 +8052,28 @@ fn make_overlay_borderless(hwnd: isize) {
                 0,
                 0,
                 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_FRAMECHANGED,
+                SWP_NOMOVE
+                    | SWP_NOSIZE
+                    | SWP_NOZORDER
+                    | SWP_NOACTIVATE
+                    | SWP_NOOWNERZORDER
+                    | SWP_FRAMECHANGED,
             );
+
+            // Очищаем GDI-поверхность родительского HWND прозрачным черным (0x00000000),
+            // чтобы стереть голубую полоску шапки, нарисованную DefWindowProcW при создании окна в tao
+            let hdc = GetWindowDC(hwnd as _);
+            if !hdc.is_null() {
+                let mut rc = winapi::shared::windef::RECT {
+                    left: 0,
+                    top: 0,
+                    right: 4000,
+                    bottom: 4000,
+                };
+                GetClientRect(hwnd as _, &mut rc);
+                FillRect(hdc, &rc, GetStockObject(BLACK_BRUSH as i32) as _);
+                ReleaseDC(hwnd as _, hdc);
+            }
         }
     }
 }
@@ -7844,7 +8083,11 @@ fn ensure_webview_window_borderless(w: &tauri::WebviewWindow) {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     if let Ok(handle) = w.window_handle() {
         if let RawWindowHandle::Win32(win_handle) = handle.as_raw() {
-            make_overlay_borderless(win_handle.hwnd.get() as isize);
+            let hwnd = win_handle.hwnd.get() as isize;
+            make_overlay_borderless(hwnd);
+            let _ = w.run_on_main_thread(move || {
+                make_overlay_borderless(hwnd);
+            });
         }
     }
 }
@@ -7893,6 +8136,7 @@ where
     extern "system" {
         fn GetCursorPos(lpPoint: *mut POINT) -> i32;
         fn GetWindowRect(hWnd: isize, lpRect: *mut RECT) -> i32;
+        fn ClientToScreen(hWnd: isize, lpPoint: *mut POINT) -> i32;
         fn GetAsyncKeyState(vKey: i32) -> i16;
     }
 
@@ -7908,15 +8152,20 @@ where
     }
 
     let mut pt = POINT::default();
+    let mut client_origin = POINT::default();
     let mut wr = RECT::default();
     unsafe {
         if GetCursorPos(&mut pt) == 0 || GetWindowRect(hwnd, &mut wr) == 0 {
             return;
         }
+        if ClientToScreen(hwnd, &mut client_origin) == 0 {
+            client_origin.x = wr.left;
+            client_origin.y = wr.top;
+        }
     }
 
-    let rel_x = pt.x - wr.left;
-    let rel_y = pt.y - wr.top;
+    let rel_x = pt.x - client_origin.x;
+    let rel_y = pt.y - client_origin.y;
     let inside = rects.iter().any(|r| point_in_rounded_rect(rel_x, rel_y, r));
 
     let prev_ignore = {
@@ -8634,6 +8883,16 @@ pub fn run() {
                 let _ = set_autostart_enabled(true);
             }
 
+            // Устанавливаем Win32 subclass и безрамочный POPUP-стиль ДО показа окон
+            #[cfg(target_os = "windows")]
+            {
+                for label in &["widget", "capsule"] {
+                    if let Some(w) = app.get_webview_window(label) {
+                        ensure_webview_window_borderless(&w);
+                    }
+                }
+            }
+
             let minimize = MINIMIZED_STARTUP.load(std::sync::atomic::Ordering::SeqCst);
             if !minimize {
                 if let Some(w) = app.get_webview_window("main") {
@@ -8651,7 +8910,6 @@ pub fn run() {
                 }
             }
 
-            // Применяем безрамочный POPUP-стиль ПОСЛЕ показа окон, чтобы tao не перетер GWL_STYLE на WS_CAPTION
             #[cfg(target_os = "windows")]
             {
                 for label in &["widget", "capsule"] {
