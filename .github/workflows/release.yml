@@ -20,6 +20,40 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Extract Release Notes from CHANGELOG.md
+        id: changelog
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          $changelogPath = "CHANGELOG.md"
+          $notes = ""
+          if (Test-Path $changelogPath) {
+            $raw = Get-Content $changelogPath -Raw -Encoding UTF8
+            $escapedVer = [regex]::Escape($version)
+            $pattern = "(?ms)^## \[$escapedVer\][^\r\n]*\r?\n(.*?)(?=^## \[|\z)"
+            $match = [regex]::Match($raw, $pattern)
+            if ($match.Success) {
+              $notes = $match.Groups[1].Value.Trim()
+              $notes = $notes -replace '(?m)^### Added', '### ✨ Добавлено'
+              $notes = $notes -replace '(?m)^### Changed', '### 🔄 Изменено'
+              $notes = $notes -replace '(?m)^### Fixed', '### 🛠 Исправлено'
+            }
+          }
+          if ([string]::IsNullOrWhiteSpace($notes)) {
+            $prevTag = git describe --tags --abbrev=0 "${{ github.ref_name }}^" 2>$null
+            if ($prevTag) {
+              $commits = git log "$prevTag..${{ github.ref_name }}" --pretty=format:"- %s" | Where-Object { $_ -notmatch "\[skip ci\]" }
+              $notes = "### 🔄 Изменения в версии v$version`n`n" + ($commits -join "`n")
+            } else {
+              $notes = "Релиз SINC PRO v$version"
+            }
+          }
+          [System.IO.File]::WriteAllText("release_notes.txt", $notes, (New-Object System.Text.UTF8Encoding($false)))
+          $delimiter = "EOF_" + [guid]::NewGuid().ToString("N")
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "body<<$delimiter" -Encoding UTF8
+          Add-Content -Path $env:GITHUB_OUTPUT -Value $notes -Encoding UTF8
+          Add-Content -Path $env:GITHUB_OUTPUT -Value $delimiter -Encoding UTF8
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -49,43 +83,46 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'SINC PRO v__VERSION__'
-          releaseBody: 'Автоматический релиз версии ${{ github.ref_name }}'
+          releaseBody: ${{ steps.changelog.outputs.body }}
           releaseDraft: false
           prerelease: false
 
       - name: Update updater.json
         shell: pwsh
         run: |
-          $version = "${{ github.ref_name }}".SubString(1) # убираем 'v' из 'v3.5.6'
+          $version = "${{ github.ref_name }}".TrimStart('v')
           $sigFile = Get-ChildItem -Path src-tauri/target/release/bundle/msi/*.msi.sig | Select-Object -First 1
           if (-not $sigFile) {
             Write-Error "Signature file not found!"
             exit 1
           }
-          $signature = Get-Content $sigFile.FullName -Raw
-          $signature = $signature.Trim()
+          $signature = (Get-Content $sigFile.FullName -Raw).Trim()
           
           $updaterPath = "docs/updater.json"
-          $updater = Get-Content $updaterPath | ConvertFrom-Json
+          $updater = Get-Content $updaterPath -Raw -Encoding UTF8 | ConvertFrom-Json
+          
+          $notes = if (Test-Path "release_notes.txt") {
+            (Get-Content "release_notes.txt" -Raw -Encoding UTF8).Trim()
+          } else {
+            "Версия $version — Релиз SINC PRO"
+          }
           
           $updater.version = $version
           $updater.pub_date = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
-          $updater.notes = "Версия $version — Автоматический релиз SincPro"
+          $updater.notes = $notes
           $updater.platforms."windows-x86_64".signature = $signature
           $msiFile = Get-ChildItem -Path src-tauri/target/release/bundle/msi/*.msi | Select-Object -First 1
           $msiName = if ($msiFile) { $msiFile.Name } else { "SincPro_${version}_x64_en-US.msi" }
           $updater.platforms."windows-x86_64".url = "https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/download/v$version/$msiName"
           
-          # Преобразуем обратно в JSON без экранирования кириллицы
           $json = ConvertTo-Json $updater -Depth 100
-          # Сохраняем в UTF-8 без BOM для чистого коммита
           $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
           [System.IO.File]::WriteAllText($updaterPath, $json, $utf8NoBom)
           
-          # Настраиваем git и пушим изменения
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add docs/updater.json
           git commit -m "chore: update updater.json for version $version [skip ci]"
           git pull --rebase origin master
           git push origin HEAD:master
+          git push origin HEAD:main

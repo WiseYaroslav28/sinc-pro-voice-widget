@@ -1,278 +1,131 @@
-<a name="ru"></a>
-# [🇷🇺] SINC PRO - Умный Голосовой Ассистент & Виджет Озвучки
-
-[🇷🇺 Русский](#ru) | [🇺🇸 English](#en)
-
-SINC PRO — это локальное и облачное desktop-приложение для Windows на базе Tauri, Vanilla JS и Rust, предоставляющее мощные инструменты умной диктовки голосом через Gemini AI, быстрого перевода интерфейсов (OCR) и озвучки текста (Edge TTS).
-
-## 🚀 Основные возможности
-
-*   **🎙️ Смарт-микрофон (SINC Orb / Капсула)**: Запись голоса по нажатию `Ctrl + Win` с мгновенным форматированием с помощью Gemini AI (пресеты: краткая суть, надиктованный текст, или собственный промпт).
-*   **🧠 Среда ИИ-обработки (Новый запрос)**: Создание точечных ИИ-запросов на основе аудиозаписи, исходного текста транскрипции или любых ранее полученных ИИ-результатов. Позволяет выстраивать последовательные цепочки обработки (например, выделить «Суть» из текста, а затем перевести эту «Суть» на другой язык кастомным промптом).
-*   **🔊 Виджет озвучки (Edge TTS)**: Озвучивание выделенного текста по нажатию `Ctrl + Shift + S` с выбором голоса, скорости и тона. Поддерживает компактный плавающий режим с круговой шкалой прогресса (буферизация/воспроизведение) и автосворачиванием по ховеру.
-*   **🔍 Оверлей переводчика (OCR)**: Мгновенное распознавание текста на экране по `Alt + Q` с переводом через ИИ или локальный движок.
-*   **🔌 Отказоустойчивость ИИ (Локальный Fallback)**: При сбое или отсутствии доступа к облачному API Gemini, приложение автоматически перенаправляет запросы на локальные ИИ-модели: Whisper для распознавания речи (STT) и Ollama/локальные серверы для текстового анализа.
-*   **⌨️ Автоматическая и ручная смена раскладки текста**:
-    *   **Ручной режим**: Смена раскладки выделенного или последнего введенного слова по настраиваемому хоткею (по умолчанию `Ctrl + Pause`) с автоматическим переключением языка ввода Windows.
-    *   **Автоматический режим (на лету)**: Интеллектуальный Punto-анализатор проверяет слова при вводе пробела или Enter и автоматически исправляет текст с мягким кликающим звуком.
-    *   **Отмена автозамены**: Нажатие `Shift + Backspace` мгновенно отменяет автоисправление, возвращая исходный текст и раскладку (работает строго сразу после исправления).
-*   **🛠️ Системный трей и автозапуск**: Сворачивание в трей при закрытии, запуск вместе с Windows и умное восстановление открытых окон.
-*   **💾 Сохранение геометрии**: Все окна автоматически запоминают свои координаты и размеры, адаптируясь под изменение количества мониторов.
+<a id="ru"></a>
+<div align="center">
+  <img src="src/assets/sinc-pro-icon.png" alt="SINC PRO Logo" width="96" height="96" />
+  <h1>SINC PRO — Audio Intelligence</h1>
+  <p><strong>Умный голосовой ИИ-ассистент, студийная озвучка текста, экранный OCR-переводчик и интеллектуальный переключатель раскладки для Windows 10/11</strong></p>
+  <p>
+    <a href="#ru">🇷🇺 Русский</a> • <a href="#en">🇺🇸 English</a> • <a href="https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/latest">📥 Скачать последний релиз (v3.5.19)</a>
+  </p>
+</div>
 
 ---
 
-## 🛠️ Стек технологий
+## 🌟 Ценность для пользователя (Что умеет SINC PRO)
 
-*   **Бэкенд**: Rust, Tauri v2, Windows API (winapi), Win32 хуки клавиатуры.
-*   **Фронтенд**: HTML5, Vanilla JavaScript, CSS3 (Tailwind CSS v4).
-*   **Интеграции**: Google Gemini API, Yandex Translate API, Microsoft Edge TTS.
+SINC PRO объединяет 4 ежедневных инструмента продуктивности в одном легковесном нативном приложении на базе **Rust + Tauri v2** (с 0% нагрузки на CPU в режиме ожидания):
+
+* **🎙️ Умная голосовая диктовка и цепочки ИИ-обработки (`Ctrl + Win`)**:
+  Надиктуйте мысль своими словами — ИИ мгновенно превратит её в чистый отформатированный текст, выделит краткую суть (Summary), составит список задач или обработает по вашему собственному промпту. Встроенный двухконтурный детектор голосовой активности (VAD/RMS) автоматически отсекает пустые записи с тишиной ещё до отправки на сервер.
+* **🔊 Студийная озвучка любого текста и перевод на лету (`Ctrl + Shift` / `Ctrl + Alt`)**:
+  Выделите текст в браузере, PDF или мессенджере — плавающий виджет озвучит его живым нейросетевым голосом с круговым индикатором прогресса, регулировкой скорости (`0.5x–2.5x`) и встроенным **Web Audio API бустером громкости до `200%`** со студийным компрессором (`-14 LUFS`, на уровне громкости YouTube). Поддерживает докидывание новых абзацев в очередь на лету по `Ctrl + Tab`.
+* **⛶ Перевод текста с картинок, игр и видео на экране (`Alt + Q`)**:
+  Обведите любую область экрана рамкой — локальный движок Windows OCR мгновенно распознает текст без отправки скриншота в облако, а гибридный ИИ-переводчик отобразит перевод прямо поверх оригинала («бусины на нити») или отправит его на озвучку.
+* **⌨️ Интеллектуальная автораскладка RU ↔ EN (Punto-режим + ручной хоткей `Ctrl + Pause`)**:
+  Забыли переключить язык и напечатали `ghbdtn` вместо `привет`? SINC PRO автоматически распознаёт ошибочную раскладку по биграммам и фонетическим словарям при нажатии `Пробел`/`Enter`, исправляет слово, переключает язык ввода Windows и позволяет отменить замену в одно касание (`Shift + Backspace`).
+* **🛡️ Полная автономность и 4-уровневая отказоустойчивость**:
+  Если интернет пропал или исчерпаны лимиты облачного API, SINC PRO автоматически переключается на резервные модели и локальные оффлайн-движки (**Whisper.cpp** для распознавания речи, **Piper ONNX** для озвучки, **Ollama** для ИИ-обработки и **Windows WinRT OCR** для экрана), устанавливаемые в 1 клик прямо из настроек.
 
 ---
 
-## 📦 Быстрый старт (Запуск разработчика)
+## ⚡ Быстрый старт за 3 шага
 
-### Требования
-1. Установленный [Rust / Cargo](https://rustup.rs/) (версия 1.75+).
-2. [Node.js](https://nodejs.org/) (версия 18+).
+1. **Установите приложение**: скачайте установщик `SincPro_x64.msi` или `.exe` из раздела [Releases](https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/latest) и запустите его.
+2. **Подключите бесплатный ключ Gemini в 1 клик**: откройте **Настройки** → нажмите **«🔑 Получить бесплатный ключ (1 клик)»** → скопируйте ключ в открывшемся окне Google AI Studio. При возврате в окно SINC PRO приложение **автоматически распознает ключ из буфера обмена и сохранит его**.
+3. **Попробуйте горячие клавиши**: выделите любой текст и нажмите `Ctrl + Shift` для озвучки или нажмите `Ctrl + Win` для голосовой записи!
 
-### Инструкция за 3 шага
+> [!TIP]
+> Все **9 глобальных горячих клавиш** можно переназначить под себя во вкладках **«Настройки»** и **«Автораскладка»** простым нажатием нужной комбинации.
 
-1.  **Установка зависимостей**:
-    ```bash
-    npm install
-    ```
-2.  **Сборка стилей Tailwind**:
-    ```bash
-    npm run build:css
-    ```
-3.  **Запуск приложения в режиме разработки**:
-    ```bash
-    npm run tauri dev
-    ```
+---
+
+## ⌨️ Таблица горячих клавиш (по умолчанию)
+
+| Модуль | Горячая клавиша | Действие |
+| :--- | :--- | :--- |
+| **🎙️ Голосовая капсула** | `Ctrl + Win` | Старт / Пауза записи (удержание — режим Push-to-Talk, двойное нажатие — Lock) |
+| **🎙️ Голосовая капсула** | `Win + Alt` | Принудительно завершить запись и отправить в ИИ |
+| **🔊 Озвучка (TTS)** | `Ctrl + Shift` | Скопировать выделенный текст и сразу начать озвучку |
+| **🔊 Озвучка (TTS)** | `Ctrl + Alt` | Скопировать выделенный текст, **перевести на русский** и озвучить |
+| **🔊 Озвучка (TTS)** | `Ctrl + Tab` | Добавить выделенный текст в конец текущей очереди чтения |
+| **⛶ Экранный OCR** | `Alt + Q` | Включить рамку выделения области экрана для распознавания и перевода |
+| **⌨️ Автораскладка** | `Ctrl + Pause` | Инвертировать раскладку выделенного текста или последнего слова (`RU ↔ EN`) |
+| **⌨️ Автораскладка** | `Shift + Backspace` | Мгновенно отменить последнее автоисправление раскладки |
+| **⌨️ Автораскладка** | `Shift + Pause` | Добавить или удалить текущее активное приложение из списка исключений автораскладки |
 
 ---
 
 <details>
-<summary>⚙️ Под капотом (Архитектура и логика работы)</summary>
+<summary>🛠️ <strong>Под капотом: Архитектура и технические решения для разработчиков</strong></summary>
 
-### 3-позиционные переключатели режимов
-Для каждого модуля (Капсула, Виджет, OCR) доступно 3 состояния:
-*   **0 (Выключен)**: Модуль полностью деактивирован, хуки клавиатуры не перехватываются.
-*   **1 (Только хоткеи)**: Окна виджетов скрыты с экрана. При нажатии горячих клавиш окно временно появляется на время работы и автоматически скрывается обратно.
-*   **2 (Все включено)**: Виджеты постоянно отображаются на экране поверх других окон.
+### Технологический стек
+* **Бэкенд**: Rust (Edition 2021), Tauri v2, Win32 API (`winapi`, `SetWindowsHookExW`, `SetWindowSubclass`, DWM API), `tokio`, `reqwest`, `xcap`, `Windows.Media.Ocr`.
+* **Фронтенд**: HTML5, Vanilla ES6+ JavaScript, Tailwind CSS v4, Web Audio API (`DynamicsCompressorNode`, `GainNode`, `AnalyserNode`), IndexedDB (кэш аудио-предложений).
+* **Интеграции и движки**:
+  * **STT / LLM**: Google Gemini Multimodal API (`gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.0-flash`, `gemini-2.5-pro`) + локальный `whisper-cli.exe` + локальные серверы `Ollama` / OpenAI-совместимые API.
+  * **TTS**: Microsoft Edge TTS (`Sec-MS-GEC v2` с динамическим самовосстановлением токена) → Yandex SpeechKit TTS → локальный `piper.exe` (ONNX) → Google Translate TTS.
 
-### Автоматическая смена раскладки текста (Автораскладка)
-Модуль смены раскладки клавиатуры переведен в полноценный 3-позиционный режим:
-*   **0 (Выключено)**: Анализ клавиатуры и перехват хоткеев отключены.
-*   **1 (Ручной режим)**: Быстрая смена раскладки по настраиваемому хоткею (например, `Ctrl + Pause`).
-*   **2 (Автозамена на лету)**: Автоматическое исправление текста по пробелу или Enter на основе эвристического анализа букв и буквосочетаний.
-
-**Дополнительные механизмы модуля:**
-*   **Выделенный раздел управления**: В боковой панели меню добавлен раздел «Автораскладка», где можно настраивать хоткеи, просматривать текущие комбинации, а также управлять списками исключений.
-*   **Исключения слов**: Интерактивный список слов (тегов-чипсов), которые не будут автоматически исправляться (например, сленговые слова).
-*   **Исключения приложений (Черный список процессов)**: Настройка программ (например, `code.exe`, `cmd.exe`), в которых автозамена раскладки полностью отключается.
-*   **Игнорирование аббревиатур (ALL CAPS)**: Слова, написанные целиком заглавными буквами (например `RGB`, `HTML`), автоматически игнорируются автозаменой.
-*   **Очистка буфера по таймауту**: При паузе в печати более 2 секунд буфер ввода сбрасывается, исключая рассинхронизацию.
-*   **Защита от зацикливания**: Во время симуляции нажатий клавиш бэкенд выставляет флаг `LAYOUT_PROCESSING`, блокируя повторный перехват хука клавиатуры.
-
-### Запуск в свернутом виде (Автозапуск в трей)
-При старте ОС с флагом `--minimized` приложение:
-1. Оставляет главное окно (дашборд) скрытым в трее, если пользователь сам закрыл его перед выходом.
-2. Автоматически запускает и показывает на экране active виджеты (в режиме `2`).
-
-### Мультимониторная безопасность
-Перед восстановлением сохраненных координат X, Y приложение опрашивает API `availableMonitors()`. Если сохраненные координаты ведут на отключенный монитор, окно автоматически центрируется на основном экране для предотвращения «улетания» за видимые границы.
-
-### Локальный OCR переводчик (WinRT API & xcap)
-*   **Захват экрана**: Захват выделенной области осуществляется кроссплатформенной библиотекой `xcap` с автоматическим расчетом масштабирования (DPI scale factor) монитора, на котором находится курсор.
-*   **Локальное распознавание**: OCR-обработка происходит локально средствами встроенного системного движка Windows (`Windows.Media.Ocr`), что гарантирует конфиденциальность и мгновенный отклик без отправки скриншотов на внешние сервера.
-*   **ИИ-постобработка**: Распознанный сырой текст отправляется в Gemini для сегментации на грамматически и логически связные предложения по специальному JSON-промпту, после чего переводится.
-
-### Динамическая установка локальных ИИ-расширений (Whisper & Piper)
-В приложении реализована система "плагинов", позволяющая в один клик скачать и развернуть локальные движки для оффлайн-работы:
-*   **STT (Распознавание речи)**: Скачивается CLI-версия `whisper.cpp` с `ffmpeg.exe` и выбранная пользователем модель (tiny/base) напрямую с HuggingFace.
-*   **TTS (Синтез речи / Озвучка)**: Разворачивается легковесный движок `piper.exe` с `espeak-ng-data` и выбранный голос (мужской `dmitri` или женский `irina`) в формате ONNX с HuggingFace.
-
-### Интеллектуальный гибридный перевод и офлайн-фоллбэк
-*   **Гибридный перевод**: Перевод оверлея по умолчанию выполняется через Gemini API. При отсутствии сети или API-ключа приложение автоматически переключается на бесплатный веб-интерфейс Google Translate API, избирательно вычленяя только англоязычные фрагменты и заменяя их в тексте для экономии трафика и сохранения разметки.
-*   **Текстовый фоллбэк**: Текстовая обработка диктовки при сбое Gemini автоматически каскадируется на локальный сервер Ollama с поиском запущенных локальных моделей (`gemma2:9b`, `gemma2`, `llama3`, `qwen2.5`, `mistral`).
+### Ключевые архитектурные механизмы
+1. **Безрамочные прозрачные оверлеи Windows 11 и нативный Hit-Test (`0% CPU` в простое)**:
+   * Вместо `SetWindowRgn` (который в Windows 11 отключает DWM-композицию и вызывает появление классической рамки `WS_CAPTION`) используется нативный Win32 оконный субкласс (`SetWindowSubclass` в `lib.rs`), перехватывающий `WM_STYLECHANGING`, `WM_NCCALCSIZE`, `WM_NCPAINT`, `WM_NCACTIVATE` и очищающий GDI-поверхность прозрачным чёрным (`0x00000000`).
+   * Нативный фоновый поток `evaluate_overlay_hit_test` проверяет попадание курсора в точное скруглённое уравнение капсулы (пилюли) и переключает стиль `WS_EX_TRANSPARENT`. Это позволяет кликать сквозь полупрозрачную неоновую тень вокруг виджета и поднимать его к самому верхнему краю экрана (`y = 0px`).
+2. **Консолидация процессов WebView2 (`--process-per-site`)**:
+   * Все окна приложения (`main`, `capsule`, `widget`, `ocr`, `result`, `prompt`) используют общий процесс рендеринга за счёт флага `--process-per-site`, минимизируя потребление ОЗУ.
+3. **Безопасная работа с системным буфером обмена (`Save-Copy-Restore`)**:
+   * При считывании выделенного текста (`simulate_ctrl_c`) бэкенд сохраняет как текстовые форматы, так и растровые изображения (`CF_DIB` / `CF_DIBV5`), зажимает `VK_CONTROL` до программного сброса `Alt` (чтобы `WM_SYSKEYUP(VK_MENU)` не активировал верхнее меню окна и не сбрасывал выделение) и восстанавливает исходный буфер обмена пользователя.
+4. **Двухконтурный фильтр тишины (Pre-Send VAD) и защита от галлюцинаций**:
+   * До отправки аудиофайла в Gemini проверяется среднеквадратичная амплитуда во временной области (`getByteTimeDomainData`, порог `RMS >= 2.2`) и спектральная энергия голосового диапазона (`85–3500 Гц` при `minDecibels = -75` дБ). Записи с тишиной отменяются локально без расхода квот API.
+5. **Студийный тракт усиления озвучки (Web Audio API Loudness Normalization)**:
+   * Аудиопоток `<audio>` проходит через `MediaElementAudioSourceNode` → `DynamicsCompressorNode` (`threshold: -20dB`, `ratio: 3.5:1`) → `GainNode` с базовым коэффициентом `1.35x` на `100%` и диапазоном регулировки до `200%` (`gain = 2.7x`).
 
 </details>
 
 ---
 
-## 🔄 Сборка релизов и автообновления
+## 💻 Разработка и сборка из исходников
 
-В приложении настроен механизм автоматических обновлений (Tauri Updater v2) на базе GitHub Releases.
+### Требования
+* [Rust / Cargo](https://rustup.rs/) (1.75+)
+* [Node.js](https://nodejs.org/) (20+)
 
-### 🔑 Генерация ключей подписи обновлений
-Для безопасности все обновления должны быть подписаны цифровой подписью. Генерация пары ключей:
-```bash
-npx tauri signer generate --ci -w .tauri-keys/sinc-pro.key -p <PASSWORD>
-```
-*Примечание: папка `.tauri-keys/` автоматически добавлена в `.gitignore` для предотвращения утечки приватного ключа.*
-
-### 🛠️ Сборка подписанного релиза
-Для компиляции приложения в режиме релиза с подписью, укажите приватный ключ и пароль в переменных окружения:
 ```powershell
-$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content .tauri-keys/sinc-pro.key -Raw
-$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "ВАШ_ПАРОЛЬ"
-npm run tauri build
-```
-После завершения Tauri сгенерирует файлы установщиков `.msi` / `.exe` и их подписи `.sig` в папке `src-tauri/target/release/bundle/`.
+# 1. Установка зависимостей
+npm install
 
-### 🚀 Публикация релиза на GitHub
-1. Создайте тег версии и отправьте его на GitHub:
-   ```bash
-   git tag v3.5.0
-   git push origin v3.5.0
+# 2. Сборка стилей Tailwind CSS
+npm run build:css
+
+# 3. Запуск в режиме разработки
+npm run tauri dev
+```
+
+### 🔄 Публикация релиза и автообновления (CI/CD)
+В проекте настроен полностью автоматизированный пайплайн GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)):
+1. Обновите версию в `src-tauri/tauri.conf.json` и `src-tauri/Cargo.toml`.
+2. Опишите изменения новой версии в [`CHANGELOG.md`](CHANGELOG.md) в секции `## [X.Y.Z] - YYYY-MM-DD`.
+3. Создайте и отправьте тег:
+   ```powershell
+   git add -A
+   git commit -m "v3.5.X: краткое описание релиза"
+   git tag v3.5.X
+   git push origin HEAD:main --tags
    ```
-2. Создайте GitHub Release на базе тега и загрузите собранные файлы установщиков `.msi` и `.exe`.
-3. Обновите манифест обновлений `docs/updater.json` в репозитории: пропишите новую версию, URL установщика на GitHub и скопируйте Base64 подпись из файла `.msi.sig`.
-
-## 🧪 Тестирование
-
-Запуск сквозных тестов Playwright:
-```bash
-npm test
-```
+4. GitHub Actions автоматически соберёт и подпишет `.msi` / `.exe` установщики, извлечёт описание изменений из `CHANGELOG.md`, опубликует релиз на GitHub и обновит манифест автообновления `docs/updater.json`.
 
 ---
-<a name="en"></a>
-# [🇺🇸] SINC PRO - Smart Voice Assistant & Voiceover Widget
 
-[🇷🇺 Русский](#ru) | [🇺🇸 English](#en)
-
-SINC PRO is a local and cloud-based Windows desktop application powered by Tauri, Vanilla JS, and Rust, providing robust tools for smart voice dictation via Gemini AI, quick screen translation (OCR), and text-to-speech (Edge TTS).
+<a id="en"></a>
+<div align="center">
+  <h1>🇺🇸 SINC PRO — Audio Intelligence</h1>
+  <p><strong>Smart AI Voice Dictation, Studio TTS Voiceover, Screen OCR Translator & Intelligent Layout Switcher for Windows 10/11</strong></p>
+  <p>
+    <a href="#ru">🇷🇺 Русский</a> • <a href="#en">🇺🇸 English</a> • <a href="https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/latest">📥 Download Latest Release (v3.5.19)</a>
+  </p>
+</div>
 
 ## 🚀 Key Features
 
-*   **🎙️ Smart Microphone (SINC Orb / Capsule)**: Voice recording triggered by `Ctrl + Win` with instant formatting using Gemini AI (presets: key summary, transcribed text, or custom prompt).
-*   **🧠 AI Request Chain Environment (New Request)**: Granular AI requests based on audio recordings, raw transcripts, or any prior AI outcomes, enabling sequential pipelines (e.g., extracting "Summary" from text and then translating it into another language).
-*   **🔊 Voiceover Widget (Edge TTS)**: Speech generation from highlighted text with `Ctrl + Shift + S`, allowing selection of voice, speed, and pitch. Features a floating player with circular progress tracking and autohide on hover.
-*   **🔍 Screen Translator (OCR)**: Screen OCR translator overlay opened by `Alt + Q` with translation via cloud AI or local engine.
-*   **🔌 Offline AI Fallback**: Automatic routing to offline models (Whisper for STT and Ollama/local servers for text) in case of cloud API connection drops.
-*   **⌨️ Automatic and Manual Layout Switching**:
-    *   **Manual Mode**: Quick layout inversion of the selected or last-typed word via a customizable hotkey (default `Ctrl + Pause`) with automatic Windows input language toggling.
-    *   **Automatic Mode (On-the-fly)**: Intelligent Punto-style analyzer checking words as you hit Space or Enter, fixing typos with a soft click sound.
-    *   **Autocorrect Undo**: Pressing `Shift + Backspace` immediately reverts the autocorrection, restoring the original layout and characters (available strictly right after autocorrect triggers).
-*   **🛠️ System Tray & Autostart**: Hiding to tray on window close, startup with Windows, and smart window restoration.
-*   **💾 Geometry Saving**: All windows remember their size and coordinates, auto-aligning to active monitors on change.
-
----
-
-## 🛠️ Tech Stack
-
-*   **Backend**: Rust, Tauri v2, Windows API (winapi), Win32 keyboard hooks.
-*   **Frontend**: HTML5, Vanilla JavaScript, CSS3 (Tailwind CSS v4).
-*   **Integrations**: Google Gemini API, Yandex Translate API, Microsoft Edge TTS.
-
----
-
-## 📦 Quick Start (Developer Setup)
-
-### Prerequisites
-1. [Rust / Cargo](https://rustup.rs/) installed (version 1.75+).
-2. [Node.js](https://nodejs.org/) installed (version 18+).
-
-### Instructions
-
-1.  **Install dependencies**:
-    ```bash
-    npm install
-    ```
-2.  **Build Tailwind styles**:
-    ```bash
-    npm run build:css
-    ```
-3.  **Run in development mode**:
-    ```bash
-    npm run tauri dev
-    ```
-
----
-
-<details>
-<summary>⚙️ Under the Hood (Architecture & Logic)</summary>
-
-### 3-Position Mode Switchers
-Each module (Capsule, Widget, OCR) has 3 states:
-*   **0 (Disabled)**: Module is deactivated, keyboard hooks are bypassed.
-*   **1 (Hotkeys Only)**: Widget windows are hidden. Hotkeys temporarily spawn the window, and it autohides on task completion.
-*   **2 (All On)**: Widget windows are persistent on the screen.
-
-### Automatic Text Layout Switching (Autocorrect)
-The keyboard layout module features a 3-position switcher:
-*   **0 (Disabled)**: Typing hooks and hotkeys are completely off.
-*   **1 (Manual Mode)**: Quick word correction via a hotkey combo (e.g., `Ctrl + Pause`).
-*   **2 (Autocorrect On-the-fly)**: Automatic typing correction on hitting Space or Enter based on letter structures.
-
-**Additional layout mechanisms:**
-*   **Dedicated Management Panel**: A new "Autocontrol" tab in the sidebar lets you bind keys and manage exclusion lists.
-*   **Word Exclusions**: Interactive list of words (managed as tag pills) that won't be auto-corrected (e.g., code functions or slang).
-*   **App Exclusions (Process Blacklist)**: Add executable names (like `code.exe`, `cmd.exe`) to disable layout switcher entirely in target apps.
-*   **Abbreviation Bypass (ALL CAPS)**: Words typed in UPPERCASE (like `RGB`, `HTML`) bypass autocorrection rules.
-*   **Timeout Buffer Flush**: The keystroke buffer resets after 2 seconds of inactivity, preventing stale character mixes.
-*   **Recursion Block**: The hook is blocked (`LAYOUT_PROCESSING`) during keystroke simulation.
-
-### Minimized Startup (Autostart to Tray)
-On starting with the `--minimized` flag:
-1. The dashboard window remains hidden in the tray if closed previously.
-2. Active widgets (in mode `2`) are displayed on top of the screen.
-
-### Multi-Monitor Safety
-Prior to restoring coordinates, the app queries `availableMonitors()`. If coordinates point to an inactive monitor, the window is centered on the primary display.
-
-### Local OCR Translator (WinRT API & xcap)
-*   **Screen Capture**: Screenshot capture of the selected area is performed via `xcap` cross-platform library, dynamically computing DPI scale factor of the target monitor under user cursor.
-*   **Local Recognition**: OCR is executed locally on user's machine using built-in system API (`Windows.Media.Ocr`), ensuring high speed and absolute privacy without sending screen captures to external APIs.
-*   **AI Post-Processing**: The recognized raw text undergoes segmentation into gramatically and logically structured sentences using Gemini AI with a specific JSON schema prompt, and is then translated.
-
-### Dynamic Installation of Local AI Extensions (Whisper & Piper)
-SINC PRO features a plugin manager enabling one-click download of offline AI models:
-*   **STT (Speech-to-Text)**: Downloads a standalone `whisper.cpp` CLI binary along with `ffmpeg.exe` and user-chosen models (tiny/base) directly from HuggingFace.
-*   **TTS (Text-to-Speech)**: Deploys a lightweight `piper.exe` binary with `espeak-ng-data` assets and ONNX voice models (male `dmitri` or female `irina`) from HuggingFace.
-
-### Intelligent Hybrid Translation & Offline Fallback
-*   **Hybrid Translation**: Overlay translation defaults to Gemini API. In case of network errors or missing API key, the app transparently shifts to the free Google Translate API, selectively parsing and translating only foreign language parts to preserve structure.
-*   **Text Processing Fallback**: Speech dictation processing cascades to a local Ollama server running locally on port 11434, seeking active local models (`gemma2:9b`, `gemma2`, `llama3`, `qwen2.5`, `mistral`).
-
-</details>
-
----
-
-## 🔄 Release Building & Auto-updates
-
-The application features built-in auto-updates (Tauri Updater v2) via GitHub Releases.
-
-### 🔑 Signing Keys Generation
-Updates must be digitally signed. Generate a key pair:
-```bash
-npx tauri signer generate --ci -w .tauri-keys/sinc-pro.key -p <PASSWORD>
-```
-*Note: `.tauri-keys/` is added to `.gitignore` to prevent leaking the private key.*
-
-### 🛠️ Building a Signed Release
-Specify the private key and password in env variables:
-```powershell
-$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content .tauri-keys/sinc-pro.key -Raw
-$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "YOUR_PASSWORD"
-npm run tauri build
-```
-Compiled `.msi` / `.exe` bundles and `.sig` signatures will be generated in `src-tauri/target/release/bundle/`.
-
-### 🚀 Publishing to GitHub
-1. Tag and push to origin:
-   ```bash
-   git tag v3.5.0
-   git push origin v3.5.0
-   ```
-2. Create a GitHub Release and upload `.msi` and `.exe` bundles.
-3. Update `docs/updater.json` with the new version, package URL, and signature from the `.msi.sig` file.
-
-## 🧪 Testing
-
-Run Playwright E2E tests:
-```bash
-npm test
-```
+* **🎙️ Smart Voice Dictation & AI Chains (`Ctrl + Win`)**: Record voice notes and transform them with Gemini AI (Clean Transcript, Summary, Tasks, Email, or Custom Prompts). Built-in dual-stage VAD/RMS silence detection prevents sending silent recordings to the cloud.
+* **🔊 Studio Voiceover Widget (`Ctrl + Shift` / `Ctrl + Alt`)**: Read any selected text aloud using neural Edge TTS with a 4-tier self-healing fallback cascade (Edge TTS → Yandex SpeechKit → Local Piper ONNX → Google TTS), circular progress indicator, queue appending (`Ctrl + Tab`), and a **Web Audio API 200% Loudness Booster + Compressor**.
+* **⛶ Screen OCR & Hybrid Translator (`Alt + Q`)**: Select any screen region to extract text locally via Windows WinRT OCR (`Windows.Media.Ocr`) and translate it in place via Gemini AI or offline fallback.
+* **⌨️ Intelligent Auto-Layout Switcher (`Ctrl + Pause`)**: Automatically fixes words typed in the wrong keyboard layout (`RU ↔ EN`) on Space/Enter with phonetic & bigram validation, instant undo (`Shift + Backspace`), and per-app exclusions (`Shift + Pause`).
+* **🔑 1-Click Gemini API Key Assistant**: Built-in assistant opens Google AI Studio and automatically detects and saves your `AIza...` key from the clipboard as soon as you switch back to the SINC PRO window.

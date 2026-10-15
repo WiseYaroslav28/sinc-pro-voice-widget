@@ -1,11 +1,11 @@
 {
-  "version": "3.5.15",
-  "notes": "Версия 3.5.15 — Автоматический релиз SincPro",
-  "pub_date": "2026-10-14T17:17:50Z",
+  "version": "3.5.19",
+  "notes": "• Новая фирменная иконка SINC PRO (Audio Intelligence) во всех разрешениях, трее и сайдбаре\n• Закреплённая панель «Сохранить настройки» (Sticky Header)\n• Помощник получения Gemini API Key в 1 клик + авто-перехват из буфера обмена\n• Студийный бустер громкости до 200% (Web Audio API Compressor + Gain, уровень YouTube)\n• Исправлен хоткей «Перевод и озвучка» (Ctrl + Alt)\n• Двухконтурный фильтр тишины (VAD / RMS) до отправки аудио и защита от галлюцинаций ИИ",
+  "pub_date": "2026-10-15T02:25:00Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSTVJBcmZnL2cySDF5TnNHcE5SdkRlK0MvWldqRmFXRXRYUVFMS3krWmZZemNpZllzdG84NmVGUTdxY0hjbHpYOFQzQmJUblBXcWJrdDZpN0RTVTA3ejNaVnY0UzNoZkFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxOTk4MjYyCWZpbGU6U2luY1Byb18zLjUuMTVfeDY0X2VuLVVTLm1zaQpGbFp5ZW5EbGVCUjhHMFZqSFZlNTh4dzdpT1pzdzBZK3R0cm0xQUVWdVlLMlBROWxoSC9XeS9HMHNYSEFwbmxRRStpbVdlNndzQWtHTHBPRzEwWnVCQT09Cg==",
-      "url": "https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/download/v3.5.15/SincPro_3.5.15_x64_en-US.msi"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSTVJBcmZnL2cySDlFL1RaYyt2ZmhobWs5NExTWVdMU0xqb3ViSUI3STUvY2hYY0RWVXZIMlVKUzBlM1BwYjJ4d3UvSWVYRXVLWG5KeVhIZm54WlRBeWd1cm1zeUpEM0F3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMDMwODEzCWZpbGU6U2luY1Byb18zLjUuMTlfeDY0X2VuLVVTLm1zaQpVRlZhaFJWSjNtQWtEWlNaNlZrUkN3bmZHeHU5SFZ5VGJ5M1BSYnVLNVpyTXBrcEdvQjA0ZldaWllCYTRORTRNVDNkbEhLbHB0dm1zZ0lYTnRaY1lBQT09Cg==",
+      "url": "https://github.com/WiseYaroslav28/sinc-pro-voice-widget/releases/download/v3.5.19/SincPro_3.5.19_x64_en-US.msi"
     }
   }
 }
