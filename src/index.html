@@ -128,9 +128,12 @@
       <!-- 1. Левый сворачиваемый сайдбар (дизайн Stitch) -->
       <aside class="sidebar w-[200px] h-screen flex-shrink-0 bg-[#1b1b20] border-r border-[#4a4455]/30 flex flex-col py-6 px-4 z-20 transition-all duration-300 relative" id="sidebar">
         <div class="flex items-center justify-between mb-8 sidebar-header">
-          <div class="logo-area">
-            <h1 class="font-bold text-[#d2bbff] tracking-tight text-[20px] sidebar-logo">SINC PRO</h1>
-            <p class="text-[10px] text-[#ccc3d8] uppercase tracking-wider mt-1 sidebar-subtext">Audio Intelligence</p>
+          <div class="logo-area flex items-center gap-2.5">
+            <img src="assets/sinc-pro-icon.png" alt="SINC PRO" class="w-9 h-9 rounded-lg flex-shrink-0 shadow-[0_0_12px_rgba(142,82,255,0.35)]" />
+            <div>
+              <h1 class="font-bold text-[#d2bbff] tracking-tight text-[18px] leading-none sidebar-logo">SINC PRO</h1>
+              <p class="text-[9px] text-[#ccc3d8] uppercase tracking-wider mt-1 sidebar-subtext">Audio Intelligence</p>
+            </div>
           </div>
           <button class="text-[#ccc3d8] hover:text-[#d2bbff] transition-colors focus:outline-none" id="sidebar-toggle" title="Свернуть панель">
             <span class="material-symbols-outlined text-[20px]" id="toggle-icon">keyboard_double_arrow_left</span>
