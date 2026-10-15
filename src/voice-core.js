@@ -946,8 +946,21 @@ window.VoiceCore = VoiceCore;
 
 // WindowToggleManager для чистого переиспользования логики и верстки 3-позиционных переключателей
 class WindowToggleManager {
-    static renderToggle(id, icon, title) {
+    static renderToggle(id, icon, title, labelText = '') {
         // Рендерим 3-позиционный слайдер на базе input range
+        if (labelText) {
+            return `
+                <div class="tri-switch-wrapper w-full justify-between py-1 px-2 rounded-lg" id="${id}-wrapper" title="${title}" data-state="2">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <span class="material-symbols-outlined tri-switch-icon">${icon}</span>
+                        <span class="sidebar-toggle-label text-[11px] text-[#ccc3d8] font-medium truncate select-none">${labelText}</span>
+                    </div>
+                    <div class="tri-switch-container flex-shrink-0">
+                        <input type="range" class="tri-slider" min="0" max="2" value="2" id="${id}">
+                    </div>
+                </div>
+            `;
+        }
         return `
             <div class="tri-switch-wrapper" id="${id}-wrapper" title="${title}" data-state="2">
                 <span class="material-symbols-outlined tri-switch-icon">${icon}</span>

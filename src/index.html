@@ -117,6 +117,17 @@
         border-radius: 8px !important;
         box-shadow: inset 0 0 0 1px rgba(163, 119, 255, 0.25) !important;
       }
+      .sidebar.collapsed .sidebar-toggle-label,
+      .sidebar.collapsed #sidebar-modules-header {
+        display: none !important;
+      }
+      .sidebar.collapsed #sidebar-modules-card {
+        padding: 6px 4px !important;
+      }
+      .sidebar.collapsed .sidebar-toggle-row {
+        justify-content: center !important;
+        padding: 2px 0 !important;
+      }
     </style>
   </head>
 
@@ -127,7 +138,7 @@
 
       <!-- 1. Левый сворачиваемый сайдбар (дизайн Stitch) -->
       <aside class="sidebar w-[200px] h-screen flex-shrink-0 bg-[#1b1b20] border-r border-[#4a4455]/30 flex flex-col py-6 px-4 z-20 transition-all duration-300 relative" id="sidebar">
-        <div class="flex items-center justify-between mb-8 sidebar-header">
+        <div class="flex items-center justify-between mb-6 sidebar-header">
           <div class="logo-area flex items-center gap-2.5">
             <img src="assets/sinc-pro-icon.png" alt="SINC PRO" class="w-9 h-9 rounded-lg flex-shrink-0 shadow-[0_0_12px_rgba(142,82,255,0.35)]" />
             <div>
@@ -141,13 +152,13 @@
         </div>
 
         <!-- Кнопка Новая запись -->
-        <button class="w-full bg-[#a377ff] text-[#36007d] hover:bg-[#eaddff] transition-colors rounded-lg py-2 px-4 flex items-center justify-center gap-2 mb-6 text-[12px] font-semibold shadow-sm focus:outline-none btn-new-rec" style="border: none; cursor: pointer;" id="btn-new-recording">
+        <button class="w-full bg-[#a377ff] text-[#36007d] hover:bg-[#eaddff] transition-colors rounded-lg py-2 px-4 flex items-center justify-center gap-2 mb-4 text-[12px] font-semibold shadow-sm focus:outline-none btn-new-rec" style="border: none; cursor: pointer;" id="btn-new-recording">
           <span class="material-symbols-outlined text-[18px]">add</span>
           <span class="sidebar-item-text">Новая запись</span>
         </button>
 
         <!-- Меню -->
-        <div class="flex flex-col gap-1 flex-1">
+        <div class="flex flex-col gap-1 flex-1 min-h-0">
           <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#d2bbff] font-bold border-r-2 border-[#d2bbff] bg-[#1f1f24] opacity-90 transition-all focus:outline-none w-full text-left active" style="cursor: pointer;" data-tab="tab-home">
             <span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">auto_awesome</span>
             <span class="text-[12px] sidebar-item-text">ИИ-обработка</span>
@@ -168,6 +179,17 @@
             <span class="material-symbols-outlined text-[20px]">psychology</span>
             <span class="text-[12px] sidebar-item-text">Журнал</span>
           </button>
+
+          <!-- Блок управления плавающими модулями (Капсула, Озвучка, OCR, Раскладка) -->
+          <div class="mt-3 pt-3 border-t border-[#4a4455]/30 flex flex-col gap-1.5">
+            <span id="sidebar-modules-header" class="text-[10px] font-bold uppercase tracking-wider text-[#958da1] px-2 mb-0.5 sidebar-item-text">Активные модули</span>
+            <div id="sidebar-modules-card" class="flex flex-col gap-1 bg-[#141419] border border-[#4a4455]/25 rounded-xl p-2">
+              <div class="flex flex-col gap-1 w-full" id="dashboard-toggles-container">
+                <!-- Рендерится динамически через WindowToggleManager -->
+              </div>
+            </div>
+          </div>
+
           <!-- Настройки — пиннем к низу -->
           <div class="flex-1"></div>
           <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="cursor: pointer;" data-tab="tab-settings">
@@ -196,14 +218,6 @@
         <header class="h-16 w-full flex justify-between items-center px-6 py-4 bg-transparent flex-shrink-0">
           <div class="flex items-center gap-4">
             <h2 class="text-[20px] text-[#e4e1e9] font-semibold tracking-tight cursor-pointer hover:text-[#d2bbff] transition-colors" id="greeting-title" title="Нажмите, чтобы изменить имя профиля">Привет!</h2>
-            <div class="hidden md:flex items-center gap-2 bg-[#1b1b20] border border-[#4a4455]/30 rounded-full px-3 py-1 mt-1">
-              <span class="w-2 h-2 rounded-full bg-[#7bd6d1] shadow-[0_0_8px_rgba(123,214,209,0.6)]"></span>
-              <span class="text-[11px] font-medium text-[#ccc3d8]">Все системы онлайн</span>
-            </div>
-            <!-- Переключатели плавающих окон (Капсула и Виджет) -->
-            <div class="flex items-center gap-3 bg-[#1b1b20] border border-[#4a4455]/30 rounded-full px-3.5 py-1 mt-1" id="dashboard-toggles-container">
-              <!-- Рендерится динамически через WindowToggleManager -->
-            </div>
           </div>
           <div class="flex items-center gap-3 pr-24"> <!-- Смещение от кнопок окна -->
             <!-- Кнопка-индикатор доступного обновления на видном месте -->
@@ -211,15 +225,6 @@
               <span class="material-symbols-outlined text-[15px]">system_update_alt</span>
               <span id="header-update-version-text">Доступно обновление</span>
             </button>
-            <button class="text-[#ccc3d8] hover:text-[#d2bbff] transition-colors focus:outline-none p-1 rounded-full hover:bg-[#1f1f24]" style="background: transparent; border: none; cursor: pointer;" id="btn-header-notifications" title="Проверить статус систем и обновлений">
-              <span class="material-symbols-outlined text-[20px]">notifications</span>
-            </button>
-            <div class="flex items-center gap-2 border-l border-[#4a4455]/30 pl-4">
-              <button id="btn-profile-avatar" class="w-8 h-8 rounded-full bg-[#35343a] hover:bg-[#8e52ff]/30 border border-[#4a4455]/40 hover:border-[#d2bbff] flex items-center justify-center overflow-hidden transition-all cursor-pointer focus:outline-none" title="Локальный профиль пользователя (нажмите для изменения имени)">
-                <span class="text-[12px] font-bold text-[#d2bbff] hidden" id="profile-avatar-initial"></span>
-                <span class="material-symbols-outlined text-[#ccc3d8] text-[20px]" id="profile-avatar-icon">account_circle</span>
-              </button>
-            </div>
           </div>
         </header>
 
@@ -885,10 +890,15 @@
 
         <!-- Подвал дашборда -->
         <footer class="h-12 w-full bg-[#0e0e13] border-t border-[#4a4455]/30 flex justify-between items-center px-6 flex-shrink-0 z-10 text-[11px]">
-          <span class="font-bold text-[#e4e1e9]">© 2026 SINC PRO. API: Gemini Connected.</span>
+          <span class="font-bold text-[#e4e1e9]" id="footer-api-summary">© 2026 SINC PRO. API: Gemini Connected.</span>
           <div class="flex items-center gap-4">
             <!-- Индикаторы статусов -->
             <div class="flex items-center gap-3 border-r border-[#4a4455]/30 pr-4">
+              <!-- Сводный бейдж статуса систем -->
+              <div class="flex items-center gap-2 bg-[#1b1b20] border border-[#4a4455]/30 rounded-full px-3 py-1" id="system-overall-badge">
+                <span class="w-2 h-2 rounded-full bg-[#7bd6d1] shadow-[0_0_8px_rgba(123,214,209,0.6)]" id="system-overall-dot"></span>
+                <span class="text-[11px] font-medium text-[#ccc3d8]" id="system-overall-text">Все системы онлайн</span>
+              </div>
               <!-- Статус Gemini AI -->
               <div class="flex items-center gap-1.5 cursor-help" id="status-container-api" title="Интеграция ИИ: Подключение...">
                 <span class="material-symbols-outlined text-[14px] text-[#ccc3d8]">smart_toy</span>
@@ -1466,8 +1476,12 @@
         const statusText = document.getElementById('api-status-text');
         const statusDot = document.getElementById('api-status-dot');
         const statusContainer = document.getElementById('status-container-api');
+        const overallDot = document.getElementById('system-overall-dot');
+        const overallText = document.getElementById('system-overall-text');
+        const footerSummary = document.getElementById('footer-api-summary');
+        const hasKey = !!(apiKey && apiKey.trim().length > 0);
         if (statusDot) {
-          if (apiKey && apiKey.trim().length > 0) {
+          if (hasKey) {
             if (statusText) statusText.textContent = 'Подключено';
             statusDot.className = 'w-2 h-2 rounded-full bg-[#7bd6d1]';
             statusDot.style.boxShadow = '0 0 6px rgba(123,214,209,0.6)';
@@ -1482,6 +1496,20 @@
               statusContainer.title = 'Интеграция ИИ: Ошибка (Ключ API не установлен)';
             }
           }
+        }
+        if (overallDot && overallText) {
+          if (hasKey) {
+            overallDot.className = 'w-2 h-2 rounded-full bg-[#7bd6d1] shadow-[0_0_8px_rgba(123,214,209,0.6)]';
+            overallText.textContent = 'Все системы онлайн';
+          } else {
+            overallDot.className = 'w-2 h-2 rounded-full bg-[#ffb4ab] shadow-[0_0_8px_rgba(255,180,171,0.6)]';
+            overallText.textContent = 'Требуется ключ API';
+          }
+        }
+        if (footerSummary) {
+          footerSummary.textContent = hasKey
+            ? '© 2026 SINC PRO. API: Gemini Connected.'
+            : '© 2026 SINC PRO. API: Ключ не установлен.';
         }
       }
 
@@ -3146,10 +3174,10 @@
       const dashboardToggles = document.getElementById('dashboard-toggles-container');
       if (dashboardToggles && window.WindowToggleManager) {
         dashboardToggles.innerHTML = 
-          WindowToggleManager.renderToggle('toggle-capsule', 'mic', 'Капсула (быстрый ИИ-ввод)&#10;Удерживайте Ctrl+Win для диктовки&#10;Ctrl+Win+Alt — ввод с промптом') +
-          WindowToggleManager.renderToggle('toggle-widget', 'record_voice_over', 'Виджет озвучки (плавающий плеер)&#10;Ctrl+Shift — озвучить выделенное&#10;Escape — остановить воспроизведение') +
-          WindowToggleManager.renderToggle('toggle-ocr', 'screenshot_region', 'Оверлей переводчика OCR&#10;Alt+Q — открыть/закрыть оверлей') +
-          WindowToggleManager.renderToggle('toggle-layout', 'keyboard', 'Смена раскладки клавиатуры&#10;0: Выключено&#10;1: Только хоткеи (смена букв + переключение языка Windows)&#10;2: Автозамена на лету');
+          WindowToggleManager.renderToggle('toggle-capsule', 'mic', 'Капсула (быстрый ИИ-ввод)&#10;Удерживайте Ctrl+Win для диктовки&#10;Ctrl+Win+Alt — ввод с промптом', 'Капсула') +
+          WindowToggleManager.renderToggle('toggle-widget', 'record_voice_over', 'Виджет озвучки (плавающий плеер)&#10;Ctrl+Shift — озвучить выделенное&#10;Escape — остановить воспроизведение', 'Озвучка') +
+          WindowToggleManager.renderToggle('toggle-ocr', 'screenshot_region', 'Оверлей переводчика OCR&#10;Alt+Q — открыть/закрыть оверлей', 'Экран OCR') +
+          WindowToggleManager.renderToggle('toggle-layout', 'keyboard', 'Смена раскладки клавиатуры&#10;0: Выключено&#10;1: Только хоткеи (смена букв + переключение языка Windows)&#10;2: Автозамена на лету', 'Раскладка');
 
         WindowToggleManager.initToggle('toggle-capsule', 'capsule');
         WindowToggleManager.initToggle('toggle-widget', 'widget');
@@ -3691,13 +3719,13 @@
             console.error("Failed to load app version:", err);
             const versionDisplay = document.getElementById('app-version-display');
             if (versionDisplay) {
-              versionDisplay.textContent = `Текущая версия: 3.5.20`;
+              versionDisplay.textContent = `Текущая версия: 3.5.21`;
             }
           });
         } else {
           const versionDisplay = document.getElementById('app-version-display');
           if (versionDisplay) {
-            versionDisplay.textContent = `Текущая версия: 3.5.20 (Mock)`;
+            versionDisplay.textContent = `Текущая версия: 3.5.21 (Mock)`;
           }
         }
 
