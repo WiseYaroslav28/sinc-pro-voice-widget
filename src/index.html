@@ -117,26 +117,20 @@
         border-radius: 8px !important;
         box-shadow: inset 0 0 0 1px rgba(163, 119, 255, 0.25) !important;
       }
+      #dashboard-toggles-container {
+        position: relative;
+        z-index: 10000;
+      }
       #dashboard-toggles-container .tri-switch-wrapper {
-        width: 100%;
+        width: auto;
         justify-content: center;
-        gap: 14px;
-        padding: 4px 8px;
-        border-radius: 8px;
+        gap: 6px;
+        padding: 3px 6px;
+        border-radius: 9999px;
         transition: all 0.2s ease;
       }
       #dashboard-toggles-container .tri-switch-wrapper:hover {
-        background-color: rgba(255, 255, 255, 0.04);
-      }
-      .sidebar.collapsed #sidebar-modules-card {
-        padding: 6px 4px !important;
-      }
-      .sidebar.collapsed #dashboard-toggles-container .tri-switch-wrapper {
-        flex-direction: column !important;
-        align-items: center !important;
-        justify-content: center !important;
-        gap: 3px !important;
-        padding: 4px 2px !important;
+        background-color: rgba(255, 255, 255, 0.05);
       }
     </style>
   </head>
@@ -190,15 +184,6 @@
             <span class="text-[12px] sidebar-item-text">Журнал</span>
           </button>
 
-          <!-- Блок управления плавающими модулями (только иконка + переключатель; при сворачивании тумблер переезжает под иконку) -->
-          <div class="mt-3 pt-3 border-t border-[#4a4455]/30">
-            <div id="sidebar-modules-card" class="flex flex-col gap-1 bg-[#141419] border border-[#4a4455]/25 rounded-xl p-2">
-              <div class="flex flex-col gap-1 w-full" id="dashboard-toggles-container">
-                <!-- Рендерится динамически через WindowToggleManager -->
-              </div>
-            </div>
-          </div>
-
           <!-- Настройки — пиннем к низу -->
           <div class="flex-1"></div>
           <button class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-md text-[#ccc3d8] hover:bg-[#1f1f24] transition-colors focus:outline-none w-full text-left" style="cursor: pointer;" data-tab="tab-settings">
@@ -225,12 +210,17 @@
 
         <!-- TopAppBar / Шапка контента -->
         <header class="h-16 w-full flex justify-between items-center px-6 py-4 bg-transparent flex-shrink-0">
-          <div class="flex items-center gap-4">
+          <div class="flex items-center gap-4" style="position: relative; z-index: 10000;">
             <h2 class="text-[20px] text-[#e4e1e9] font-semibold tracking-tight cursor-pointer hover:text-[#d2bbff] transition-colors" id="greeting-title" title="Нажмите, чтобы изменить имя профиля">Привет!</h2>
           </div>
-          <div class="flex items-center gap-3 pr-24"> <!-- Смещение от кнопок окна -->
+
+          <!-- Панель управления плавающими модулями в свободном верхнем поле заголовка -->
+          <div class="flex items-center gap-3 pr-24">
+            <div class="flex items-center gap-3 bg-[#1b1b20] border border-[#4a4455]/30 rounded-full px-3.5 py-1.5 shadow-sm" id="dashboard-toggles-container">
+              <!-- Рендерится динамически через WindowToggleManager -->
+            </div>
             <!-- Кнопка-индикатор доступного обновления на видном месте -->
-            <button id="header-update-banner" class="hidden items-center gap-1.5 bg-gradient-to-r from-[#8e52ff] to-[#45a29e] text-white text-[11px] font-bold px-3.5 py-1.5 rounded-full shadow-[0_0_15px_rgba(142,82,255,0.5)] hover:opacity-95 transition-all cursor-pointer border-0 animate-pulse" title="Доступна новая версия SincPro — нажмите для установки">
+            <button id="header-update-banner" style="position: relative; z-index: 10000;" class="hidden items-center gap-1.5 bg-gradient-to-r from-[#8e52ff] to-[#45a29e] text-white text-[11px] font-bold px-3.5 py-1.5 rounded-full shadow-[0_0_15px_rgba(142,82,255,0.5)] hover:opacity-95 transition-all cursor-pointer border-0 animate-pulse" title="Доступна новая версия SincPro — нажмите для установки">
               <span class="material-symbols-outlined text-[15px]">system_update_alt</span>
               <span id="header-update-version-text">Доступно обновление</span>
             </button>
