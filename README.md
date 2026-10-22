@@ -129,3 +129,21 @@ npm run tauri dev
 * **⛶ Screen OCR & Hybrid Translator (`Alt + Q`)**: Select any screen region to extract text locally via Windows WinRT OCR (`Windows.Media.Ocr`) and translate it in place via Gemini AI or offline fallback.
 * **⌨️ Intelligent Auto-Layout Switcher (`Ctrl + Pause`)**: Automatically fixes words typed in the wrong keyboard layout (`RU ↔ EN`) on Space/Enter with phonetic & bigram validation, instant undo (`Shift + Backspace`), and per-app exclusions (`Shift + Pause`).
 * **🔑 1-Click Gemini API Key Assistant**: Built-in assistant opens Google AI Studio and automatically detects and saves your `AIza...` key from the clipboard as soon as you switch back to the SINC PRO window.
+
+---
+
+## 💖 Поддержать проект / Support & Donate
+
+Если проект оказался вам полезен, вы можете поддержать его развитие из любой точки мира (РФ, СНГ и любые зарубежные страны):  
+If you find this project helpful, you can support its continued development:
+
+[![Donate via Tribute Web](https://img.shields.io/badge/💳_Карты_РФ_и_Мира_/_Cards-Tribute_Web-ff4b4b?style=for-the-badge)](https://web.tribute.tg/d/SGR)
+[![Donate via Telegram](https://img.shields.io/badge/✈️_Telegram_Tribute-Mini_App-2CA5E0?style=for-the-badge)](https://t.me/tribute/app?startapp=dSGR)
+
+* **💳 Банковские карты (РФ, СНГ и весь мир) в браузере / Bank Cards (Web)**: [https://web.tribute.tg/d/SGR](https://web.tribute.tg/d/SGR)
+* **✈️ Донат через Telegram (Карты и Telegram Stars)**: [https://t.me/tribute/app?startapp=dSGR](https://t.me/tribute/app?startapp=dSGR)
+* **💎 Криптовалюта / Crypto (Ethereum `ETH` и любые токены `ERC-20`: `USDT`, `USDC` в сети Ethereum)**:
+  ```text
+  0x729D819802EF2B8Eaab8eE7F0431fE1d288E6688
+  ```
+
