@@ -12,50 +12,52 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Скрываем/показываем виджет при старте в зависимости от режима
-  if (window.__TAURI__ && appWindow) {
-    const { invoke } = window.__TAURI__.core;
-    invoke('is_minimized_startup').then((isMinimized) => {
-      invoke('load_config').then((config) => {
-        if (config && config.widget_scale !== undefined) {
-          applyWidgetScale(config.widget_scale);
-        }
-        const widgetMode = config.widget_mode !== undefined ? config.widget_mode : 2;
-        if (isMinimized) {
-          appWindow.hide().catch(console.error);
-        } else {
-          if (widgetMode === 0 || widgetMode === 1) {
-            appWindow.hide().catch(console.error);
-          } else {
-            appWindow.show().catch(console.error);
-            initPosition();
-          }
-        }
-      }).catch(err => {
-        console.error('[Widget] Failed to load config:', err);
-        const widgetMode = parseInt(localStorage.getItem('widgetMode') || '2', 10);
-        if (isMinimized || widgetMode === 0 || widgetMode === 1) {
-          appWindow.hide().catch(console.error);
-        } else {
-          appWindow.show().catch(console.error);
-          initPosition();
-        }
-      });
-    }).catch(() => {
-      const widgetMode = parseInt(localStorage.getItem('widgetMode') || '2', 10);
-      if (widgetMode === 0 || widgetMode === 1) {
-        appWindow.hide().catch(console.error);
-      } else {
-        appWindow.show().catch(console.error);
-        initPosition();
-      }
-    });
-  }
-
   const PAD_LEFT = 44;
   const PAD_TOP = 22;
   let widgetScale = 1.0;
   let cachedWindowPos = { x: 0, y: 0 };
+  let isPositionInitialized = false;
+  let savedConfigPos = null;
+
+  // Скрываем/показываем виджет при старте в зависимости от режима
+  if (window.__TAURI__ && appWindow) {
+    const { invoke } = window.__TAURI__.core;
+    invoke('is_minimized_startup').then((isMinimized) => {
+      invoke('load_config').then(async (config) => {
+        if (config && typeof config.widget_x === 'number' && typeof config.widget_y === 'number') {
+          savedConfigPos = { x: config.widget_x, y: config.widget_y };
+          localStorage.setItem('widget_pos', JSON.stringify(savedConfigPos));
+        }
+        if (config && config.widget_scale !== undefined) {
+          await applyWidgetScale(config.widget_scale);
+        }
+        const widgetMode = config.widget_mode !== undefined ? config.widget_mode : 2;
+        await initPosition(config);
+        if (isMinimized || widgetMode === 0 || widgetMode === 1) {
+          appWindow.hide().catch(console.error);
+        } else {
+          appWindow.show().catch(console.error);
+        }
+      }).catch(async (err) => {
+        console.error('[Widget] Failed to load config:', err);
+        const widgetMode = parseInt(localStorage.getItem('widgetMode') || '2', 10);
+        await initPosition();
+        if (isMinimized || widgetMode === 0 || widgetMode === 1) {
+          appWindow.hide().catch(console.error);
+        } else {
+          appWindow.show().catch(console.error);
+        }
+      });
+    }).catch(async () => {
+      const widgetMode = parseInt(localStorage.getItem('widgetMode') || '2', 10);
+      await initPosition();
+      if (widgetMode === 0 || widgetMode === 1) {
+        appWindow.hide().catch(console.error);
+      } else {
+        appWindow.show().catch(console.error);
+      }
+    });
+  }
 
   const root = document.getElementById('tts-widget-root');
   const widgetContainer = document.getElementById('widget-container');
@@ -87,43 +89,72 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function persistWidgetPos(x, y) {
+    const rx = Math.round(x);
+    const ry = Math.round(y);
+    cachedWindowPos = { x: rx, y: ry };
+    savedConfigPos = { x: rx, y: ry };
+    localStorage.setItem('widget_pos', JSON.stringify({ x: rx, y: ry }));
+    if (window.__TAURI__) {
+      window.__TAURI__.core.invoke('update_config_fields', {
+        fields: { widget_x: rx, widget_y: ry }
+      }).catch(() => {});
+    }
+  }
+
   // Принудительная инициализация WinAPI SetWindowPos для обхода бага с системной рамкой DWM
-  async function initPosition() {
+  async function initPosition(cfg) {
     if (!window.__TAURI__ || !appWindow) return;
     const { invoke } = window.__TAURI__.core;
     try {
-      await new Promise(r => setTimeout(r, 80));
+      await new Promise(r => setTimeout(r, 40));
       const dpr = window.devicePixelRatio || 1;
       const winW = Math.round((520 * widgetScale + 88) * dpr);
       const winH = Math.round((440 * widgetScale + 60) * dpr);
       let pos = await appWindow.outerPosition();
 
-      // Пробуем восстановить сохраненные координаты с проверкой мониторов
-      const savedPos = localStorage.getItem('widget_pos');
-      if (savedPos) {
+      // Пробуем восстановить сохраненные координаты из config.json или localStorage
+      let candidate = null;
+      if (cfg && typeof cfg.widget_x === 'number' && typeof cfg.widget_y === 'number') {
+        candidate = { x: cfg.widget_x, y: cfg.widget_y };
+      } else if (savedConfigPos && typeof savedConfigPos.x === 'number' && typeof savedConfigPos.y === 'number') {
+        candidate = savedConfigPos;
+      } else {
+        const savedPos = localStorage.getItem('widget_pos');
+        if (savedPos) {
+          try {
+            const parsed = JSON.parse(savedPos);
+            if (parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number') {
+              candidate = parsed;
+            }
+          } catch (_) {}
+        }
+      }
+
+      if (candidate) {
+        let isInsideAnyMonitor = true;
         try {
-          const parsed = JSON.parse(savedPos);
-          if (parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number') {
-            const monitors = typeof appWindow.availableMonitors === 'function'
-              ? await appWindow.availableMonitors()
-              : (window.__TAURI__.window?.availableMonitors ? await window.__TAURI__.window.availableMonitors() : []);
-            let isInsideAnyMonitor = false;
+          const monitors = typeof appWindow.availableMonitors === 'function'
+            ? await appWindow.availableMonitors()
+            : (window.__TAURI__.window?.availableMonitors ? await window.__TAURI__.window.availableMonitors() : []);
+          if (Array.isArray(monitors) && monitors.length > 0) {
+            isInsideAnyMonitor = false;
             for (const mon of monitors) {
               const mx = mon.position.x;
               const my = mon.position.y;
               const mw = mon.size.width;
               const mh = mon.size.height;
-              if (parsed.x >= mx - 300 && parsed.x < mx + mw && parsed.y >= my - 300 && parsed.y < my + mh) {
+              if (candidate.x >= mx - 350 && candidate.x < mx + mw && candidate.y >= my - 350 && candidate.y < my + mh) {
                 isInsideAnyMonitor = true;
                 break;
               }
             }
-            if (isInsideAnyMonitor) {
-              pos = { x: parsed.x, y: parsed.y };
-            }
           }
-        } catch (e) {
-          console.error('[Widget] Restore position failed:', e);
+        } catch (_) {
+          isInsideAnyMonitor = candidate.x > -10000 && candidate.x < 20000 && candidate.y > -10000 && candidate.y < 20000;
+        }
+        if (isInsideAnyMonitor) {
+          pos = { x: Math.round(candidate.x), y: Math.round(candidate.y) };
         }
       }
 
@@ -134,8 +165,10 @@ document.addEventListener('DOMContentLoaded', () => {
         y: pos.y
       });
       cachedWindowPos = { x: pos.x, y: pos.y };
+      isPositionInitialized = true;
       updateClickRegion();
     } catch (e) {
+      isPositionInitialized = true;
       console.error('[Widget] initPosition WinAPI failed:', e);
     }
   }
@@ -156,14 +189,14 @@ document.addEventListener('DOMContentLoaded', () => {
   if (window.__TAURI__ && appWindow) {
     let widgetTimeout = null;
     appWindow.onMoved(() => {
+      if (!isPositionInitialized) return;
       clearTimeout(widgetTimeout);
       widgetTimeout = setTimeout(async () => {
         try {
           const pos = await appWindow.outerPosition();
-          cachedWindowPos = { x: pos.x, y: pos.y };
-          localStorage.setItem('widget_pos', JSON.stringify({ x: pos.x, y: pos.y }));
+          persistWidgetPos(pos.x, pos.y);
         } catch (_) {}
-      }, 200);
+      }, 250);
     });
   }
 
@@ -482,8 +515,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     listen('custom-drag-ended', (e) => {
       if (e.payload && typeof e.payload.x === 'number' && typeof e.payload.y === 'number') {
-        cachedWindowPos = { x: e.payload.x, y: e.payload.y };
-        localStorage.setItem('widget_pos', JSON.stringify(cachedWindowPos));
+        persistWidgetPos(e.payload.x, e.payload.y);
       }
     });
 
@@ -509,9 +541,12 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }).catch(()=>{});
 
-    // При показе окна принудительно переприменяем регион кликов после завершения анимаций DWM
-    listen('widget-shown', () => {
+    // При показе окна принудительно переприменяем позицию и регион кликов после завершения анимаций DWM
+    listen('widget-shown', async () => {
       emit('widget-mode-changed', 2);
+      if (!isPositionInitialized) {
+        await initPosition();
+      }
       setTimeout(() => {
         const isRowVisible = expandedRow && !expandedRow.classList.contains('hidden');
         const isCollapsed = widgetContainer && widgetContainer.classList.contains('hover-collapsed');

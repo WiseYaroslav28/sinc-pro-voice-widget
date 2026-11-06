@@ -11,6 +11,8 @@
     "core:window:default",
     "core:window:allow-start-dragging",
     "core:window:allow-set-position",
+    "core:window:allow-available-monitors",
+    "core:window:allow-outer-position",
     "core:window:allow-show",
     "core:window:allow-hide",
     "core:window:allow-set-focus",

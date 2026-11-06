@@ -39,6 +39,10 @@ struct TypedKey {
     is_english_layout: bool,
 }
 
+static MOUSE_CLICKED_SINCE_KEY: AtomicBool = AtomicBool::new(false);
+static LAST_TYPED_HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+static LAST_TYPED_HKL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 lazy_static::lazy_static! {
     static ref TYPED_BUFFER: std::sync::Mutex<Vec<TypedKey>> = std::sync::Mutex::new(Vec::new());
     static ref LAST_AUTOCORRECT: std::sync::Mutex<Option<(String, String, bool, usize)>> = std::sync::Mutex::new(None);
@@ -604,55 +608,66 @@ async fn speak_yandex_tts(api_key: &str, text: &str, voice: &str, rate: f32) -> 
     Ok(STANDARD.encode(&bytes))
 }
 
-async fn speak_google_fallback_tts(text: &str, _voice: &str) -> Result<String, String> {
-    let has_cyrillic = text.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c));
-    let tl = if has_cyrillic { "ru" } else { "en" };
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(8))
-        .build()
-        .map_err(|e| e.to_string())?;
+fn build_expressive_ssml_params(raw_text: &str, base_rate: f32) -> (String, String, String) {
+    let mut trimmed = raw_text.trim();
+    let mut tag_mode: Option<&str> = None;
 
-    // Разбиваем длинное предложение на куски до 180 символов по пробелам
-    let mut chunks: Vec<String> = Vec::new();
-    let mut current = String::new();
-    for word in text.split_whitespace() {
-        if current.chars().count() + word.chars().count() + 1 > 180 && !current.is_empty() {
-            chunks.push(current.clone());
-            current.clear();
+    for (tag, mode) in [
+        ("[question]", "question"),
+        ("[excited]", "excited"),
+        ("[calm]", "calm"),
+        ("[header]", "header"),
+        ("[pause]", "calm"),
+    ] {
+        if let Some(rest) = trimmed.strip_prefix(tag) {
+            tag_mode = Some(mode);
+            trimmed = rest.trim();
+            break;
         }
-        if !current.is_empty() {
-            current.push(' ');
-        }
-        current.push_str(word);
-    }
-    if !current.is_empty() {
-        chunks.push(current);
     }
 
-    let mut combined_mp3: Vec<u8> = Vec::new();
-    for chunk in chunks {
-        let encoded = urlencoding::encode(&chunk);
-        let url = format!(
-            "https://translate.googleapis.com/translate_tts?ie=UTF-8&client=tw-ob&tl={}&q={}",
-            tl, encoded
-        );
-        let resp = client
-            .get(&url)
-            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-            .send()
-            .await
-            .map_err(|e| format!("Fallback TTS error: {}", e))?;
-        if !resp.status().is_success() {
-            return Err(format!("Fallback TTS HTTP {}", resp.status()));
-        }
-        let b = resp.bytes().await.map_err(|e| e.to_string())?;
-        combined_mp3.extend_from_slice(&b);
-    }
+    let base_pct = ((base_rate - 1.0) * 100.0).round() as i32;
+    let char_count = trimmed.chars().count();
 
-    if combined_mp3.is_empty() {
-        return Err("Fallback TTS вернул пустой ответ".to_string());
-    }
-    Ok(STANDARD.encode(&combined_mp3))
+    let (rate_delta, pitch_str) = match tag_mode {
+        Some("question") => (0, "+4%"),
+        Some("excited") => (2, "+3%"),
+        Some("header") => (-4, "-2%"),
+        Some("calm") => (-3, "-2%"),
+        _ => {
+            if trimmed.ends_with("?!") || trimmed.ends_with("!?") {
+                (2, "+5%")
+            } else if trimmed.ends_with('?') {
+                (0, "+4%")
+            } else if trimmed.ends_with('!') {
+                (2, "+3%")
+            } else if trimmed.ends_with(':') {
+                (-4, "-2%")
+            } else if trimmed.ends_with("...") || trimmed.ends_with('…') {
+                (-3, "-2%")
+            } else if char_count < 45 && (trimmed.contains(" — ") || trimmed.contains(" - ")) {
+                (-2, "+1%")
+            } else {
+                (0, "+0%")
+            }
+        }
+    };
+
+    let final_rate_pct = (base_pct + rate_delta).clamp(-50, 100);
+    let rate_str = if final_rate_pct >= 0 {
+        format!("+{}%", final_rate_pct)
+    } else {
+        format!("{}%", final_rate_pct)
+    };
+
+    let escaped = trimmed
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;");
+
+    (escaped, rate_str, pitch_str.to_string())
 }
 
 #[tauri::command]
@@ -669,39 +684,47 @@ async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: Strin
     }
 
     let _guard = EDGE_TTS_MUTEX.lock().await;
-    // Попытка 1: стандартный запрос с Sec-MS-GEC v2
+    // Попытка 1: стандартный запрос к Microsoft Edge Neural TTS с Sec-MS-GEC v2
     match speak_edge_tts_internal(text.clone(), voice.clone(), rate, false).await {
         Ok(b64) => Ok(b64),
         Err(first_err) => {
             println!("SincPro TTS Auto-Heal: Первая попытка не удалась ({}), обновляем профиль и DRM...", first_err);
-            // Уровень 1 и 2 самовосстановления: принудительно обновляем clock skew и DRM-версию с GitHub
+            tokio::time::sleep(Duration::from_millis(300)).await;
             let _ = get_clock_skew(true).await;
             if first_err.contains("403") {
                 refresh_edge_drm_constants().await;
             }
+            // Попытка 2: повторный запрос с обновленным clock skew
             match speak_edge_tts_internal(text.clone(), voice.clone(), rate, true).await {
                 Ok(b64) => {
                     println!("SincPro TTS Auto-Heal: Озвучка успешно восстановлена со второй попытки!");
                     Ok(b64)
                 }
                 Err(second_err) => {
-                    log_tts_error(&text, &second_err);
-                    // Уровень 3: Автоматический Fallback (Yandex -> Local Piper -> Google TTS)
-                    if !config.yandex_api_key.trim().is_empty() {
-                        if let Ok(ya_b64) = speak_yandex_tts(&config.yandex_api_key, &text, &voice, rate).await {
-                            println!("SincPro TTS Auto-Heal: Использован резервный канал Yandex SpeechKit");
-                            return Ok(ya_b64);
+                    println!("SincPro TTS Auto-Heal: Вторая попытка не удалась ({}), третья попытка...", second_err);
+                    tokio::time::sleep(Duration::from_millis(600)).await;
+                    refresh_edge_drm_constants().await;
+                    // Попытка 3: финальная попытка Edge TTS (без переключения на роботизированный голос Google)
+                    match speak_edge_tts_internal(text.clone(), voice.clone(), rate, true).await {
+                        Ok(b64) => {
+                            println!("SincPro TTS Auto-Heal: Озвучка успешно восстановлена с третьей попытки!");
+                            Ok(b64)
+                        }
+                        Err(third_err) => {
+                            log_tts_error(&text, &third_err);
+                            if !config.yandex_api_key.trim().is_empty() {
+                                if let Ok(ya_b64) = speak_yandex_tts(&config.yandex_api_key, &text, &voice, rate).await {
+                                    println!("SincPro TTS Auto-Heal: Использован резервный канал Yandex SpeechKit");
+                                    return Ok(ya_b64);
+                                }
+                            }
+                            if let Ok(local_b64) = speak_local_tts(&app_handle, text.clone(), voice.clone(), rate).await {
+                                println!("SincPro TTS Auto-Heal: Использован локальный резервный движок Piper");
+                                return Ok(local_b64);
+                            }
+                            Err(third_err)
                         }
                     }
-                    if let Ok(local_b64) = speak_local_tts(&app_handle, text.clone(), voice.clone(), rate).await {
-                        println!("SincPro TTS Auto-Heal: Использован локальный резервный движок Piper");
-                        return Ok(local_b64);
-                    }
-                    if let Ok(google_b64) = speak_google_fallback_tts(&text, &voice).await {
-                        println!("SincPro TTS Auto-Heal: Использован резервный онлайн-движок");
-                        return Ok(google_b64);
-                    }
-                    Err(second_err)
                 }
             }
         }
@@ -709,11 +732,18 @@ async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: Strin
 }
 
 async fn speak_edge_tts_internal(text: String, voice: String, rate: f32, force_skew: bool) -> Result<String, String> {
-    let rate_pct = (((rate - 1.0) * 100.0).round() as i32).clamp(-50, 100);
-    let rate_str = if rate_pct >= 0 {
-        format!("+{}%", rate_pct)
-    } else {
-        format!("{}%", rate_pct)
+    let (ssml_text, rate_str, pitch_str) = build_expressive_ssml_params(&text, rate);
+    if ssml_text.trim().is_empty() {
+        return Err("Пустой текст для озвучки".into());
+    }
+
+    let xml_lang = {
+        let parts: Vec<&str> = voice.split('-').take(2).collect();
+        if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+            format!("{}-{}", parts[0], parts[1])
+        } else {
+            "ru-RU".to_string()
+        }
     };
 
     let skew = get_clock_skew(force_skew).await;
@@ -739,7 +769,7 @@ async fn speak_edge_tts_internal(text: String, voice: String, rate: f32, force_s
     headers.insert("Origin", "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold".parse().unwrap());
     headers.insert("User-Agent", ua.parse().unwrap());
     headers.insert("Accept-Encoding", "gzip, deflate, br, zstd".parse().unwrap());
-    headers.insert("Accept-Language", "en-US,en;q=0.9".parse().unwrap());
+    headers.insert("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7".parse().unwrap());
     headers.insert("Pragma", "no-cache".parse().unwrap());
     headers.insert("Cache-Control", "no-cache".parse().unwrap());
 
@@ -749,7 +779,7 @@ async fn speak_edge_tts_internal(text: String, voice: String, rate: f32, force_s
     let adjusted_now = chrono::Utc::now() + chrono::Duration::seconds(skew);
     let ts_str = adjusted_now.format("%Y-%m-%dT%H:%M:%S.000Z").to_string();
 
-    let net_result = tokio::time::timeout(Duration::from_secs(10), async {
+    let net_result = tokio::time::timeout(Duration::from_secs(12), async {
         let (mut ws, _) = connect_async_tls_with_config(request, None, false, None)
             .await
             .map_err(|e| format!("WebSocket connect failed: {}", e))?;
@@ -764,19 +794,17 @@ async fn speak_edge_tts_internal(text: String, voice: String, rate: f32, force_s
             .map_err(|e| format!("Send config failed: {}", e))?;
 
         let request_id = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
-        let ssml_text = text
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;");
         let ssml_msg = format!(
             "X-RequestId:{req}\r\nContent-Type:application/ssml+xml\r\n\
              X-Timestamp:{ts}\r\nPath:ssml\r\n\r\n\
-             <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>\
-             <voice name='{voice}'><prosody rate='{rate}'>{text}</prosody></voice></speak>",
+             <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='{lang}'>\
+             <voice name='{voice}'><prosody rate='{rate}' pitch='{pitch}'>{text}</prosody></voice></speak>",
             req = request_id,
             ts = ts_str,
+            lang = xml_lang,
             voice = voice,
             rate = rate_str,
+            pitch = pitch_str,
             text = ssml_text,
         );
         ws.send(Message::Text(ssml_msg.into())).await
@@ -808,7 +836,7 @@ async fn speak_edge_tts_internal(text: String, voice: String, rate: f32, force_s
 
     let audio_bytes = match net_result {
         Ok(inner_res) => inner_res?,
-        Err(_) => return Err("Timeout requesting Edge TTS (10s)".into()),
+        Err(_) => return Err("Timeout requesting Edge TTS (12s)".into()),
     };
 
     if audio_bytes.is_empty() {
@@ -1348,217 +1376,369 @@ fn map_vk_to_chars(vk: u32) -> Option<(char, char)> {
         0x4D => Some(('m', 'ь')),
         0xBC => Some((',', 'б')),
         0xBE => Some(('.', 'ю')),
-        0xBF => Some(('/', '.')),
+        // 0xBF ('/' и '?' в EN, '.' и ',' в RU) намеренно НЕ включен: это всегда пунктуация в обеих раскладках
         0xC0 => Some(('`', 'ё')),
         _ => None,
     }
 }
 
-fn is_invalid_layout_word(word: &str, is_english: bool) -> bool {
-    if word.chars().count() < 2 {
+fn has_normal_word_casing(word: &str) -> bool {
+    let chars: Vec<char> = word.chars().collect();
+    if chars.len() < 3 {
+        return false;
+    }
+    // Запрещаем заглавные буквы после первой позиции (исключает аббревиатуры RGB/КПИ, camelCase и склейки вроде ",Он" -> "бОн")
+    if chars.iter().skip(1).any(|c| c.is_uppercase()) {
+        return false;
+    }
+    true
+}
+
+fn is_recognized_english_word(word_lower: &str) -> bool {
+    if word_lower.len() < 3 || !word_lower.chars().all(|c| c.is_ascii_lowercase()) {
         return false;
     }
 
-    if is_english {
-        // Убираем завершающий '/' (VK_OEM_2 = '.' в русской раскладке)
-        let trimmed = word.trim_end_matches('/');
-        if trimmed.chars().count() < 2 {
-            return false;
-        }
+    const EN_DICTIONARY: &[&str] = &[
+        // Служебные и высокочастотные английские слова
+        "the", "and", "for", "are", "but", "not", "you", "all", "any", "can", "had", "her", "was", "one",
+        "our", "out", "day", "get", "has", "him", "his", "how", "man", "new", "now", "old", "see", "two",
+        "way", "who", "boy", "did", "its", "let", "put", "say", "she", "too", "use", " yes", "yes", "yet",
+        "that", "with", "have", "this", "will", "your", "from", "they", "know", "want", "been", "good",
+        "much", "some", "time", "very", "when", "come", "here", "just", "like", "long", "make", "many",
+        "more", "only", "over", "such", "take", "than", "them", "well", "were", "what", "where", "which",
+        "while", "about", "after", "again", "below", "could", "every", "first", "found", "great", "house",
+        "large", "learn", "never", "other", "place", "plant", "point", "right", "small", "sound", "spell",
+        "still", "study", "their", "there", "these", "thing", "think", "three", "water", "world", "would",
+        "write", "years", "always", "around", "before", "better", "change", "follow", "little", "mother",
+        "number", "people", "person", "should", "system", "though", "answer", "school", "father", "friend",
+        "please", "thanks", "thank", "hello", "welcome", "nothing", "something", "everything", "anything",
+        "someone", "everyone", "anyone", "because", "through", "between", "without", "against", "another",
+        "morning", "evening", "tonight", "today", "tomorrow", "yesterday", "question", "problem", "program",
+        "company", "service", "project", "product", "version", "release", "message", "channel", "account",
+        "profile", "setting", "settings", "feature", "support", "example", "process", "control", "history",
+        "network", "browser", "desktop", "monitor", "display", "speaker", "headset", "windows", "android",
+        "google", "chrome", "firefox", "discord", "telegram", "youtube", "spotify", "netflix", "twitter",
+        "openai", "claude", "gemini", "chatgpt", "copilot", "cursor", "vscode", "github", "gitlab", "docker",
+        "python", "rust", "golang", "nodejs", "react", "nextjs", "svelte", "angular", "tailwind", "tauri",
+        "button", "window", "folder", "dialog", "header", "footer", "sidebar", "widget", "toggle", "switch",
+        "screen", "record", "layout", "hotkey", "config", "server", "client", "status", "online", "offline",
+        "update", "delete", "remove", "create", "insert", "select", "search", "filter", "export", "import",
+        "upload", "download", "install", "uninstall", "restart", "cancel", "submit", "confirm", "enable",
+        "disable", "connect", "default", "custom", "global", "local", "public", "private", "static", "async",
+        "await", "return", "function", "struct", "string", "number", "boolean", "object", "array", "vector",
+        "option", "result", "error", "warning", "success", "failed", "loading", "active", "hidden", "visible",
+        "target", "source", "output", "input", "buffer", "stream", "memory", "thread", "handle", "module",
+        "plugin", "script", "styles", "format", "prompt", "models", "model", "voice", "voices", "speech",
+        "audio", "video", "image", "photo", "music", "files", "file", "line", "lines", "text", "word", "words",
+        "table", "value", "values", "true", "false", "null", "none", "const", "let", "var", "class", "trait",
+        "impl", "match", "break", "continue", "while", "loop", "super", "self", "where", "type", "enum",
+        "admin", "login", "logout", "signup", "token", "secret", "branch", "commit", "merge", "rebase",
+        "push", "pull", "fetch", "clone", "status", "stash", "reset", "revert", "build", "check", "test",
+        "tests", "debug", "trace", "cargo", "npm", "pnpm", "yarn", "vite", "webpack", "babel", "eslint",
+    ];
 
-        // Проверяем наличие спецсимволов, которые в русской раскладке являются буквами (х, ъ, ё, ж, э, б, ю)
-        // 1. Скобки и тильда ([ ] { } ` ~) — никогда не бывают частью английского слова
-        if trimmed.chars().any(|c| matches!(c, '[' | ']' | '{' | '}' | '`' | '~')) {
-            return true;
-        }
+    if EN_DICTIONARY.contains(&word_lower) {
+        return true;
+    }
 
-        // 2. Знаки ; : , < . > в начале или середине слова (например vj;yj -> можно, cgfcb,j -> спасибо, k.,jdm -> любовь)
-        let chars: Vec<char> = trimmed.chars().collect();
-        let len = chars.len();
-        for (idx, &c) in chars.iter().enumerate() {
-            if matches!(c, ';' | ':' | ',' | '<' | '.' | '>') && idx + 1 < len {
+    // Проверяем стандартные английские словоформы (-s, -es, -ed, -ing, -ly, -er) от словарных основ
+    for suffix in &["ing", "ed", "es", "er", "ly", "s"] {
+        if let Some(stem) = word_lower.strip_suffix(suffix) {
+            if stem.len() >= 3 && EN_DICTIONARY.contains(&stem) {
                 return true;
             }
-            if c == '\'' || c == '"' {
-                // Разрешаем только валидные английские апострофы ('s, 't, 'm, 'd, 'll, 're, 've)
-                let tail: String = chars[idx..].iter().collect::<String>().to_lowercase();
-                if !matches!(tail.as_str(), "'s" | "'t" | "'m" | "'d" | "'ll" | "'re" | "'ve") {
-                    return true;
-                }
-            }
-        }
-
-        // Для дальнейшего анализа букв отбрасываем одиночный завершающий знак препинания (, . ;)
-        let stem = trimmed.trim_end_matches(|c| matches!(c, ',' | '.' | ';' | ':'));
-        let stem_lower = stem.to_lowercase();
-        let stem_chars: Vec<char> = stem_lower.chars().collect();
-        if stem_chars.len() < 2 {
-            return false;
-        }
-
-        // Белый список частых английских тех-аббревиатур и сокращений без гласных
-        const VALID_ENG_ABBR: &[&str] = &[
-            "http", "https", "html", "scss", "grpc", "glfw", "llvm", "std", "src", "pkg",
-            "npm", "npx", "pnpm", "git", "ssh", "ssl", "tls", "tcp", "udp", "utf", "rgb",
-            "rgba", "hsl", "svg", "png", "jpg", "webp", "gif", "mp3", "mp4", "mkv", "pdf",
-            "txt", "docx", "xlsx", "csv", "xml", "sql", "jwt", "sdk", "cli", "cpu", "gpu",
-            "ssd", "hdd", "usb", "hdmi", "ctrl", "shift", "hwnd", "wnd", "msg", "ptr", "str",
-            "vec", "fmt", "cfg", "tmp", "usr", "bin", "dll", "cmd", "ps1", "sync", "lynx",
-            "myth", "hymn", "rhythm", "crypt", "nymph", "gym", "dry", "fly", "sky", "try",
-            "cry", "shy", "why", "spy", "fry", "ply", "pry", "wry", "nth", "mrs", "ms", "mr", "dr", "st",
-        ];
-        if VALID_ENG_ABBR.contains(&stem_lower.as_str()) {
-            return false;
-        }
-
-        // Частые короткие русские слова на английской раскладке, которые содержат 'e'/'y'/'a'/'u'/'i'/'o'
-        const COMMON_RU_ON_EN: &[&str] = &[
-            "ytn", "nen", "cjy", "ujl", "tot", "rfr", "xnj", "rnj", "ult", "djn", "nfr",
-            "nfv", "dct", "lkz", "vjq", "ndjq", "cdjq", "jyf", "jyb", "jyj", "vyjuj",
-            "nfrjq", "rfrjq", "ɷnj", "pyf", "pyftn", "pyf.n", "pyf.t", "vtyz", "nt,z",
-            "ct,z", "åuj", "tuj", "tt", "b[", "yfc", "dfc", "bv", "bvb", "ytv", "ytq",
-            "kexit", "gjnjp", "gjnjv", "ctqxfc", "pltcm", "njulf", "rjulf", "dcerlf",
-            "ybкогда", "ybrjulf", "jxtym", "ghjcnj", "njkmrj", "ctujlyz", "rjytxyj",
-            "ybxtuj", "ghbdtn", "chfpe", "ckeifnm", "lfnm", "pfnm", "pyfnm", "crfpfnm",
-            "ltfnm", "ltkfnm", "hf,jnfnm", "levfnm", "gjybvfnm", "ujdjhbnm", "cvjnhtnm",
-            "dbltnm", "[jntnm", "vjxm", "blnb", "t[fnm", "cnjznm", "cbltnm", "kt;fnm",
-            "cgfnm", ";bnm", ",snm", "cnfnm", "dpznm", "gjkexbnm", "yfqnb", "gecnbnm",
-        ];
-        if COMMON_RU_ON_EN.contains(&stem_lower.as_str()) {
-            return true;
-        }
-
-        let has_vowel = stem_chars.iter().any(|&c| matches!(c, 'a'|'e'|'i'|'o'|'u'|'y'));
-        if !has_vowel && stem_chars.len() >= 3 {
-            return true;
-        }
-
-        // Считаем подряд идущие согласные (в английском до 5 согласных легальны: strength, prompts, background, lengths)
-        let mut consecutive_consonants = 0;
-        for &c in &stem_chars {
-            if c.is_ascii_alphabetic() && !matches!(c, 'a'|'e'|'i'|'o'|'u'|'y') {
-                consecutive_consonants += 1;
-                if consecutive_consonants >= 6 {
-                    return true;
-                }
-            } else {
-                consecutive_consonants = 0;
-            }
-        }
-
-        // В английском языке 'j' ('о' в русском) никогда не стоит на конце слова и не идет перед согласной
-        if stem_chars.last() == Some(&'j') {
-            return true;
-        }
-        for w in stem_chars.windows(2) {
-            let (a, b) = (w[0], w[1]);
-            // 'j' перед любой согласной (например jxtym -> очень, jh -> ор, jn -> от, jk -> ол, jm -> оь)
-            if a == 'j' && b.is_ascii_alphabetic() && !matches!(b, 'a'|'e'|'i'|'o'|'u') {
-                return true;
-            }
-            // Согласная перед 'j' (кроме d/b в adjust/object)
-            if b == 'j' && a.is_ascii_alphabetic() && !matches!(a, 'a'|'e'|'i'|'o'|'u'|'d'|'b') {
-                return true;
-            }
-        }
-
-        // Русские начала слов с 'н' ('y' в EN) + русская гласная ('f'=а, 't'=е, 'b'=и, 'j'=о, 's'=ы, 'z'=я)
-        for prefix in &["yf", "yt", "yb", "yj", "ys", "yz", "df", "dt", "db", "dj", "ds", "dz", "pf", "pt", "pb", "pj", "ps", "pz", "rf", "rt", "rb", "rj", "rs", "rz", "cf", "ct", "cb", "cj", "cs", "cz", "nf", "nt", "nb", "nj", "ns", "nz", "gf", "gt", "gb", "gj", "gs", "gz", "lf", "lt", "lb", "lj", "ls", "lz", "vf", "vt", "vb", "vj", "vs", "vz", "xf", "xt", "xb", "xj", "xe", "if", "it", "ib", "ij", "ie"] {
-            if stem_lower.starts_with(prefix) && !matches!(stem_lower.as_str(), "year" | "years" | "yeast" | "yearn" | "yield" | "yell" | "yellow" | "yes" | "yet" | "yesterday" | "young" | "your" | "yours" | "yourself" | "youth" | "you" | "yard" | "yarn" | "yawn" | "yacht") {
-                return true;
-            }
-        }
-
-        // Русские окончания на мягкий знак ('m') или 'й' ('q') после согласной
-        for suffix in &["nm", "cm", "km", "hm", "lm", "pm", "dm", "gm", "xm", "im", "om", "jq", "tq", "bq", "sq", "zq", "f.n", "e.n", "b.n", "z.n"] {
-            if stem_lower.ends_with(suffix) && !matches!(stem_lower.as_str(), "film" | "palm" | "calm" | "balm" | "psalm" | "helm" | "realm" | "elm" | "overwhelm" | "worm" | "form" | "norm" | "storm" | "warm" | "harm" | "farm" | "charm" | "alarm" | "arm" | "term" | "firm" | "confirm" | "affirm" | "germ" | "sperm" | "chasm" | "spasm" | "prism" | "organism" | "mechanism" | "turbulence" | "rhythm" | "algorithm" | "logarithm" | "him" | "dim" | "rim" | "trim" | "grim" | "brim" | "slim" | "swim" | "skim" | "whim" | "victim" | "pilgrim" | "interim" | "verbatim" | "denim" | "minim" | "maxim" | "claim" | "aim" | "maim" | "from" | "whom" | "atom" | "bottom" | "custom" | "symptom" | "phantom" | "random" | "kingdom" | "freedom" | "wisdom" | "boredom" | "seldom" | "condom" | "venom" | "bosom" | "blossom" | "fathom" | "idiom" | "axiom" | "mom" | "prom" | "rom" | "com" | "tom" | "pom" | "room" | "boom" | "zoom" | "doom" | "loom" | "bloom" | "gloom" | "groom" | "broom" | "mushroom") {
-                return true;
-            }
-        }
-
-        // Если на конце слова была запятая/точка/точка с запятой, но основа валидна — это просто пунктуация (hello,)
-        let invalid_pairs = [
-            "qg", "qx", "qz", "qk", "qv", "qw", "qy", "qb", "qc", "qd", "qj", "qh", "qp", "qs",
-            "wz", "wx", "wq", "jz", "jx", "jq", "vf", "vc", "cx", "cv", "zb", "zd", "zg", "zh",
-            "zj", "zk", "zm", "zn", "zp", "zq", "zr", "zs", "zv", "zx", "ghb", "dtn", "njk", "kmr",
-        ];
-        for pair in &invalid_pairs {
-            if stem_lower.contains(pair) {
-                return true;
-            }
-        }
-    } else {
-        // Текущая раскладка — РУССКАЯ (проверяем, не введено ли английское слово в русской раскладке,
-        // и не трогаем настоящие русские слова вроде "борщ", "женщина", "уборщица", "толщина", "тщательно")
-        let trimmed = word.trim_end_matches(|c| matches!(c, '.' | ',' | ';' | ':'));
-        let chars: Vec<char> = trimmed.chars().collect();
-        if chars.len() < 2 {
-            return false;
-        }
-
-        if let Some(&first) = chars.first() {
-            if matches!(first, 'ы' | 'Ы' | 'ь' | 'Ь' | 'ъ' | 'Ъ') {
-                return true;
-            }
-        }
-
-        let has_vowel = chars.iter().any(|&c| matches!(c, 'а'|'о'|'у'|'ы'|'э'|'я'|'е'|'ё'|'и'|'ю'|'А'|'О'|'У'|'Ы'|'Э'|'Я'|'Е'|'Ё'|'И'|'Ю'));
-        if !has_vowel && chars.len() >= 3 {
-            return true;
-        }
-
-        // 5 и более русских согласных подряд (например в английских словах со 'i'='ш', 'o'='щ', 'a'='ф', 'u'='г', 'y'='н')
-        let mut consecutive_consonants = 0;
-        for &c in &chars {
-            let cl = c.to_lowercase().next().unwrap_or(c);
-            if (cl >= 'а' && cl <= 'я' || cl == 'ё') && !matches!(cl, 'а'|'о'|'у'|'ы'|'э'|'я'|'е'|'ё'|'и'|'ю') {
-                consecutive_consonants += 1;
-                if consecutive_consonants >= 5 {
-                    return true;
-                }
-            } else {
-                consecutive_consonants = 0;
-            }
-        }
-
-        let word_lower = trimmed.to_lowercase();
-
-        // Точные совпадения и префиксы частых английских слов, набранных в русской раскладке
-        if word_lower.starts_with("еру") || word_lower.starts_with("шьз") || word_lower.starts_with("щь") {
-            return true;
-        }
-
-        // Комбинации, которые НЕВОЗМОЖНЫ в настоящих русских словах, но возникают при вводе английских слов в RU раскладке:
-        // (Примечание: "рщ", "нщ", "лщ", "пщ", "сщ", "тщ" намеренно исключены, т.к. они есть в словах борщ, женщина, толщина, общий, счёт, тщательно)
-        let invalid_pairs = [
-            // Невозможные сочетания ь/ъ/ы и шипящих
-            "ьь", "ъъ", "ьъ", "ъь", "ыь", "ьы", "ъы", "ыъ", "чщ", "щч", "жш", "шж", "цщ", "щц", "цч", "чц", "шщ", "щщ",
-            "жы", "шы", "чы", "щы", "щэ", "шэ", "жэ", "чэ", "цэ", "йь", "йъ", "йы",
-            // Гласная + 'ы' ('s' в EN: test=еуые, best=иуые, just=огые) или гласная + 'ь' ('m' в EN)
-            "уы", "аы", "оы", "еы", "иы", "яы", "юы", "эы", "ыы",
-            "уь", "аь", "оь", "еь", "иь", "яь", "юь", "эь", "гь",
-            // 'ь' ('m' в EN) перед английскими гласными (ma=ьф, me=ьу, mi=ьш, mo=ьщ, mu=ьг, my=ьн)
-            "ьф", "ьу", "ьш", "ьщ", "ьг", "ьн", "ьи", "ьз", "ьв", "ьп", "ьк", "ьт",
-            // 'щ' ('o' в EN) в английских биграммах (ou=щг, ow=щц, on=щт, or=щк, op=щз, ol=щд, ok=щл, od=щв, og=щп, oc=щс, oa=щф, oi=щш, ov=щм)
-            "щг", "щц", "щт", "щк", "щз", "щд", "щл", "щв", "щп", "щс", "щф", "щш", "щм",
-            // 'ц' ('w' в EN) в английских биграммах (wh=цр, wi=цш, wa=цф, wu=цг, wy=цн, wl=цд, wr=цк, wn=цт)
-            "цр", "цш", "цф", "цг", "цн", "цд", "цк", "цт", "цуд", "цуы", "цуи", "цут",
-            // 'ф' ('a' в EN) в английских биграммах (al=фд, ap=фз, ag=фп, ai=фш, ao=фщ, aw=фц, ax=фч, aq=фй, ay=фн)
-            "фд", "фз", "фп", "фш", "фщ", "фц", "фч", "фй", "фн", "уфк", "уфв", "уфс", "уфз",
-            // Специфические английские кластеры (hello=руддщ, ing=штп, ight=шпре, sh=ыр/шыр/фыр/гыр, ck=фсл/шсл/щсл/гсл, ch=срфе/срус/срш/срщ/срк)
-            "удд", "фдд", "шдд", "гдд", "дщ", "штп", "шпре", "ыр", "шыр", "фыр", "гыр",
-            "фсл", "шсл", "щсл", "гсл", "срфе", "срус", "срш", "срщ", "срк",
-            "ерфе", "ершы", "ерфт", "ершт", "цшер", "рфму", "акщь", "ефгк", "пшер", "агтс", "куегкт",
-            "ыефе", "ыекш", "ыные", "сркщ", "ашду", "дшту", "ешьу", "еуче", "тфьу", "ефид", "мфдг", "екгу", "афды",
-        ];
-        for pair in &invalid_pairs {
-            if word_lower.contains(pair) {
+            // Учет немой 'e' (make -> making, update -> updated)
+            let stem_e = format!("{}e", stem);
+            if stem_e.len() >= 4 && EN_DICTIONARY.contains(&stem_e.as_str()) {
                 return true;
             }
         }
     }
 
     false
+}
+
+fn is_valid_english_word(word_lower: &str) -> bool {
+    if is_recognized_english_word(word_lower) {
+        return true;
+    }
+
+    const TECH_AND_SHORT_EN: &[&str] = &[
+        "http", "https", "html", "scss", "less", "sass", "grpc", "glfw", "llvm", "std", "src", "pkg",
+        "npm", "npx", "pnpm", "git", "ssh", "ssl", "tls", "tcp", "udp", "utf", "rgb", "rgba", "hsl",
+        "svg", "png", "jpg", "jpeg", "webp", "gif", "mp3", "mp4", "mkv", "wav", "ogg", "flac", "pdf",
+        "txt", "doc", "docx", "xls", "xlsx", "csv", "xml", "yml", "yaml", "toml", "json", "sql", "jwt",
+        "sdk", "cli", "api", "gui", "ui", "ux", "ai", "ml", "dl", "llm", "stt", "tts", "ocr", "cpu",
+        "gpu", "npu", "ram", "rom", "ssd", "hdd", "usb", "hdmi", "bios", "uefi", "ctrl", "alt", "win",
+        "cmd", "ps1", "bat", "exe", "msi", "dll", "sys", "bin", "usr", "var", "tmp", "cfg", "ini",
+        "env", "log", "err", "msg", "ptr", "str", "vec", "fmt", "idx", "len", "max", "min", "sum",
+        "avg", "cnt", "req", "res", "ctx", "app", "dev", "prod", "test", "spec", "mock", "init",
+        "sync", "lynx", "myth", "hymn", "rhythm", "crypt", "nymph", "gym", "dry", "fly", "sky", "try",
+        "cry", "shy", "why", "spy", "fry", "ply", "pry", "wry", "nth", "mrs", "ms", "mr", "dr", "st",
+        "park", "dark", "mark", "bark", "spark", "shark", "start", "smart", "part", "cart", "chart",
+        "art", "card", "hard", "yard", "ward", "guard", "board", "word", "work", "world", "worm",
+        "form", "norm", "storm", "warm", "harm", "farm", "charm", "alarm", "arm", "term", "firm",
+        "confirm", "affirm", "germ", "chasm", "spasm", "prism", "organism", "mechanism", "algorithm",
+        "film", "palm", "calm", "balm", "psalm", "helm", "realm", "elm", "him", "dim", "rim", "trim",
+        "grim", "brim", "slim", "swim", "skim", "whim", "victim", "claim", "aim", "from", "whom",
+        "atom", "bottom", "custom", "symptom", "phantom", "random", "kingdom", "freedom", "wisdom",
+        "seldom", "venom", "blossom", "idiom", "axiom", "mom", "prom", "com", "tom", "room", "boom",
+        "zoom", "doom", "loom", "bloom", "gloom", "groom", "broom", "mushroom", "year", "years",
+        "yeast", "yearn", "yield", "yell", "yellow", "young", "your", "yours", "yourself", "youth",
+        "yarn", "yawn", "yacht", "url", "uri", "urn", "dns", "vpn", "nat", "lan", "wan", "mac", "ip",
+        "id", "ok", "no", "on", "in", "it", "if", "is", "as", "at", "by", "to", "of", "or", "so", "up",
+        "go", "do", "be", "we", "he", "me", "my", "us", "am", "an", "vs", "qa", "hr", "pr", "js", "ts",
+        "py", "rs", "db", "os", "pc", "tv", "vr", "ar", "fps", "dpi", "ppi", "hz", "khz", "mhz", "ghz",
+    ];
+
+    if TECH_AND_SHORT_EN.contains(&word_lower) {
+        return true;
+    }
+
+    // Если слово состоит только из английских букв, содержит гласные и не имеет признаков русской раскладки,
+    // проверим типичные английские суффиксы и сочетания, чтобы не трогать нормальные английские слова
+    if word_lower.chars().all(|c| c.is_ascii_lowercase()) {
+        for en_pattern in &[
+            "tion", "sion", "ment", "ness", "able", "ible", "ture", "ance", "ence", "ship", "hood",
+            "less", "full", "ward", "wise", "ious", "eous", "ight", "ough", "ould", "ck", "sh", "ch",
+            "th", "wh", "ph", "qu", "ee", "oo", "ea",
+        ] {
+            if word_lower.contains(en_pattern) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn has_valid_russian_phonotactics(ru_lower: &str) -> bool {
+    let chars: Vec<char> = ru_lower.chars().collect();
+    if chars.len() < 3 {
+        return false;
+    }
+
+    // Все символы должны быть русскими буквами
+    if !chars.iter().all(|&c| ('а'..='я').contains(&c) || c == 'ё') {
+        return false;
+    }
+
+    // Русские слова не начинаются с ы, ь, ъ
+    if matches!(chars[0], 'ы' | 'ь' | 'ъ') {
+        return false;
+    }
+    // Слова на 'й' — только йод/йог/йогурт/йорк/йошкар
+    if chars[0] == 'й' && !ru_lower.starts_with("йо") {
+        return false;
+    }
+
+    // В русском слове из 3+ букв обязательно должна быть хотя бы одна гласная
+    let is_ru_vowel = |c: char| matches!(c, 'а' | 'о' | 'у' | 'ы' | 'э' | 'я' | 'е' | 'ё' | 'и' | 'ю');
+    if !chars.iter().any(|&c| is_ru_vowel(c)) {
+        return false;
+    }
+
+    // Не более 4 согласных подряд (встреть/взгляд легальны, 5+ — нет)
+    let mut cons_run = 0;
+    for &c in &chars {
+        if !is_ru_vowel(c) && c != 'ь' && c != 'ъ' {
+            cons_run += 1;
+            if cons_run >= 5 {
+                return false;
+            }
+        } else {
+            cons_run = 0;
+        }
+    }
+
+    // Невозможные в русском языке биграммы (без ложных срабатываний на ьн/ьк/ьт/ьш/ьз/ьи/ыр/удд!)
+    const IMPOSSIBLE_RU_PAIRS: &[&str] = &[
+        "ьь", "ъъ", "ьъ", "ъь", "ыь", "ьы", "ъы", "ыъ", "йь", "йъ", "йы",
+        "жы", "шы", "чы", "щы", "щэ", "шэ", "жэ", "чэ", "цэ",
+        "уы", "аы", "оы", "еы", "иы", "яы", "юы", "эы", "ыы",
+        "уь", "аь", "оь", "еь", "иь", "яь", "юь", "эь", "гь", "кь", "хь", "ць",
+        "чщ", "щч", "жш", "шж", "цщ", "щц", "цч", "чц", "шщ", "щщ",
+        "щг", "щц", "щз", "щд", "щл", "щв", "щп", "щф", "щм",
+        "цр", "цш", "цг", "цн", "цд", "цк", "цт",
+        "фд", "фз", "фп", "фщ", "фц", "фч", "фй", "фн",
+        "штп", "шпре",
+    ];
+    for pair in IMPOSSIBLE_RU_PAIRS {
+        if ru_lower.contains(pair) {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn is_recognized_russian_word(ru_lower: &str, en_source_lower: &str) -> bool {
+    if !has_valid_russian_phonotactics(ru_lower) {
+        return false;
+    }
+
+    const RU_DICTIONARY: &[&str] = &[
+        // Местоимения, союзы, предлоги, частицы, наречия (3+ букв)
+        "это", "как", "так", "все", "всё", "она", "они", "оно", "мне", "мои", "мой", "моя", "моё",
+        "его", "ему", "них", "ним", " ими", "ими", "нам", "вам", "нас", "вас", "кто", "что", "где",
+        "тут", "там", "вот", "уже", "еще", "ещё", "нет", "для", "без", "под", "над", "при", "про",
+        "или", "если", "чтобы", "чтоб", "хотя", "зато", "либо", "тоже", "также", "даже", "лишь",
+        "только", "просто", "очень", "сейчас", "сегодня", "завтра", "вчера", "потом", "тогда",
+        "когда", "всегда", "никогда", "иногда", "совсем", "вообще", "конечно", "наверное", "может",
+        "можно", "нужно", "надо", "нельзя", "хорошо", "плохо", "лучше", "хуже", "больше", "меньше",
+        "раньше", "позже", "быстро", "долго", "сразу", "вместе", "рядом", "около", "вокруг", "внутри",
+        "после", "перед", "между", "через", "снова", "опять", "почему", "потому", "зачем", "откуда",
+        "куда", "сюда", "туда", "оттуда", "отсюда", "столько", "сколько", "несколько", "каждый",
+        "любой", "другой", "такой", "какой", "какие", "какая", "какое", "такие", "такая", "такое",
+        "этот", "эта", "эти", "этого", "этом", "этой", "этих", "этим", "весь", "вся", "всех", "всем",
+        "самый", "самая", "самое", "самые", "свой", "своя", "своё", "свои", "своих", "твой", "твоя",
+        "наш", "наша", "наше", "наши", "ваш", "ваша", "ваше", "ваши", "себя", "себе", "собой",
+        "меня", "тебя", "тебе", "мной", "тобой", "него", "неё", "них", "ничего", "никого", "никто",
+        // Приветствия и частые разговорные слова
+        "привет", "здравствуйте", "спасибо", "пожалуйста", "извините", "простите", "пока", "ладно",
+        "понятно", "отлично", "супер", "класс", "нормально", "точно", "верно", "правда", "кстати",
+        "например", "короче", "смотри", "слушай", "давай", "давайте", "скажи", "скажите", "помоги",
+        // Частые глаголы и их формы
+        "быть", "есть", "был", "была", "было", "были", "будет", "будут", "буду", "будем", "будешь",
+        "делать", "сделать", "делаю", "делает", "делаем", "сделал", "сделала", "сделали", "сделаем",
+        "сказать", "говорить", "говорю", "говорит", "сказал", "сказала", "сказали", "скажет",
+        "знать", "знаю", "знает", "знаем", "знают", "знал", "знала", "узнать", "понимать", "понять",
+        "понимаю", "понял", "поняла", "думать", "думаю", "думает", "думал", "подумать", "решить",
+        "работать", "работает", "работаю", "работал", "смотреть", "смотрю", "смотрит", "посмотреть",
+        "видеть", "вижу", "видит", "увидеть", "хотеть", "хочу", "хочет", "хотим", "хотят", "хотел",
+        "мочь", "могу", "может", "можем", "могут", "смог", "смогла", "идти", "иду", "идет", "идём",
+        "пойти", "пошел", "пошёл", "пошла", "ехать", "приехать", "стоять", "стоит", "сидеть", "сидит",
+        "лежать", "лежит", "жить", "живет", "живёт", "ждать", "жду", "ждет", "ждёт", "писать", "пишу",
+        "пишет", "написать", "написал", "читать", "читаю", "читает", "прочитать", "дать", "давать",
+        "брать", "взять", "взял", "взяла", "получить", "получил", "найти", "нашел", "нашёл", "нашла",
+        "поставить", "поставил", "поставила", "открыть", "открыл", "открывает", "закрыть", "закрыл",
+        "удалить", "удалил", "добавить", "добавил", "изменить", "проверить", "запустить", "скачать",
+        // Частые существительные и прилагательные
+        "человек", "люди", "людей", "время", "времени", "жизнь", "жизни", "день", "дня", "дней",
+        "ночь", "утро", "вечер", "год", "года", "лет", "месяц", "неделя", "недели", "час", "часа",
+        "минута", "минут", "работа", "работы", "работу", "дело", "дела", "место", "места", "слово",
+        "слова", "слов", "вопрос", "ответ", "сторона", "страна", "город", "дом", "дома", "рука",
+        "руки", "голова", "глаза", "друг", "друзья", "семья", "деньги", "денег", "проблема", "ошибка",
+        "ошибки", "система", "системы", "программа", "приложение", "компьютер", "телефон", "интернет",
+        "сайт", "сервер", "модель", "модели", "текст", "текста", "голос", "голоса", "запись", "записи",
+        "перевод", "экран", "экрана", "кнопка", "кнопки", "папка", "папки", "файл", "файлы", "окно",
+        "окна", "меню", "список", "списке", "настройки", "раскладка", "озвучка", "капсула", "виджет",
+        "новый", "новая", "новое", "новые", "старый", "старая", "большой", "большая", "маленький",
+        "хороший", "хорошая", "плохой", "первый", "первая", "второй", "последний", "главный", "нужный",
+        "важный", "полный", "простой", "сложный", "русский", "английский", "сильный", "сильная",
+        "любовь", "помощь", "правда", "смысл", "результат", "вариант", "пример", "порядок", "случай",
+    ];
+
+    if RU_DICTIONARY.contains(&ru_lower) {
+        return true;
+    }
+
+    // Проверяем, есть ли в английском исходнике ЯВНЫЕ маркеры ошибочной раскладки:
+    // 1) Спецсимволы [ ] ; ' , . ` внутри слова, которые в RU раскладке являются буквами х, ъ, ж, э, б, ю, ё
+    let has_ru_punct_in_en = en_source_lower
+        .chars()
+        .any(|c| matches!(c, '[' | ']' | '{' | '}' | ';' | ':' | '\'' | '"' | ',' | '<' | '.' | '>' | '`' | '~'));
+
+    // 2) Буква 'j' ('о' в RU) перед согласной, после согласной или на конце слова, либо отсутствие английских гласных
+    let en_chars: Vec<char> = en_source_lower.chars().collect();
+    let has_en_vowel = en_chars.iter().any(|&c| matches!(c, 'a' | 'e' | 'i' | 'o' | 'u' | 'y'));
+    let has_impossible_en_j = en_chars.last() == Some(&'j')
+        || en_chars.windows(2).any(|w| {
+            let (a, b) = (w[0], w[1]);
+            (a == 'j' && b.is_ascii_alphabetic() && !matches!(b, 'a' | 'e' | 'i' | 'o' | 'u'))
+                || (b == 'j' && a.is_ascii_alphabetic() && !matches!(a, 'a' | 'e' | 'i' | 'o' | 'u' | 'd' | 'b'))
+        });
+
+    if !has_ru_punct_in_en && !has_impossible_en_j && has_en_vowel {
+        // Если английская строка выглядит фонетически допустимо по-английски, требуем строгого совпадения
+        // с частыми русскими корнями И русскими морфологическими окончаниями длиной >= 4 символов
+        if ru_lower.chars().count() < 4 {
+            return false;
+        }
+    }
+
+    // Морфологическое распознавание русских слов (4+ букв): валидная основа + типичный русский суффикс/окончание
+    if ru_lower.chars().count() >= 4 {
+        const RU_MORPH_ENDINGS: &[&str] = &[
+            "аться", "яться", "иться", "еться", "уться", "ться", "тся",
+            "ать", "ять", "ить", "еть", "уть", "оть", "ыть",
+            "ешь", "ишь", "ете", "ите", "ают", "яют", "уют", "юют",
+            "ает", "яет", "ует", "юет", "аем", "яем", "уем", "юем",
+            "ала", "яла", "ила", "ела", "али", "яли", "или", "ели", "ало", "яло", "ило", "ело",
+            "ого", "его", "ому", "ему", "ыми", "ими", "ами", "ями",
+            "ый", "ий", "ой", "ая", "яя", "ое", "ее", "ые", "ие", "ую", "юю", "ых", "их", "ым", "им", "ом", "ем",
+            "ость", "ение", "ание", "тель", "очка", "ечка", "ник", "чик", "щик", "ств", "ски", "ско",
+            "ка", "ки", "ку", "ке", "кой", "ок", "ек", "ик", "ов", "ев", "ей", "ам", "ям", "ах", "ях",
+        ];
+
+        for ending in RU_MORPH_ENDINGS {
+            if ru_lower.ends_with(ending) && (has_ru_punct_in_en || has_impossible_en_j || !has_en_vowel) {
+                return true;
+            }
+        }
+
+        // Если в слове есть известные русские приставки + корень
+        const RU_PREFIXES_AND_ROOTS: &[&str] = &[
+            "при", "про", "пре", "под", "над", "раз", "рас", "без", "бес", "воз", "вос", "вы", "за", "на",
+            "не", "ни", "об", "от", "пере", "по", "со", "у", "челов", "работ", "говор", "смотр", "сдел",
+            "поним", "дум", "зна", "хот", "мож", "нуж", "больш", "меньш", "лучш", "нов", "стар", "перв",
+            "втор", "послед", "главн", "русск", "англ", "програм", "систем", "прилож", "настро", "ошиб",
+            "вопрос", "ответ", "врем", "деньг", "город", "стран", "слов", "мест", "правд", "помощ",
+        ];
+        if RU_PREFIXES_AND_ROOTS.iter().any(|p| ru_lower.starts_with(p))
+            && RU_MORPH_ENDINGS.iter().any(|e| ru_lower.ends_with(e))
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn should_autocorrect_layout(word_current: &str, word_alternate: &str, first_layout_is_en: bool) -> bool {
+    if word_current.chars().count() < 3 || word_alternate.chars().count() < 3 {
+        return false;
+    }
+
+    // Проверяем нормальный регистр (только строчные или первая заглавная + остальные строчные)
+    if !has_normal_word_casing(word_current) || !has_normal_word_casing(word_alternate) {
+        return false;
+    }
+
+    let curr_lower = word_current.to_lowercase();
+    let alt_lower = word_alternate.to_lowercase();
+
+    if first_layout_is_en {
+        // Пользователь печатает в АНГЛИЙСКОЙ раскладке -> проверяем перевод EN -> RU
+        // Если на конце стоит запятая/точка/точка с запятой, а основа до неё — валидное английское слово (например "hello,", "yes."), не трогаем!
+        let en_stem = curr_lower.trim_end_matches(|c| matches!(c, ',' | '.' | ';' | ':' | '\''));
+        if en_stem.len() != curr_lower.len() && (en_stem.len() < 2 || is_valid_english_word(en_stem)) {
+            return false;
+        }
+
+        // Если текущее слово — валидное английское слово или тех-термин, не трогаем
+        if is_valid_english_word(&curr_lower) {
+            return false;
+        }
+
+        // Переводим ТОЛЬКО если альтернатива — распознанное реальное русское слово
+        is_recognized_russian_word(&alt_lower, &curr_lower)
+    } else {
+        // Пользователь печатает в РУССКОЙ раскладке -> проверяем перевод RU -> EN
+        // Если в альтернативе есть не-буквы (пользователь нажимал русские буквы б, ю, ж, э, х, ъ, ё), это точно НЕ английское слово
+        if !alt_lower.chars().all(|c| c.is_ascii_lowercase()) {
+            return false;
+        }
+
+        // Если текущее русское слово уже в русском словаре — никогда его не трогаем
+        if is_recognized_russian_word(&curr_lower, &alt_lower) {
+            return false;
+        }
+
+        // Переводим с русского на английский ТОЛЬКО если полученное слово — реальное словарное английское слово!
+        is_recognized_english_word(&alt_lower)
+    }
 }
 
 fn get_active_process_name() -> Option<String> {
@@ -1818,11 +1998,43 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
         return false;
     }
 
+    // При комбинациях смены раскладки (Alt+Shift, Ctrl+Shift, Win+Space) немедленно очищаем буфер
+    if is_modifier && (ctrl as u8 + alt as u8 + shift as u8 + win as u8) >= 2 {
+        let mut buf = TYPED_BUFFER.lock().unwrap();
+        buf.clear();
+        return false;
+    }
+
     if let Some(proc_name) = get_active_process_name() {
         let set = EXCLUDED_PROCESSES.lock().unwrap();
         if set.contains(&proc_name) {
             return false;
         }
+    }
+
+    // Проверяем клик мыши, смену активного окна, смену раскладки и паузу > 2 сек
+    let (current_hwnd, current_hkl, is_eng_layout) = unsafe {
+        use winapi::um::winuser::{GetForegroundWindow, GetWindowThreadProcessId, GetKeyboardLayout, GetAsyncKeyState};
+        let hwnd = GetForegroundWindow();
+        let thread_id = GetWindowThreadProcessId(hwnd, std::ptr::null_mut());
+        let hkl = GetKeyboardLayout(thread_id);
+        let lang_id = (hkl as usize) & 0xFFFF;
+        let mouse_clicked = MOUSE_CLICKED_SINCE_KEY.swap(false, Ordering::Relaxed)
+            || (GetAsyncKeyState(0x01) != 0)
+            || (GetAsyncKeyState(0x02) != 0)
+            || (GetAsyncKeyState(0x04) != 0);
+        if mouse_clicked {
+            let mut buf = TYPED_BUFFER.lock().unwrap();
+            buf.clear();
+        }
+        (hwnd as isize, hkl as usize, lang_id == 0x0409)
+    };
+
+    let prev_hwnd = LAST_TYPED_HWND.swap(current_hwnd, Ordering::Relaxed);
+    let prev_hkl = LAST_TYPED_HKL.swap(current_hkl, Ordering::Relaxed);
+    if (prev_hwnd != 0 && prev_hwnd != current_hwnd) || (prev_hkl != 0 && prev_hkl != current_hkl) {
+        let mut buf = TYPED_BUFFER.lock().unwrap();
+        buf.clear();
     }
 
     // Сбрасываем буфер ввода, если была пауза в печати больше 2 секунд
@@ -1853,15 +2065,6 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
             rus_char = rus_char.to_uppercase().to_string().chars().next().unwrap_or(rus_char);
         }
 
-        let is_eng_layout = unsafe {
-            use winapi::um::winuser::{GetForegroundWindow, GetWindowThreadProcessId, GetKeyboardLayout};
-            let hwnd = GetForegroundWindow();
-            let thread_id = GetWindowThreadProcessId(hwnd, std::ptr::null_mut());
-            let hkl = GetKeyboardLayout(thread_id);
-            let lang_id = (hkl as usize) & 0xFFFF;
-            lang_id == 0x0409
-        };
-
         let mut buf = TYPED_BUFFER.lock().unwrap();
         buf.push(TypedKey {
             vk,
@@ -1874,10 +2077,19 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
         }
     } else if vk == 0x08 {
         let mut buf = TYPED_BUFFER.lock().unwrap();
-        if !buf.is_empty() {
+        if ctrl || alt || shift || win {
+            // Ctrl+Backspace (или модифицированный Backspace) удаляет слово целиком — очищаем весь буфер!
+            buf.clear();
+        } else if !buf.is_empty() {
             buf.pop();
         }
     } else if vk == 0x20 || vk == 0x0D {
+        if ctrl || alt || win {
+            let mut buf = TYPED_BUFFER.lock().unwrap();
+            buf.clear();
+            return false;
+        }
+
         let mut buf_guard = TYPED_BUFFER.lock().unwrap();
         if buf_guard.is_empty() {
             return false;
@@ -1888,7 +2100,7 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
         drop(buf_guard);
 
         let first_layout = typed_keys[0].is_english_layout;
-        let all_same_layout = typed_keys.iter().all(|k| k.is_english_layout == first_layout);
+        let all_same_layout = typed_keys.iter().all(|k| k.is_english_layout == first_layout && k.is_english_layout == is_eng_layout);
         if !all_same_layout {
             return false;
         }
@@ -1896,26 +2108,25 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
         let word_current: String = typed_keys.iter().map(|k| if first_layout { k.eng_char } else { k.rus_char }).collect();
         let word_alternate: String = typed_keys.iter().map(|k| if first_layout { k.rus_char } else { k.eng_char }).collect();
 
-        // Проверяем, не находится ли слово в списке исключений
-        {
-            let word_set = EXCLUDED_WORDS.lock().unwrap();
-            let clean_curr = word_current.trim_end_matches(|c| matches!(c, '.' | ',' | ';' | ':' | '/')).to_lowercase();
-            if word_set.contains(&word_current.to_lowercase()) || word_set.contains(&clean_curr) {
-                return false;
-            }
-        }
-
-        // Игнорируем аббревиатуры (слова целиком в верхнем регистре, например RGB, HTML)
-        let is_all_caps = word_current.chars().all(|c| !c.is_alphabetic() || c.is_uppercase());
-        if is_all_caps {
-            return false;
-        }
-
         if word_current.chars().count() < 3 {
             return false;
         }
 
-        if is_invalid_layout_word(&word_current, first_layout) && !is_invalid_layout_word(&word_alternate, !first_layout) {
+        // Проверяем, не находится ли слово (или его перевод) в списке исключений
+        {
+            let word_set = EXCLUDED_WORDS.lock().unwrap();
+            let clean_curr = word_current.trim_end_matches(|c| matches!(c, '.' | ',' | ';' | ':' | '/')).to_lowercase();
+            let clean_alt = word_alternate.trim_end_matches(|c| matches!(c, '.' | ',' | ';' | ':' | '/')).to_lowercase();
+            if word_set.contains(&word_current.to_lowercase())
+                || word_set.contains(&clean_curr)
+                || word_set.contains(&word_alternate.to_lowercase())
+                || word_set.contains(&clean_alt)
+            {
+                return false;
+            }
+        }
+
+        if should_autocorrect_layout(&word_current, &word_alternate, first_layout) {
             let word_len = word_current.chars().count();
             std::thread::spawn(move || {
                 LAYOUT_PROCESSING.store(true, Ordering::SeqCst);
@@ -2511,6 +2722,10 @@ pub struct AppConfig {
     pub capsule_magnet: bool,
     #[serde(default = "default_widget_scale")]
     pub widget_scale: f32,
+    #[serde(default)]
+    pub widget_x: Option<i32>,
+    #[serde(default)]
+    pub widget_y: Option<i32>,
     
     // Настройки TTS
     #[serde(default = "default_tts_speed")]
@@ -2584,6 +2799,8 @@ impl Default for AppConfig {
             layout_converter_mode: 2,
             capsule_magnet: true,
             widget_scale: 1.0,
+            widget_x: None,
+            widget_y: None,
             tts_speed: 1.0,
             tts_volume: 1.0,
             tts_voice: "ru-RU-SvetlanaNeural".to_string(),
@@ -2603,7 +2820,7 @@ impl Default for AppConfig {
             hotkey_layout_convert: default_hotkey_layout_convert(),
             hotkey_layout_undo: default_hotkey_layout_undo(),
             hotkey_layout_exclude: default_hotkey_layout_exclude(),
-            layout_excluded_words: vec![],
+            layout_excluded_words: default_layout_excluded_words(),
             layout_excluded_processes: default_layout_excluded_processes(),
             ai_servers: vec![],
         }
@@ -2619,7 +2836,37 @@ fn default_tts_volume() -> f32 {
 }
 
 fn default_layout_excluded_words() -> Vec<String> {
-    Vec::new()
+    vec![
+        "ok".to_string(),
+        "id".to_string(),
+        "ip".to_string(),
+        "ui".to_string(),
+        "ux".to_string(),
+        "ai".to_string(),
+        "api".to_string(),
+        "rgb".to_string(),
+        "fps".to_string(),
+        "gpu".to_string(),
+        "cpu".to_string(),
+        "ram".to_string(),
+        "ssd".to_string(),
+        "usb".to_string(),
+        "pdf".to_string(),
+        "mp3".to_string(),
+        "mp4".to_string(),
+        "png".to_string(),
+        "jpg".to_string(),
+        "svg".to_string(),
+        "css".to_string(),
+        "html".to_string(),
+        "json".to_string(),
+        "sql".to_string(),
+        "git".to_string(),
+        "ssh".to_string(),
+        "vpn".to_string(),
+        "dns".to_string(),
+        "url".to_string(),
+    ]
 }
 
 fn default_layout_excluded_processes() -> Vec<String> {
@@ -2953,6 +3200,14 @@ async fn update_config_fields(app_handle: tauri::AppHandle, fields: serde_json::
         if let Some(val) = obj.get("widget_scale") {
             if let Some(f) = val.as_f64() { config.widget_scale = (f as f32).clamp(0.7, 1.5); }
             else if let Some(n) = val.as_u64() { config.widget_scale = (n as f32).clamp(0.7, 1.5); }
+        }
+        if let Some(val) = obj.get("widget_x") {
+            if let Some(n) = val.as_i64() { config.widget_x = Some(n as i32); }
+            else if let Some(f) = val.as_f64() { config.widget_x = Some(f.round() as i32); }
+        }
+        if let Some(val) = obj.get("widget_y") {
+            if let Some(n) = val.as_i64() { config.widget_y = Some(n as i32); }
+            else if let Some(f) = val.as_f64() { config.widget_y = Some(f.round() as i32); }
         }
         if let Some(val) = obj.get("tts_speed") {
             if let Some(f) = val.as_f64() { config.tts_speed = f as f32; }
@@ -3649,18 +3904,43 @@ async fn delete_history_entry(
 }
 
 #[tauri::command]
-async fn open_audio_folder(path: String) -> Result<(), String> {
-    let path = std::path::Path::new(&path);
-    if path.exists() {
-        std::process::Command::new("explorer")
-            .arg("/select,")
-            .arg(path)
+async fn open_audio_folder(app_handle: tauri::AppHandle, path: String) -> Result<(), String> {
+    let cleaned = path.trim().trim_matches('"').replace("\\\\", "\\").replace('/', "\\");
+    if !cleaned.is_empty() {
+        let p = std::path::Path::new(&cleaned);
+        if p.exists() {
+            let canonical = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+            let clean_str = canonical.to_string_lossy().trim_start_matches(r"\\?\").to_string();
+            let mut cmd = std::process::Command::new("explorer.exe");
+            #[cfg(target_os = "windows")]
+            cmd.raw_arg(format!("/select,\"{}\"", clean_str));
+            #[cfg(not(target_os = "windows"))]
+            cmd.arg(format!("/select,{}", clean_str));
+            cmd.spawn().map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+        if let Some(parent) = p.parent() {
+            if parent.exists() {
+                std::process::Command::new("explorer.exe")
+                    .arg(parent)
+                    .spawn()
+                    .map_err(|e| e.to_string())?;
+                return Ok(());
+            }
+        }
+    }
+
+    if let Ok(app_data_dir) = app_handle.path().app_data_dir() {
+        let records_dir = app_data_dir.join("records");
+        let _ = std::fs::create_dir_all(&records_dir);
+        std::process::Command::new("explorer.exe")
+            .arg(&records_dir)
             .spawn()
             .map_err(|e| e.to_string())?;
-    } else {
-        return Err("Файл не существует".to_string());
+        return Ok(());
     }
-    Ok(())
+
+    Err("Файл не существует".to_string())
 }
 
 #[tauri::command]
@@ -5588,12 +5868,23 @@ fn normalize_and_extract_variables(text: &str) -> (String, Vec<(String, String)>
         .map(|mat| (mat.start(), mat.end(), mat.as_str().to_string()))
         .collect();
 
-    // 3. Отсекаем числа, которые лежат внутри диапазонов файлов
+    // 3. Отсекаем числа, которые лежат внутри диапазонов файлов или являются частью формул/переменных (O(1), x^2, y_1, 2x)
+    let bytes = text.as_bytes();
     let filtered_nums: Vec<(usize, usize, String)> = num_matches.into_iter()
         .filter(|&(n_start, n_end, _)| {
-            !file_matches.iter().any(|&(f_start, f_end, _)| {
+            let in_file = file_matches.iter().any(|&(f_start, f_end, _)| {
                 n_start >= f_start && n_end <= f_end
-            })
+            });
+            if in_file {
+                return false;
+            }
+            let prev_b = if n_start > 0 { bytes[n_start - 1] } else { b' ' };
+            let next_b = if n_end < bytes.len() { bytes[n_end] } else { b' ' };
+            let attached_to_math_or_ident = prev_b.is_ascii_alphabetic()
+                || next_b.is_ascii_alphabetic()
+                || matches!(prev_b, b'^' | b'_' | b'(' | b'=')
+                || matches!(next_b, b'^' | b'_' | b')');
+            !attached_to_math_or_ident
         })
         .collect();
 
@@ -9198,6 +9489,102 @@ fn show_and_focus_main_window(app: &tauri::AppHandle) {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn cleanup_stale_uninstall_entries() {
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let current_ver = env!("CARGO_PKG_VERSION");
+
+    // 1. Всегда удаляем устаревшие записи от старого идентификатора "tauri-app"
+    for stale_key in [
+        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\tauri-app",
+        r"HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\tauri-app",
+        r"HKLM\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\tauri-app",
+    ] {
+        let _ = std::process::Command::new("reg")
+            .args(["delete", stale_key, "/f"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+    }
+
+    // 2. Синхронизируем основную запись SincPro и убираем дубликат между HKCU и HKLM
+    let exe_lower = std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let is_program_files = exe_lower.contains("program files");
+
+    if is_program_files {
+        let _ = std::process::Command::new("reg")
+            .args([
+                "delete",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\SincPro",
+                "/f",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+        let _ = std::process::Command::new("reg")
+            .args([
+                "add",
+                r"HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\SincPro",
+                "/v",
+                "DisplayVersion",
+                "/t",
+                "REG_SZ",
+                "/d",
+                current_ver,
+                "/f",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+    } else {
+        let _ = std::process::Command::new("reg")
+            .args([
+                "add",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\SincPro",
+                "/v",
+                "DisplayVersion",
+                "/t",
+                "REG_SZ",
+                "/d",
+                current_ver,
+                "/f",
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+    }
+
+    // 3. Очищаем дублирующиеся MSI {GUID}-записи от старых версий SincPro / tauri-app в реестре
+    for root in [
+        r"HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall",
+        r"HKLM\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall",
+    ] {
+        if let Ok(out) = std::process::Command::new("reg")
+            .args(["query", root, "/s", "/v", "DisplayName"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let mut current_subkey = String::new();
+            for line in stdout.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("HKEY_") {
+                    current_subkey = trimmed.to_string();
+                } else if trimmed.starts_with("DisplayName") && !current_subkey.is_empty() {
+                    let lower = trimmed.to_lowercase();
+                    if (lower.contains("sincpro") || lower.contains("tauri-app"))
+                        && !current_subkey.ends_with(r"\SincPro")
+                    {
+                        let _ = std::process::Command::new("reg")
+                            .args(["delete", &current_subkey, "/f"])
+                            .creation_flags(CREATE_NO_WINDOW)
+                            .output();
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub fn run() {
     let minimize_startup = std::env::args().any(|arg| arg == "--minimized");
     MINIMIZED_STARTUP.store(minimize_startup, std::sync::atomic::Ordering::SeqCst);
@@ -9214,6 +9601,11 @@ pub fn run() {
         .setup(|app| {
             // Сохраняем handle для отправки событий
             *APP_HANDLE.lock().unwrap() = Some(app.handle().clone());
+
+            #[cfg(target_os = "windows")]
+            std::thread::spawn(|| {
+                cleanup_stale_uninstall_entries();
+            });
 
             // Загружаем конфигурацию
             let app_handle = app.handle();
@@ -9271,10 +9663,18 @@ pub fn run() {
                 let hit_app_handle = app.handle().clone();
                 std::thread::spawn(move || {
                     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-                    use winapi::um::winuser::IsWindowVisible;
+                    use winapi::um::winuser::{IsWindowVisible, GetAsyncKeyState};
 
                     loop {
                         std::thread::sleep(std::time::Duration::from_millis(25));
+                        unsafe {
+                            if (GetAsyncKeyState(0x01) as u16 & 0x8000) != 0
+                                || (GetAsyncKeyState(0x02) as u16 & 0x8000) != 0
+                                || (GetAsyncKeyState(0x04) as u16 & 0x8000) != 0
+                            {
+                                MOUSE_CLICKED_SINCE_KEY.store(true, Ordering::Relaxed);
+                            }
+                        }
                         for label in &["widget", "capsule"] {
                             if let Some(w) = hit_app_handle.get_webview_window(label) {
                                 if let Ok(handle) = w.window_handle() {

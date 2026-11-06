@@ -137,9 +137,6 @@
 
   <body class="bg-[#131318] text-[#e4e1e9] font-sans h-screen overflow-hidden flex selection:bg-[#a377ff]/30 selection:text-white">
     <div class="dashboard-container flex w-screen h-screen overflow-hidden relative">
-      <!-- Область перетаскивания окна Tauri (смещена на 200px для сайдбара) -->
-      <div class="drag-region" id="drag-region" data-tauri-drag-region></div>
-
       <!-- 1. Левый сворачиваемый сайдбар (дизайн Stitch) -->
       <aside class="sidebar w-[200px] h-screen flex-shrink-0 bg-[#1b1b20] border-r border-[#4a4455]/30 flex flex-col py-6 px-4 z-20 transition-all duration-300 relative" id="sidebar">
         <div class="flex items-center justify-between mb-6 sidebar-header">
@@ -195,22 +192,9 @@
 
       <!-- 2. Правая контентная область -->
       <main class="flex-1 flex flex-col h-full overflow-hidden relative bg-[#131318]">
-        <!-- Кнопки управления окном Tauri -->
-        <div style="position: absolute; top: 12px; right: 16px; display: flex; gap: 2px; z-index: 10000;">
-          <button id="win-minimize" style="background: transparent; border: none; cursor: pointer; padding: 6px; border-radius: 6px;" class="text-[#ccc3d8] hover:text-white hover:bg-[#2a292f] transition-all focus:outline-none" title="Свернуть">
-            <span class="material-symbols-outlined text-[16px]">minimize</span>
-          </button>
-          <button id="win-maximize" style="background: transparent; border: none; cursor: pointer; padding: 6px; border-radius: 6px;" class="text-[#ccc3d8] hover:text-white hover:bg-[#2a292f] transition-all focus:outline-none" title="Развернуть/Восстановить">
-            <span class="material-symbols-outlined text-[14px]">square</span>
-          </button>
-          <button id="win-close" style="background: transparent; border: none; cursor: pointer; padding: 6px; border-radius: 6px;" class="text-[#ccc3d8] hover:text-[#ffb4ab] hover:bg-[#93000a]/30 transition-all focus:outline-none" title="Закрыть">
-            <span class="material-symbols-outlined text-[16px]">close</span>
-          </button>
-        </div>
-
-        <!-- TopAppBar / Шапка контента -->
-        <header class="h-16 w-full flex justify-between items-center px-6 py-4 bg-transparent flex-shrink-0">
-          <div class="flex items-center" style="gap: 20px; position: relative; z-index: 10000;">
+        <!-- TopAppBar / Шапка контента (вся свободная область перетаскивает окно) -->
+        <header id="dashboard-header" data-tauri-drag-region class="h-16 w-full flex justify-between items-center gap-3 px-6 py-4 bg-transparent flex-shrink-0 select-none" style="cursor: default;">
+          <div class="flex items-center min-w-0" style="gap: 16px; position: relative; z-index: 20;">
             <h2 class="text-[20px] text-[#e4e1e9] font-semibold tracking-tight cursor-pointer hover:text-[#d2bbff] transition-colors flex-shrink-0" id="greeting-title" title="Нажмите, чтобы изменить имя профиля">Привет!</h2>
             <!-- Панель управления плавающими модулями слева с небольшим отступом от имени -->
             <div class="flex items-center gap-3 bg-[#1b1b20] border border-[#4a4455]/30 rounded-full px-3.5 py-1.5 shadow-sm flex-shrink-0" id="dashboard-toggles-container">
@@ -218,12 +202,25 @@
             </div>
           </div>
 
-          <div class="flex items-center gap-3" style="padding-right: 110px;">
+          <div class="flex items-center gap-2 flex-shrink-0" style="position: relative; z-index: 20;">
             <!-- Кнопка-индикатор доступного обновления на видном месте -->
-            <button id="header-update-banner" style="position: relative; z-index: 10000;" class="hidden items-center gap-1.5 bg-gradient-to-r from-[#8e52ff] to-[#45a29e] text-white text-[11px] font-bold px-3.5 py-1.5 rounded-full shadow-[0_0_15px_rgba(142,82,255,0.5)] hover:opacity-95 transition-all cursor-pointer border-0 animate-pulse" title="Доступна новая версия SincPro — нажмите для установки">
+            <button id="header-update-banner" class="hidden items-center gap-1.5 bg-gradient-to-r from-[#8e52ff] to-[#45a29e] text-white text-[11px] font-bold px-3.5 py-1.5 rounded-full shadow-[0_0_15px_rgba(142,82,255,0.5)] hover:opacity-95 transition-all cursor-pointer border-0 animate-pulse flex-shrink-0" title="Доступна новая версия SincPro — нажмите для установки">
               <span class="material-symbols-outlined text-[15px]">system_update_alt</span>
               <span id="header-update-version-text">Доступно обновление</span>
             </button>
+
+            <!-- Кнопки управления окном Tauri внутри флекс-шапки (никогда не перекрываются тумблерами) -->
+            <div class="flex items-center gap-0.5 flex-shrink-0 ml-1">
+              <button id="win-minimize" style="background: transparent; border: none; cursor: pointer; padding: 6px; border-radius: 6px;" class="text-[#ccc3d8] hover:text-white hover:bg-[#2a292f] transition-all focus:outline-none" title="Свернуть">
+                <span class="material-symbols-outlined text-[16px]">minimize</span>
+              </button>
+              <button id="win-maximize" style="background: transparent; border: none; cursor: pointer; padding: 6px; border-radius: 6px;" class="text-[#ccc3d8] hover:text-white hover:bg-[#2a292f] transition-all focus:outline-none" title="Развернуть/Восстановить">
+                <span class="material-symbols-outlined text-[14px]">square</span>
+              </button>
+              <button id="win-close" style="background: transparent; border: none; cursor: pointer; padding: 6px; border-radius: 6px;" class="text-[#ccc3d8] hover:text-[#ffb4ab] hover:bg-[#93000a]/30 transition-all focus:outline-none" title="Закрыть">
+                <span class="material-symbols-outlined text-[16px]">close</span>
+              </button>
+            </div>
           </div>
         </header>
 
@@ -383,10 +380,16 @@
           <section class="tab-content flex flex-col gap-4 flex-1 min-h-0 py-4" id="tab-tts" style="display: none;">
             <!-- Заголовок -->
             <div class="flex items-center justify-between flex-shrink-0 relative z-30">
-              <h3 class="text-[14px] font-bold text-[#e4e1e9] flex items-center gap-2">
-                <span class="material-symbols-outlined text-[18px] text-[#7bd6d1]">record_voice_over</span>
-                Озвучка текста
-              </h3>
+              <div class="flex items-center gap-3">
+                <h3 class="text-[14px] font-bold text-[#e4e1e9] flex items-center gap-2">
+                  <span class="material-symbols-outlined text-[18px] text-[#7bd6d1]">record_voice_over</span>
+                  Озвучка текста
+                </h3>
+                <button type="button" id="btn-clear-tts-cache" class="flex items-center gap-1.5 bg-[#1b1b20] hover:bg-[#2a2933] border border-[#4a4455]/40 hover:border-[#7bd6d1]/60 text-[#ccc3d8] hover:text-white px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all cursor-pointer focus:outline-none" title="Очистить кэш озвучки (удалить сохранённые аудио-фрагменты)">
+                  <span class="material-symbols-outlined text-[14px] text-[#7bd6d1]">cleaning_services</span>
+                  <span>Очистить кэш</span>
+                </button>
+              </div>
               <div class="relative z-40">
                 <div id="tts-widget-root" class="bg-[#1b1b20] rounded-full shadow-xl flex items-center relative z-10"></div>
               </div>
@@ -1219,9 +1222,18 @@
 
             syncHotkeysEverywhere();
 
-            layoutExcludedWords = config.layout_excluded_words || [];
+            layoutExcludedWords = Array.isArray(config.layout_excluded_words) ? config.layout_excluded_words : [];
+            if (layoutExcludedWords.length === 0 && !localStorage.getItem('layout_words_initialized_v2')) {
+              layoutExcludedWords = [
+                'ok', 'id', 'ip', 'ui', 'ux', 'ai', 'api', 'rgb', 'fps', 'gpu', 'cpu', 'ram', 'ssd',
+                'usb', 'pdf', 'mp3', 'mp4', 'png', 'jpg', 'svg', 'css', 'html', 'json', 'sql', 'git',
+                'ssh', 'vpn', 'dns', 'url'
+              ];
+              localStorage.setItem('layout_words_initialized_v2', '1');
+              invoke('update_config_fields', { fields: { layout_excluded_words: layoutExcludedWords } }).catch(() => {});
+            }
             renderLayoutWords();
-            layoutExcludedProcesses = config.layout_excluded_processes || [];
+            layoutExcludedProcesses = Array.isArray(config.layout_excluded_processes) ? config.layout_excluded_processes : [];
             renderLayoutApps();
             
             // Проверяем статус установленных локальных плагинов для динамического наполнения селекторов
@@ -1691,7 +1703,7 @@
         container.innerHTML = layoutExcludedWords.map((word, index) => `
           <span class="flex items-center gap-1.5 bg-[#25232d] hover:bg-[#2f2b3a] border border-[#d2bbff]/20 text-[#d2bbff] px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors">
             <span>${word}</span>
-            <button class="hover:text-white focus:outline-none leading-none text-[12px] font-bold" onclick="removeLayoutWord(${index})">&times;</button>
+            <button type="button" class="hover:text-white focus:outline-none leading-none text-[13px] font-bold cursor-pointer bg-transparent border-0 p-0.5" data-remove-word="${index}" title="Удалить слово">&times;</button>
           </span>
         `).join('');
       }
@@ -1706,22 +1718,51 @@
         container.innerHTML = layoutExcludedProcesses.map((app, index) => `
           <span class="flex items-center gap-1.5 bg-[#25232d] hover:bg-[#2f2b3a] border border-[#d2bbff]/20 text-[#d2bbff] px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors">
             <span>${app}</span>
-            <button class="hover:text-white focus:outline-none leading-none text-[12px] font-bold" onclick="removeLayoutApp(${index})">&times;</button>
+            <button type="button" class="hover:text-white focus:outline-none leading-none text-[13px] font-bold cursor-pointer bg-transparent border-0 p-0.5" data-remove-app="${index}" title="Удалить приложение">&times;</button>
           </span>
         `).join('');
       }
 
       window.removeLayoutWord = function(index) {
+        if (index < 0 || index >= layoutExcludedWords.length) return;
         layoutExcludedWords.splice(index, 1);
+        localStorage.setItem('layout_words_initialized_v2', '1');
         renderLayoutWords();
         saveConfig(true);
       };
 
       window.removeLayoutApp = function(index) {
+        if (index < 0 || index >= layoutExcludedProcesses.length) return;
         layoutExcludedProcesses.splice(index, 1);
         renderLayoutApps();
         saveConfig(true);
       };
+
+      const layoutWordsContainerEl = document.getElementById('layout-words-container');
+      if (layoutWordsContainerEl) {
+        layoutWordsContainerEl.addEventListener('click', (e) => {
+          const btn = e.target.closest('[data-remove-word]');
+          if (btn) {
+            e.preventDefault();
+            e.stopPropagation();
+            const idx = parseInt(btn.getAttribute('data-remove-word'), 10);
+            if (!isNaN(idx)) window.removeLayoutWord(idx);
+          }
+        });
+      }
+
+      const layoutAppsContainerEl = document.getElementById('layout-apps-container');
+      if (layoutAppsContainerEl) {
+        layoutAppsContainerEl.addEventListener('click', (e) => {
+          const btn = e.target.closest('[data-remove-app]');
+          if (btn) {
+            e.preventDefault();
+            e.stopPropagation();
+            const idx = parseInt(btn.getAttribute('data-remove-app'), 10);
+            if (!isNaN(idx)) window.removeLayoutApp(idx);
+          }
+        });
+      }
 
       // ==========================================================================
       // ИНТЕРАКТИВНАЯ ЗАПИСЬ ХОТКЕЕВ (.hotkey-recorder-btn)
@@ -2201,7 +2242,7 @@
               </div>
               <span class="text-[#ccc3d8]/60 text-[9px] mt-0.5 ml-4 font-mono">${server.url}</span>
             </div>
-            <button class="bg-transparent text-[#ff4f4f] hover:text-white border-none cursor-pointer flex items-center justify-center p-1 rounded transition-colors" onclick="removeAiServer('${server.id}')" title="Удалить сервер">
+            <button type="button" class="bg-transparent text-[#ff4f4f] hover:text-white border-none cursor-pointer flex items-center justify-center p-1 rounded transition-colors" data-remove-server="${server.id}" title="Удалить сервер">
               <span class="material-symbols-outlined text-[14px]">delete</span>
             </button>
           </div>
@@ -2209,6 +2250,21 @@
 
         localAiServers.forEach(server => {
           checkServerHeartbeat(server.id, server.url);
+        });
+      }
+
+      const localAiServersListEl = document.getElementById('local-ai-servers-list');
+      if (localAiServersListEl) {
+        localAiServersListEl.addEventListener('click', (e) => {
+          const btn = e.target.closest('[data-remove-server]');
+          if (btn) {
+            e.preventDefault();
+            e.stopPropagation();
+            const srvId = btn.getAttribute('data-remove-server');
+            if (srvId && typeof window.removeAiServer === 'function') {
+              window.removeAiServer(srvId);
+            }
+          }
         });
       }
 
@@ -2528,7 +2584,8 @@
                 </div>
                 <div class="flex items-center gap-1 flex-shrink-0">
                   <button class="p-1.5 rounded text-[#ccc3d8] hover:text-[#d2bbff] hover:bg-[#2a292f] transition-all hbtn-folder"
-                          data-path="${entry.audio_path.replace(/\\/g, '\\\\')}">
+                          title="Показать аудиофайл в папке"
+                          data-path="${(entry.audio_path || '').replace(/"/g, '&quot;')}">
                     <span class="material-symbols-outlined text-[15px]">folder_open</span>
                   </button>
                   <button class="p-1.5 rounded text-[#ccc3d8] hover:text-[#ffb4ab] hover:bg-[#2a292f] transition-all hbtn-delete"
@@ -2555,7 +2612,7 @@
                   <div class="flex items-center gap-2 bg-[#1f1f24] rounded-lg px-3 py-2">
                     <button class="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all hbtn-play"
                             data-id="${entry.id}"
-                            data-path="${entry.audio_path.replace(/\\/g, '\\\\')}"
+                            data-path="${(entry.audio_path || '').replace(/"/g, '&quot;')}"
                             id="hplay-btn-${entry.id}">
                       <span class="material-symbols-outlined text-[16px]" style="color: ${getPresetColor(entryPreset)};" id="hplay-icon-${entry.id}">${historyPlayingId === entry.id ? 'pause' : 'play_arrow'}</span>
                     </button>
@@ -3724,13 +3781,13 @@
             console.error("Failed to load app version:", err);
             const versionDisplay = document.getElementById('app-version-display');
             if (versionDisplay) {
-              versionDisplay.textContent = `Текущая версия: 3.5.21`;
+              versionDisplay.textContent = `Текущая версия: 3.5.25`;
             }
           });
         } else {
           const versionDisplay = document.getElementById('app-version-display');
           if (versionDisplay) {
-            versionDisplay.textContent = `Текущая версия: 3.5.21 (Mock)`;
+            versionDisplay.textContent = `Текущая версия: 3.5.25 (Mock)`;
           }
         }
 
@@ -3926,11 +3983,21 @@
         appWindow.onMoved(debouncedSaveState);
         appWindow.onResized(debouncedSaveState);
         
-        const dragRegion = document.getElementById('drag-region');
-        if (dragRegion) {
-          dragRegion.addEventListener('mousedown', (e) => {
-            if (e.buttons === 1) {
+        const dashboardHeader = document.getElementById('dashboard-header');
+        if (dashboardHeader) {
+          dashboardHeader.addEventListener('mousedown', (e) => {
+            if (e.buttons === 1 && !e.target.closest('button, input, select, a, #dashboard-toggles-container, #greeting-title')) {
               appWindow.startDragging();
+            }
+          });
+        }
+
+        const btnClearTtsCache = document.getElementById('btn-clear-tts-cache');
+        if (btnClearTtsCache) {
+          btnClearTtsCache.addEventListener('click', async () => {
+            if (window.ttsEngine && typeof window.ttsEngine.clearCache === 'function') {
+              const cleared = await window.ttsEngine.clearCache();
+              showToast(`Кэш озвучки очищен (${cleared} записей). Новая озвучка будет загружена чистым голосом.`, false);
             }
           });
         }

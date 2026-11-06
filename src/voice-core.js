@@ -4,13 +4,21 @@
 
 class TtsCacheDB {
     constructor() {
-        this.dbName = "SincProTtsCache";
+        this.dbName = "SincProTtsCache_v2";
+        this.legacyDbName = "SincProTtsCache";
         this.storeName = "audio_cache";
+        this.maxEntries = 400;
+        this.ttlMs = 24 * 3600 * 1000; // 24 часа
         this.db = null;
         this.initPromise = this.init();
     }
 
     init() {
+        // Удаляем старую базу v1, в которой могли закэшироваться фрагменты с резервным голосом Google TTS
+        try {
+            indexedDB.deleteDatabase(this.legacyDbName);
+        } catch (e) {}
+
         return new Promise((resolve, reject) => {
             const request = indexedDB.open(this.dbName, 1);
             request.onerror = (e) => {
@@ -41,6 +49,11 @@ class TtsCacheDB {
             request.onsuccess = (e) => {
                 const record = e.target.result;
                 if (record) {
+                    if (Date.now() - (record.lastUsed || 0) > this.ttlMs) {
+                        store.delete(id);
+                        resolve(null);
+                        return;
+                    }
                     record.lastUsed = Date.now();
                     store.put(record);
                     resolve(record.audio);
@@ -72,28 +85,62 @@ class TtsCacheDB {
         });
     }
 
-    async cleanOldRecords() {
+    async clearAll() {
         await this.initPromise;
-        if (!this.db) return;
-        const limitTime = Date.now() - 48 * 3600 * 1000; // 48 часов назад
+        if (!this.db) return 0;
         return new Promise((resolve) => {
             const transaction = this.db.transaction([this.storeName], "readwrite");
             const store = transaction.objectStore(this.storeName);
-            const request = store.openCursor();
-            let deletedCount = 0;
+            const countReq = store.count();
+            let total = 0;
+            countReq.onsuccess = () => {
+                total = countReq.result || 0;
+            };
+            const clearReq = store.clear();
+            clearReq.onsuccess = () => {
+                console.log(`[TtsCacheDB] Cleared all ${total} cached records`);
+                resolve(total);
+            };
+            clearReq.onerror = () => resolve(0);
+        });
+    }
+
+    async cleanOldRecords() {
+        await this.initPromise;
+        if (!this.db) return;
+        const limitTime = Date.now() - this.ttlMs;
+        return new Promise((resolve) => {
+            const transaction = this.db.transaction([this.storeName], "readwrite");
+            const store = transaction.objectStore(this.storeName);
+            const request = store.getAll();
             request.onsuccess = (e) => {
-                const cursor = e.target.result;
-                if (cursor) {
-                    const record = cursor.value;
-                    if (record.lastUsed < limitTime) {
-                        cursor.delete();
+                const records = e.target.result || [];
+                let deletedCount = 0;
+                const validRecords = [];
+
+                for (const rec of records) {
+                    if (!rec.lastUsed || rec.lastUsed < limitTime) {
+                        store.delete(rec.id);
+                        deletedCount++;
+                    } else {
+                        validRecords.push(rec);
+                    }
+                }
+
+                // Если записей больше лимита (400), удаляем самые старые по LRU
+                if (validRecords.length > this.maxEntries) {
+                    validRecords.sort((a, b) => (a.lastUsed || 0) - (b.lastUsed || 0));
+                    const excess = validRecords.length - this.maxEntries;
+                    for (let i = 0; i < excess; i++) {
+                        store.delete(validRecords[i].id);
                         deletedCount++;
                     }
-                    cursor.continue();
-                } else {
-                    console.log(`[TtsCacheDB] Cleaned ${deletedCount} records older than 48 hours`);
-                    resolve();
                 }
+
+                if (deletedCount > 0) {
+                    console.log(`[TtsCacheDB] Cleaned ${deletedCount} expired/excess records`);
+                }
+                resolve();
             };
             request.onerror = () => resolve();
         });
@@ -269,11 +316,67 @@ class VoiceCore {
         return str;
     }
 
+    cleanFormulasForSpeech(text) {
+        if (!text) return "";
+        let str = text;
+
+        // 1. Склеиваем задвоенные при копировании из KaTeX / MathML формулы и выражения:
+        // Например: "O(1)O(1)" -> "O(1)", "E = mc^2E = mc^2" -> "E = mc^2", "x_1 + y_1\nx_1 + y_1" -> "x_1 + y_1"
+        str = str.replace(/([A-Za-zΑ-Ωα-ω0-9_^+*/=<>≤≥≈≠±×÷()\[\]\-.,]{2,60}?)\s*\1/g, (match, g1) => {
+            // Схлопываем только если фрагмент похож на формулу/токен (содержит цифры, мат. знаки или латиницу со скобками/индексами),
+            // а не просто два одинаковых обычных слова через пробел
+            if (/[0-9=+*/^_<>≤≥≈≠±×÷()\[\]]/.test(g1) || /^[A-Za-zΑ-Ωα-ω]{1,4}$/.test(g1.trim())) {
+                return g1;
+            }
+            return match;
+        });
+
+        // 2. Если KaTeX скопировал raw-LaTeX и сразу следом — отрендеренный вид (например "\frac{a}{b} a/b" или "$x^2$ x²")
+        str = str.replace(/\$\$([^$]+)\$\$/g, '$1');
+        str = str.replace(/\$([^$\n]+)\$/g, '$1');
+
+        // 3. Преобразуем частые LaTeX-команды в читаемые математические символы, чтобы диктор не спеллинговал их по-английски
+        str = str.replace(/\\text\{([^}]*)\}/g, '$1');
+        str = str.replace(/\\(?:mathrm|mathbf|mathit|mathsf)\{([^}]*)\}/g, '$1');
+        str = str.replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '($1 делить на $2)');
+        str = str.replace(/\\sqrt\{([^}]+)\}/g, 'корень из $1');
+        str = str.replace(/\\(?:cdot|times)\b/g, ' умножить на ');
+        str = str.replace(/\\(?:le|leq)\b/g, ' ≤ ');
+        str = str.replace(/\\(?:ge|geq)\b/g, ' ≥ ');
+        str = str.replace(/\\(?:ne|neq)\b/g, ' ≠ ');
+        str = str.replace(/\\approx\b/g, ' ≈ ');
+        str = str.replace(/\\pm\b/g, ' ± ');
+        str = str.replace(/\\(?:to|rightarrow)\b/g, ' → ');
+        str = str.replace(/\\Delta\b/g, 'дельта ');
+        str = str.replace(/\\alpha\b/g, 'альфа ');
+        str = str.replace(/\\beta\b/g, 'бета ');
+        str = str.replace(/\\gamma\b/g, 'гамма ');
+        str = str.replace(/\\lambda\b/g, 'лямбда ');
+        str = str.replace(/\\sigma\b/g, 'сигма ');
+        str = str.replace(/\\pi\b/g, 'пи ');
+
+        // 4. Заменяем степени ^2, ^3 и нижние индексы _1 на компактный вид без служебных символов ^ и _
+        str = str.replace(/\^2\b/g, '²').replace(/\^3\b/g, '³');
+        str = str.replace(/([A-Za-zА-Яа-яЁё0-9)])\^([A-Za-z0-9]+)/g, '$1 в степени $2');
+        str = str.replace(/([A-Za-z])\s*_\s*([0-9]+)\b/g, '$1$2');
+
+        // 5. Повторно схлопываем идентичные соседние формулы после очистки LaTeX (например, когда KaTeX отдал LaTeX + HTML)
+        str = str.replace(/([A-Za-zΑ-Ωα-ω0-9²³=+*/<>≤≥≈≠±×÷()\[\]\-]{2,50}?)\s*\1/g, (match, g1) => {
+            if (/[0-9²³=+*/<>≤≥≈≠±×÷()\[\]]/.test(g1)) {
+                return g1;
+            }
+            return match;
+        });
+
+        return str;
+    }
+
     cleanText(text) {
         if (!text) return "";
         let cleaned = text.trim();
-        // Санитаризация Markdown-разметки
+        // Санитаризация Markdown-разметки и задвоенных формул KaTeX/LaTeX
         cleaned = this.removeMarkdown(cleaned);
+        cleaned = this.cleanFormulasForSpeech(cleaned);
         // Убираем кавычки, если нейросеть вернула текст в них
         if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
             cleaned = cleaned.substring(1, cleaned.length - 1).trim();
@@ -290,12 +393,6 @@ class VoiceCore {
 
         // Нормализуем переносы строк (убираем \r)
         let processed = text.replace(/\r\n/g, "\n");
-        // Защищаем абзацы (двойные и более переносы)
-        processed = processed.replace(/\n{2,}/g, "<ABZAC>");
-        // Заменяем одиночные переносы строк на пробелы, только если после них идет строчная буква (Unicode)
-        processed = processed.replace(/\n+(?=\s*\p{Ll})/gu, " ");
-        // Возвращаем абзацы обратно
-        processed = processed.replace(/<ABZAC>/g, "\n");
 
         // Защищаем числа (3.3)
         processed = processed.replace(/(\d)\.(\d)/g, "$1<DOT>$2");
@@ -312,52 +409,91 @@ class VoiceCore {
         processed = processed.replace(/пр\./gi, "пр<DOT>");
         // Защищаем многоточия
         processed = processed.replace(/\.\.\./g, "<ELLIPSIS>");
-        
-        // Разбиваем по концам предложений ИЛИ по символам переноса строки (абзацам \n)
-        let rawSentences = processed.split(/(?<=[.!?])\s+(?=\p{Lu})|(?<=[:;])\s+|\n+/u);
-        
-        let sentences = [];
-        const MAX_CHUNK_LEN = 260;
+
+        // Разбиваем по концам предложений (. ! ?), по точке с запятой (;), И по всем переносам строк (\n+).
+        // ВАЖНО: НЕ режем по каждому двоеточию внутри строки (чтобы не дробить "Основная: gpt-6.1", время "19:30" или смайлики),
+        // но режем по переносам строк, чтобы тезисы/списки после заголовка с двоеточием всегда шли отдельными предложениями!
+        let rawSentences = processed.split(/(?<=[.!?])\s+|(?<=;)\s+|\n+/u);
+
+        let initialChunks = [];
+        const MAX_CHUNK_LEN = 220;
+
         for (let s of rawSentences) {
             s = s.replace(/<DOT>/g, ".");
             s = s.replace(/<ELLIPSIS>/g, "...");
             const trimmed = s.trim();
-            // Предложение должно содержать хотя бы одну букву или цифру для озвучки
-            if (trimmed.length > 0 && /[\p{L}\p{N}]/u.test(trimmed)) {
-                if (trimmed.length <= MAX_CHUNK_LEN) {
-                    sentences.push(trimmed);
+            if (trimmed.length === 0 || !/[\p{L}\p{N}]/u.test(trimmed)) continue;
+
+            // Если это длинный абзац без точек (> 160 символов), где после заголовка с двоеточием идут тезисы подряд в одну строку,
+            // аккуратно отделяем заголовок с двоеточием и делим длинный хвост по тире / запятым / пробелам
+            let subParts = [trimmed];
+            if (trimmed.length > 160) {
+                const colonMatch = trimmed.match(/^([^:]{4,90}:)\s+(.+)$/u);
+                if (colonMatch && !/\d:$/.test(colonMatch[1])) {
+                    subParts = [colonMatch[1].trim(), colonMatch[2].trim()];
+                }
+            }
+
+            for (const part of subParts) {
+                if (part.length <= MAX_CHUNK_LEN) {
+                    initialChunks.push(part);
                 } else {
-                    // Длинные предложения без точек (например, в больших статьях или списках) делим по запятым/тире/пробелам,
-                    // чтобы первое предложение синтезировалось мгновенно без многосекундного ожидания
-                    let remaining = trimmed;
+                    let remaining = part;
                     while (remaining.length > MAX_CHUNK_LEN) {
                         let splitIdx = -1;
                         const slice = remaining.slice(0, MAX_CHUNK_LEN);
-                        const punctMatch = Math.max(
-                            slice.lastIndexOf(', '),
-                            slice.lastIndexOf(' — '),
-                            slice.lastIndexOf(' - '),
-                            slice.lastIndexOf('. ')
-                        );
-                        if (punctMatch >= 80) {
-                            splitIdx = punctMatch + 1;
+                        const dashIdx = Math.max(slice.lastIndexOf(' — '), slice.lastIndexOf(' - '));
+                        const colonIdx = slice.lastIndexOf(': ');
+                        const commaIdx = slice.lastIndexOf(', ');
+                        const punctMatch = Math.max(dashIdx, colonIdx, commaIdx);
+
+                        if (punctMatch >= 65) {
+                            splitIdx = punctMatch + (slice[punctMatch] === ' ' ? 3 : 1);
                         } else {
                             const spaceIdx = slice.lastIndexOf(' ');
-                            splitIdx = spaceIdx >= 80 ? spaceIdx : MAX_CHUNK_LEN;
+                            splitIdx = spaceIdx >= 65 ? spaceIdx : MAX_CHUNK_LEN;
                         }
                         const chunk = remaining.slice(0, splitIdx).trim();
                         if (chunk.length > 0 && /[\p{L}\p{N}]/u.test(chunk)) {
-                            sentences.push(chunk);
+                            initialChunks.push(chunk);
                         }
                         remaining = remaining.slice(splitIdx).trim();
                     }
                     if (remaining.length > 0 && /[\p{L}\p{N}]/u.test(remaining)) {
-                        sentences.push(remaining);
+                        initialChunks.push(remaining);
                     }
                 }
             }
         }
+
+        // Склеиваем совсем крошечные фрагменты (< 22 символов) со следующим предложением,
+        // если они не заканчиваются на двоеточие (заголовок списка) и сумма <= MAX_CHUNK_LEN
+        let sentences = [];
+        for (let i = 0; i < initialChunks.length; i++) {
+            let curr = initialChunks[i];
+            if (
+                curr.length < 22 &&
+                !curr.endsWith(':') &&
+                i + 1 < initialChunks.length &&
+                (curr.length + 1 + initialChunks[i + 1].length) <= MAX_CHUNK_LEN
+            ) {
+                initialChunks[i + 1] = `${curr} ${initialChunks[i + 1]}`;
+            } else {
+                sentences.push(curr);
+            }
+        }
+
         return sentences;
+    }
+
+    async clearCache() {
+        this.audioBuffers = new Array(this.sentences.length).fill(null);
+        this.currentlyLoading.clear();
+        const count = await this.cache.clearAll();
+        if (this.sentences.length > 0) {
+            this.updateProgress();
+        }
+        return count;
     }
 
     async loadCachedSentences(startIndex = 0) {
@@ -610,7 +746,7 @@ class VoiceCore {
                 }
 
                 const startIndex = this.currentSentenceIndex;
-                const windowSize = 5; // current + 4 предложения наперед
+                const windowSize = 15; // current + 14 предложений наперед (строго последовательная подгрузка)
                 const endIndex = Math.min(startIndex + windowSize, this.sentences.length);
 
                 // Находим первое незагруженное предложение в текущем окне буферизации
