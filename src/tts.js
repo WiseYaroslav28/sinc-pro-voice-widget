@@ -275,12 +275,12 @@ document.addEventListener('DOMContentLoaded', () => {
         isTextChanged = false;
         renderedSentencesRef = null;
         progressSegmentsRef = null;
+        const cleanVisible = text.replace(/\[(question|excited|calm|header|pause)\]\s*/gi, '');
         // По просьбе пользователя всегда стираем старый текст и начинаем заново
-        if (contentEditable) contentEditable.innerText = text;
+        if (contentEditable) contentEditable.innerText = cleanVisible;
         engine.loadText(text, true);
-        console.log('[TTS] handleNewText: loadText done, sentences=' + engine.sentences.length);
-        engine.play();
-        console.log('[TTS] handleNewText: play() called, isPlaying=' + engine.isPlaying);
+        engine.broadcastState('play');
+        console.log('[TTS] handleNewText: loadText(autoPlay=true) done, sentences=' + engine.sentences.length);
     }
 
     function handleAppendText(text) {

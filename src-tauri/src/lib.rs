@@ -24,7 +24,7 @@ static CACHED_SKEW: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64:
 
 lazy_static::lazy_static! {
     static ref SKEW_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
-    static ref EDGE_TTS_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
+    static ref EDGE_TTS_SEMAPHORE: tokio::sync::Semaphore = tokio::sync::Semaphore::new(3);
     static ref EDGE_CHROMIUM_VERSION: std::sync::Mutex<String> = std::sync::Mutex::new("143.0.3650.75".to_string());
     static ref EDGE_GEC_VERSION: std::sync::Mutex<String> = std::sync::Mutex::new("2-143.0.3650.75".to_string());
 }
@@ -609,7 +609,7 @@ async fn speak_yandex_tts(api_key: &str, text: &str, voice: &str, rate: f32) -> 
 }
 
 fn build_expressive_ssml_params(raw_text: &str, base_rate: f32) -> (String, String, String) {
-    let mut trimmed = raw_text.trim();
+    let mut trimmed = raw_text.trim().to_string();
     let mut tag_mode: Option<&str> = None;
 
     for (tag, mode) in [
@@ -619,34 +619,74 @@ fn build_expressive_ssml_params(raw_text: &str, base_rate: f32) -> (String, Stri
         ("[header]", "header"),
         ("[pause]", "calm"),
     ] {
-        if let Some(rest) = trimmed.strip_prefix(tag) {
-            tag_mode = Some(mode);
-            trimmed = rest.trim();
-            break;
+        if trimmed.contains(tag) {
+            if tag_mode.is_none() {
+                tag_mode = Some(mode);
+            }
+            trimmed = trimmed.replace(tag, "");
         }
     }
+    let trimmed = trimmed.trim();
 
     let base_pct = ((base_rate - 1.0) * 100.0).round() as i32;
     let char_count = trimmed.chars().count();
+    let lower = trimmed.to_lowercase();
 
     let (rate_delta, pitch_str) = match tag_mode {
-        Some("question") => (0, "+4%"),
-        Some("excited") => (2, "+3%"),
-        Some("header") => (-4, "-2%"),
-        Some("calm") => (-3, "-2%"),
+        Some("question") => (-2, "+8%"),
+        Some("excited") => (3, "+7%"),
+        Some("header") => (-6, "-4%"),
+        Some("calm") => (-4, "-2%"),
         _ => {
+            let is_question_context = trimmed.ends_with("?!")
+                || trimmed.ends_with("!?")
+                || trimmed.ends_with('?')
+                || lower.starts_with("почему ")
+                || lower.starts_with("зачем ")
+                || lower.starts_with("нельзя ли")
+                || lower.starts_with("неужели ")
+                || lower.starts_with("как же ");
+
+            let is_excited_context = trimmed.ends_with('!')
+                || lower.contains("успешно")
+                || lower.contains("отлично")
+                || lower.contains("возобновил")
+                || lower.contains("ни одной секунды")
+                || lower.contains("важно:")
+                || lower.contains("внимание:")
+                || lower.contains("критическ")
+                || lower.contains("ошибка:")
+                || lower.contains("поздравля")
+                || lower.contains("полностью готов");
+
+            let is_header_context = trimmed.ends_with(':')
+                || lower.starts_with("раунд ")
+                || lower.starts_with("вариант ")
+                || lower.starts_with("этап ")
+                || lower.starts_with("шаг ")
+                || lower.starts_with("итог")
+                || lower.starts_with("вывод")
+                || lower.starts_with("резюме")
+                || lower.starts_with("во-первых")
+                || lower.starts_with("во-вторых")
+                || lower.starts_with("в-третьих");
+
             if trimmed.ends_with("?!") || trimmed.ends_with("!?") {
-                (2, "+5%")
-            } else if trimmed.ends_with('?') {
-                (0, "+4%")
-            } else if trimmed.ends_with('!') {
-                (2, "+3%")
-            } else if trimmed.ends_with(':') {
-                (-4, "-2%")
+                (2, "+9%")
+            } else if is_question_context {
+                (-2, "+8%")
+            } else if is_excited_context {
+                (3, "+7%")
+            } else if is_header_context {
+                (-6, "-4%")
             } else if trimmed.ends_with("...") || trimmed.ends_with('…') {
-                (-3, "-2%")
-            } else if char_count < 45 && (trimmed.contains(" — ") || trimmed.contains(" - ")) {
-                (-2, "+1%")
+                (-5, "-3%")
+            } else if trimmed.contains(" — ") || trimmed.contains(" - ") || (trimmed.contains('(') && trimmed.contains(')')) {
+                if char_count < 60 {
+                    (-2, "+3%")
+                } else {
+                    (-3, "-2%")
+                }
             } else {
                 (0, "+0%")
             }
@@ -683,7 +723,7 @@ async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: Strin
         }
     }
 
-    let _guard = EDGE_TTS_MUTEX.lock().await;
+    let _permit = EDGE_TTS_SEMAPHORE.acquire().await.map_err(|e| e.to_string())?;
     // Попытка 1: стандартный запрос к Microsoft Edge Neural TTS с Sec-MS-GEC v2
     match speak_edge_tts_internal(text.clone(), voice.clone(), rate, false).await {
         Ok(b64) => Ok(b64),

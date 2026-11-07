@@ -139,10 +139,10 @@
     <div class="dashboard-container flex w-screen h-screen overflow-hidden relative">
       <!-- 1. Левый сворачиваемый сайдбар (дизайн Stitch) -->
       <aside class="sidebar w-[200px] h-screen flex-shrink-0 bg-[#1b1b20] border-r border-[#4a4455]/30 flex flex-col py-6 px-4 z-20 transition-all duration-300 relative" id="sidebar">
-        <div class="flex items-center justify-between mb-6 sidebar-header">
-          <div class="logo-area flex items-center gap-2.5">
-            <img src="assets/sinc-pro-icon.png" alt="SINC PRO" class="w-9 h-9 rounded-lg flex-shrink-0 shadow-[0_0_12px_rgba(142,82,255,0.35)]" />
-            <div>
+        <div class="flex items-center justify-between mb-6 sidebar-header select-none" data-tauri-drag-region>
+          <div class="logo-area flex items-center gap-2.5 cursor-grab active:cursor-grabbing" data-tauri-drag-region>
+            <img src="assets/sinc-pro-icon.png" alt="SINC PRO" class="w-9 h-9 rounded-lg flex-shrink-0 shadow-[0_0_12px_rgba(142,82,255,0.35)] pointer-events-none" />
+            <div class="pointer-events-none">
               <h1 class="font-bold text-[#d2bbff] tracking-tight text-[18px] leading-none sidebar-logo">SINC PRO</h1>
               <p class="text-[9px] text-[#ccc3d8] uppercase tracking-wider mt-1 sidebar-subtext">Audio Intelligence</p>
             </div>
@@ -194,8 +194,8 @@
       <main class="flex-1 flex flex-col h-full overflow-hidden relative bg-[#131318]">
         <!-- TopAppBar / Шапка контента (вся свободная область перетаскивает окно) -->
         <header id="dashboard-header" data-tauri-drag-region class="h-16 w-full flex justify-between items-center gap-3 px-6 py-4 bg-transparent flex-shrink-0 select-none" style="cursor: default;">
-          <div class="flex items-center min-w-0" style="gap: 16px; position: relative; z-index: 20;">
-            <h2 class="text-[20px] text-[#e4e1e9] font-semibold tracking-tight cursor-pointer hover:text-[#d2bbff] transition-colors flex-shrink-0" id="greeting-title" title="Нажмите, чтобы изменить имя профиля">Привет!</h2>
+          <div class="flex items-center flex-shrink-0" style="gap: 16px; position: relative; z-index: 20;">
+            <h2 class="text-[20px] text-[#e4e1e9] font-semibold tracking-tight cursor-pointer hover:text-[#d2bbff] transition-colors flex-shrink-0 whitespace-nowrap" id="greeting-title" title="Нажмите, чтобы изменить имя профиля (или зажмите и потяните для перемещения окна)">Привет!</h2>
             <!-- Панель управления плавающими модулями слева с небольшим отступом от имени -->
             <div class="flex items-center gap-3 bg-[#1b1b20] border border-[#4a4455]/30 rounded-full px-3.5 py-1.5 shadow-sm flex-shrink-0" id="dashboard-toggles-container">
               <!-- Рендерится динамически через WindowToggleManager -->
@@ -379,19 +379,19 @@
           <!-- ВКЛАДКА 3.5: ОЗВУЧКА (ПЛЕЕР) -->
           <section class="tab-content flex flex-col gap-4 flex-1 min-h-0 py-4" id="tab-tts" style="display: none;">
             <!-- Заголовок -->
-            <div class="flex items-center justify-between flex-shrink-0 relative z-30">
-              <div class="flex items-center gap-3">
-                <h3 class="text-[14px] font-bold text-[#e4e1e9] flex items-center gap-2">
+            <div class="flex items-center justify-between gap-3 flex-nowrap flex-shrink-0 relative z-30">
+              <div class="flex items-center gap-3 flex-shrink-0">
+                <h3 class="text-[14px] font-bold text-[#e4e1e9] flex items-center gap-2 whitespace-nowrap flex-shrink-0">
                   <span class="material-symbols-outlined text-[18px] text-[#7bd6d1]">record_voice_over</span>
                   Озвучка текста
                 </h3>
-                <button type="button" id="btn-clear-tts-cache" class="flex items-center gap-1.5 bg-[#1b1b20] hover:bg-[#2a2933] border border-[#4a4455]/40 hover:border-[#7bd6d1]/60 text-[#ccc3d8] hover:text-white px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all cursor-pointer focus:outline-none" title="Очистить кэш озвучки (удалить сохранённые аудио-фрагменты)">
+                <button type="button" id="btn-clear-tts-cache" class="flex items-center gap-1.5 bg-[#1b1b20] hover:bg-[#2a2933] border border-[#4a4455]/40 hover:border-[#7bd6d1]/60 text-[#ccc3d8] hover:text-white px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all cursor-pointer focus:outline-none whitespace-nowrap flex-shrink-0" title="Очистить кэш озвучки (удалить сохранённые аудио-фрагменты)">
                   <span class="material-symbols-outlined text-[14px] text-[#7bd6d1]">cleaning_services</span>
                   <span>Очистить кэш</span>
                 </button>
               </div>
-              <div class="relative z-40">
-                <div id="tts-widget-root" class="bg-[#1b1b20] rounded-full shadow-xl flex items-center relative z-10"></div>
+              <div class="relative z-40 flex-shrink-0">
+                <div id="tts-widget-root" class="bg-[#1b1b20] rounded-full shadow-xl flex items-center relative z-10 flex-shrink-0"></div>
               </div>
             </div>
 
@@ -3781,13 +3781,13 @@
             console.error("Failed to load app version:", err);
             const versionDisplay = document.getElementById('app-version-display');
             if (versionDisplay) {
-              versionDisplay.textContent = `Текущая версия: 3.5.25`;
+              versionDisplay.textContent = `Текущая версия: 3.5.26`;
             }
           });
         } else {
           const versionDisplay = document.getElementById('app-version-display');
           if (versionDisplay) {
-            versionDisplay.textContent = `Текущая версия: 3.5.25 (Mock)`;
+            versionDisplay.textContent = `Текущая версия: 3.5.26 (Mock)`;
           }
         }
 
@@ -3905,6 +3905,12 @@
         // Восстановление позиции и размера главного окна с проверкой доступности мониторов
         (async () => {
           try {
+            const { LogicalSize, PhysicalPosition, PhysicalSize } = window.__TAURI__.dpi;
+            const dpr = window.devicePixelRatio || 1;
+            const minPhysW = Math.round(980 * dpr);
+            const minPhysH = Math.round(560 * dpr);
+            await appWindow.setMinSize(new LogicalSize(980, 560)).catch(() => {});
+
             const savedState = localStorage.getItem('main_window_state');
             if (savedState) {
               const state = JSON.parse(savedState);
@@ -3924,10 +3930,9 @@
                   }
                 }
                 if (isInsideAnyMonitor) {
-                  const { PhysicalPosition, PhysicalSize } = window.__TAURI__.dpi;
                   await appWindow.setPosition(new PhysicalPosition(state.x, state.y));
                   if (typeof state.width === 'number' && typeof state.height === 'number') {
-                    await appWindow.setSize(new PhysicalSize(state.width, state.height));
+                    await appWindow.setSize(new PhysicalSize(Math.max(state.width, minPhysW), Math.max(state.height, minPhysH)));
                   }
                 }
               }
@@ -3986,7 +3991,40 @@
         const dashboardHeader = document.getElementById('dashboard-header');
         if (dashboardHeader) {
           dashboardHeader.addEventListener('mousedown', (e) => {
-            if (e.buttons === 1 && !e.target.closest('button, input, select, a, #dashboard-toggles-container, #greeting-title')) {
+            if (e.buttons !== 1) return;
+            // На приветствии ("Привет, Ярослав"): если зажали и потянули (> 4px) — перетаскиваем окно, а если просто кликнули — открываем смену имени
+            if (e.target.closest('#greeting-title')) {
+              const startX = e.clientX;
+              const startY = e.clientY;
+              window.__greetingDragged = false;
+              const onMove = (ev) => {
+                if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 4) {
+                  window.__greetingDragged = true;
+                  window.removeEventListener('mousemove', onMove);
+                  window.removeEventListener('mouseup', onUp);
+                  appWindow.startDragging();
+                }
+              };
+              const onUp = () => {
+                window.removeEventListener('mousemove', onMove);
+                window.removeEventListener('mouseup', onUp);
+              };
+              window.addEventListener('mousemove', onMove);
+              window.addEventListener('mouseup', onUp);
+              return;
+            }
+            // Вся свободная область шапки, а также свободные поля и иконки внутри панели тумблеров (кроме самих ползунков .tri-switch-container и кнопок) перетаскивают окно
+            if (!e.target.closest('button, input, select, a, .tri-switch-container')) {
+              appWindow.startDragging();
+            }
+          });
+        }
+
+        // Перетаскивание окна за логотип SINC PRO и верхнюю шапку левого сайдбара
+        const sidebarHeader = document.querySelector('.sidebar-header');
+        if (sidebarHeader) {
+          sidebarHeader.addEventListener('mousedown', (e) => {
+            if (e.buttons === 1 && !e.target.closest('button, input, select, a')) {
               appWindow.startDragging();
             }
           });
@@ -4379,7 +4417,13 @@
           });
         }
         if (avatarBtn) avatarBtn.addEventListener('click', () => window.openProfileModal(false));
-        if (greetingTitle) greetingTitle.addEventListener('click', () => window.openProfileModal(false));
+        if (greetingTitle) greetingTitle.addEventListener('click', () => {
+          if (window.__greetingDragged) {
+            window.__greetingDragged = false;
+            return;
+          }
+          window.openProfileModal(false);
+        });
       })();
     </script>
 
