@@ -2603,9 +2603,24 @@ fn is_autostart_enabled() -> Result<bool, String> {
 #[tauri::command]
 async fn show_capsule_window(app_handle: tauri::AppHandle) -> Result<(), String> {
     if let Some(w) = app_handle.get_webview_window("capsule") {
-        w.show().map_err(|e| e.to_string())?;
         #[cfg(target_os = "windows")]
-        ensure_webview_window_borderless(&w);
+        {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            use winapi::um::winuser::{ShowWindow, SW_SHOWNOACTIVATE};
+            if let Ok(handle) = w.window_handle() {
+                if let RawWindowHandle::Win32(win_handle) = handle.as_raw() {
+                    let hwnd = win_handle.hwnd.get() as isize;
+                    make_overlay_borderless(hwnd);
+                    unsafe {
+                        ShowWindow(hwnd as _, SW_SHOWNOACTIVATE);
+                    }
+                    ensure_overlay_topmost(hwnd);
+                }
+            }
+            ensure_webview_window_borderless(&w);
+        }
+        #[cfg(not(target_os = "windows"))]
+        w.show().map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -2621,9 +2636,24 @@ async fn hide_capsule_window(app_handle: tauri::AppHandle) -> Result<(), String>
 #[tauri::command]
 async fn show_widget_window(app_handle: tauri::AppHandle) -> Result<(), String> {
     if let Some(w) = app_handle.get_webview_window("widget") {
-        w.show().map_err(|e| e.to_string())?;
         #[cfg(target_os = "windows")]
-        ensure_webview_window_borderless(&w);
+        {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            use winapi::um::winuser::{ShowWindow, SW_SHOWNOACTIVATE};
+            if let Ok(handle) = w.window_handle() {
+                if let RawWindowHandle::Win32(win_handle) = handle.as_raw() {
+                    let hwnd = win_handle.hwnd.get() as isize;
+                    make_overlay_borderless(hwnd);
+                    unsafe {
+                        ShowWindow(hwnd as _, SW_SHOWNOACTIVATE);
+                    }
+                    ensure_overlay_topmost(hwnd);
+                }
+            }
+            ensure_webview_window_borderless(&w);
+        }
+        #[cfg(not(target_os = "windows"))]
+        w.show().map_err(|e| e.to_string())?;
         let _ = w.emit("widget-shown", ());
     }
     Ok(())
@@ -5519,17 +5549,28 @@ fn set_clipboard_text(text: &str) -> Result<(), String> {
     const CF_UNICODETEXT: u32 = 13;
     const GMEM_MOVEABLE: u32 = 2;
 
-    let wide: Vec<u16> = OsStr::new(text)
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
-    let size = wide.len() * 2;
-
     unsafe {
-        if OpenClipboard(0) == 0 {
+        let mut opened = false;
+        for _ in 0..15 {
+            if OpenClipboard(0) != 0 {
+                opened = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+        if !opened {
             return Err("Не удалось открыть буфер обмена".to_string());
         }
         EmptyClipboard();
+        if text.is_empty() {
+            CloseClipboard();
+            return Ok(());
+        }
+        let wide: Vec<u16> = OsStr::new(text)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let size = wide.len() * 2;
         let h_mem = GlobalAlloc(GMEM_MOVEABLE, size);
         if h_mem == 0 {
             CloseClipboard();
@@ -5572,7 +5613,15 @@ fn get_clipboard_text_raw() -> Result<String, String> {
     const CF_UNICODETEXT: u32 = 13;
 
     unsafe {
-        if OpenClipboard(0) == 0 {
+        let mut opened = false;
+        for _ in 0..15 {
+            if OpenClipboard(0) != 0 {
+                opened = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+        if !opened {
             return Err("Не удалось открыть буфер обмена".to_string());
         }
         if IsClipboardFormatAvailable(CF_UNICODETEXT) == 0 {
@@ -5723,10 +5772,6 @@ fn restore_clipboard(backup: Vec<(u32, Vec<u8>)>) -> Result<(), String> {
     const GMEM_MOVEABLE: u32 = 2;
 
     log_to_file(&format!("restore_clipboard: Start restoring {} formats", backup.len()));
-    if backup.is_empty() {
-        log_to_file("restore_clipboard: Backup is empty, skipping restore to avoid clearing clipboard");
-        return Ok(());
-    }
 
     unsafe {
         let mut opened = false;
@@ -5743,6 +5788,11 @@ fn restore_clipboard(backup: Vec<(u32, Vec<u8>)>) -> Result<(), String> {
             return Err("Не удалось открыть буфер обмена для восстановления".to_string());
         }
         EmptyClipboard();
+        if backup.is_empty() {
+            CloseClipboard();
+            log_to_file("restore_clipboard: Backup was empty, clipboard cleared");
+            return Ok(());
+        }
 
         for (format, data) in backup {
             let size = data.len();
@@ -6030,36 +6080,42 @@ async fn translate_with_cache(
 async fn capture_clipboard_text(app_handle: tauri::AppHandle, translate: bool) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        let prior_clipboard_text = get_clipboard_text_raw().unwrap_or_default();
         let backup = backup_clipboard().unwrap_or_default();
         let _ = set_clipboard_text("");
 
-        // Если физический Alt ещё зажат (например, хоткей Ctrl+Alt), ждём до 180 мс или маскируем через simulate_ctrl_c
-        for _ in 0..6 {
-            let alt_down = unsafe {
+        // Если физический Alt или Shift ещё зажат (например, хоткей Ctrl+Alt или Ctrl+Shift),
+        // ждём до 210 мс перед эмуляцией Ctrl+C, чтобы браузеры/приложения не восприняли это как Ctrl+Shift+C или Ctrl+Alt+C
+        for _ in 0..7 {
+            let mod_down = unsafe {
                 use winapi::um::winuser::GetAsyncKeyState;
                 (GetAsyncKeyState(0x12) as u16 & 0x8000) != 0
                     || (GetAsyncKeyState(0xA4) as u16 & 0x8000) != 0
                     || (GetAsyncKeyState(0xA5) as u16 & 0x8000) != 0
+                    || (GetAsyncKeyState(0x10) as u16 & 0x8000) != 0
+                    || (GetAsyncKeyState(0xA0) as u16 & 0x8000) != 0
+                    || (GetAsyncKeyState(0xA1) as u16 & 0x8000) != 0
             };
-            if !alt_down {
+            if !mod_down {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(30)).await;
         }
 
-        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-        simulate_ctrl_c();
-        tokio::time::sleep(std::time::Duration::from_millis(140)).await;
-
-        let mut text = get_clipboard_text_raw().unwrap_or_default();
-
-        // Повторная попытка, если целевое приложение не успело обработать первый Ctrl+C
-        if text.trim().is_empty() {
-            tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+        let mut text = String::new();
+        let delays = [120u64, 150u64, 180u64];
+        for (attempt, &wait_ms) in delays.iter().enumerate() {
+            if attempt > 0 {
+                let _ = set_clipboard_text("");
+                tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+            } else {
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
             simulate_ctrl_c();
-            tokio::time::sleep(std::time::Duration::from_millis(160)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
             text = get_clipboard_text_raw().unwrap_or_default();
+            if !text.trim().is_empty() {
+                break;
+            }
         }
 
         CTRL_PRESSED.store(false, Ordering::SeqCst);
@@ -6068,13 +6124,8 @@ async fn capture_clipboard_text(app_handle: tauri::AppHandle, translate: bool) -
 
         let _ = restore_clipboard(backup);
 
-        // Если выделение не скопировалось (например, текст уже был скопирован в буфер заранее), используем текст из буфера
-        if text.trim().is_empty() && !prior_clipboard_text.trim().is_empty() {
-            log_to_file("capture_clipboard_text: Selection copy empty, falling back to existing clipboard text");
-            text = prior_clipboard_text;
-        }
-
         if text.trim().is_empty() {
+            log_to_file("capture_clipboard_text: No active text selection copied after 3 attempts");
             return Ok("".to_string());
         }
 

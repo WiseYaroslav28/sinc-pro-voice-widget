@@ -339,7 +339,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
+        let activeCaptureRequestId = 0;
+
         listen('tts-action-read', async () => {
+            const reqId = ++activeCaptureRequestId;
             try {
                 // МГНОВЕННО (0 мс) переключаем кнопку Play -> Pause и выключаем режим перевода (гасим 文A)
                 if (cachedWidgetMode === 2) {
@@ -355,6 +358,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 engine.preparePlayback();
 
                 const text = await invoke('capture_clipboard_text', { translate: false });
+                if (reqId !== activeCaptureRequestId) return;
                 if (!text || !text.trim()) {
                     console.warn('[TTS] tts-action-read: clipboard/selection empty');
                     engine.stop();
@@ -363,11 +367,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 handleNewText(text);
             } catch (e) {
                 console.error("Failed to capture and read:", e);
-                engine.stop();
+                if (reqId === activeCaptureRequestId) engine.stop();
             }
         });
         
         listen('tts-action-translate', async () => {
+            const reqId = ++activeCaptureRequestId;
             try {
                 // МГНОВЕННО (0 мс) переключаем кнопку Play -> Pause и включаем режим перевода (подсвечиваем 文A)
                 if (cachedWidgetMode === 2) {
@@ -383,6 +388,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 engine.preparePlayback();
 
                 const text = await invoke('capture_clipboard_text', { translate: true });
+                if (reqId !== activeCaptureRequestId) return;
                 if (!text || !text.trim()) {
                     console.warn('[TTS] tts-action-translate: clipboard/selection empty');
                     engine.stop();
@@ -391,7 +397,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 handleNewText(text);
             } catch (e) {
                 console.error("Failed to capture and translate:", e);
-                engine.stop();
+                if (reqId === activeCaptureRequestId) engine.stop();
             }
         });
 

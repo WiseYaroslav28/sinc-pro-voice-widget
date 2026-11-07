@@ -549,6 +549,15 @@ class VoiceCore {
     preparePlayback() {
         this.audioElement.pause();
         this.audioElement.removeAttribute('src');
+        this._playingSentenceIndex = -1;
+        this.isPrefetching = false;
+        this.currentQueueId = null;
+        this.currentlyLoading.clear();
+        this.currentText = "";
+        this.sentences = [];
+        this.audioBuffers = [];
+        this.audioDurations = [];
+        this.currentSentenceIndex = 0;
         this.isPlaying = true;
         this.isPaused = false;
         this.notifyState();
@@ -715,7 +724,9 @@ class VoiceCore {
                 }
             }
         } finally {
-            this.currentlyLoading.delete(i);
+            if (this.currentQueueId === queueId) {
+                this.currentlyLoading.delete(i);
+            }
         }
     }
 
