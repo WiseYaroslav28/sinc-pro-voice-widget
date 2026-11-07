@@ -442,7 +442,7 @@ class VoiceCore {
         // Разбиваем по концам предложений (. ! ?), по точке с запятой (;), И по всем переносам строк (\n+)
         let rawSentences = processed.split(/(?<=[.!?])\s+|(?<=;)\s+|\n+/u);
 
-        const splitLongSentence = (sentence, maxLen = 220) => {
+        const splitLongSentence = (sentence, maxLen = 160) => {
             if (sentence.length <= maxLen) return [sentence];
             const parts = [];
             let remaining = sentence.trim();
@@ -453,11 +453,11 @@ class VoiceCore {
                 const commaIdx = slice.lastIndexOf(', ');
                 const punctMatch = Math.max(dashIdx, colonIdx, commaIdx);
                 let splitIdx = -1;
-                if (punctMatch >= 60) {
+                if (punctMatch >= 45) {
                     splitIdx = punctMatch + (slice[punctMatch] === ' ' ? 3 : 1);
                 } else {
                     const spaceIdx = slice.lastIndexOf(' ');
-                    splitIdx = spaceIdx >= 60 ? spaceIdx : maxLen;
+                    splitIdx = spaceIdx >= 45 ? spaceIdx : maxLen;
                 }
                 const chunk = remaining.slice(0, splitIdx).trim();
                 if (chunk.length > 0 && /[\p{L}\p{N}]/u.test(chunk)) {
@@ -477,19 +477,19 @@ class VoiceCore {
             s = s.replace(/<ELLIPSIS>/g, "...");
             const trimmed = s.trim();
             if (trimmed.length === 0 || !/[\p{L}\p{N}]/u.test(trimmed)) continue;
-            for (const sub of splitLongSentence(trimmed, 220)) {
+            for (const sub of splitLongSentence(trimmed, 160)) {
                 rawClean.push(sub);
             }
         }
 
         // Приклеиваем только совсем крошечные осколки (< 15 символов, например "1)" или "Да.") к соседнему предложению,
-        // сохраняя все обычные предложения компактными для моментального старта озвучки
+        // сохраняя все обычные предложения компактными (<= 160 символов) для моментального старта озвучки
         const finalSentences = [];
         for (let i = 0; i < rawClean.length; i++) {
             const cur = rawClean[i];
-            if (cur.length < 15 && i + 1 < rawClean.length && (cur.length + 1 + rawClean[i + 1].length) <= 180) {
+            if (cur.length < 15 && i + 1 < rawClean.length && (cur.length + 1 + rawClean[i + 1].length) <= 160) {
                 rawClean[i + 1] = cur + " " + rawClean[i + 1];
-            } else if (cur.length < 15 && finalSentences.length > 0 && (finalSentences[finalSentences.length - 1].length + 1 + cur.length) <= 180) {
+            } else if (cur.length < 15 && finalSentences.length > 0 && (finalSentences[finalSentences.length - 1].length + 1 + cur.length) <= 160) {
                 finalSentences[finalSentences.length - 1] += " " + cur;
             } else {
                 finalSentences.push(cur);
@@ -693,18 +693,8 @@ class VoiceCore {
                 return;
             }
 
-            // 2. Пауза 250 мс между последовательными сетевыми запросами (кроме самого первого предложения при старте),
-            // чтобы речь начиналась мгновенно, а дальнейшая подгрузка шла мягко без срабатывания антиспама
-            if (i > 0 && this.lastNetworkRequestTime > 0) {
-                const timeSinceLastRequest = Date.now() - this.lastNetworkRequestTime;
-                const minDelay = 250;
-                if (timeSinceLastRequest < minDelay) {
-                    const waitTime = minDelay - timeSinceLastRequest;
-                    await new Promise(r => setTimeout(r, waitTime));
-                }
-            }
-
-            // Проверяем, не сменилась ли очередь за время ожидания
+            // 2. Пауза 300 мс между сетевыми запросами выдерживается нативно в Rust (speak_edge_tts через tokio::time::sleep),
+            // что защищает очередь от троттлинга JS-таймеров WebView2 в свёрнутом состоянии и исключает двойное ожидание.
             if (this.currentQueueId !== queueId || this.audioBuffers !== currentBuffersRef) {
                 return;
             }
@@ -748,7 +738,7 @@ class VoiceCore {
                         lastErr = err;
                         this.log(`Attempt ${attempt}/${maxAttempts} failed for sentence ${i}: ${err}`);
                         if (attempt < maxAttempts) {
-                            await new Promise(r => setTimeout(r, 600));
+                            await new Promise(r => setTimeout(r, 250));
                         }
                     }
                 }

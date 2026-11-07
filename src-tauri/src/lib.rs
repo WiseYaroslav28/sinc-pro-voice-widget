@@ -23,9 +23,18 @@ static LAST_SKEW_UPDATE: std::sync::atomic::AtomicI64 = std::sync::atomic::Atomi
 static CACHED_SKEW: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 static LAST_EDGE_TTS_FINISHED_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 
+type EdgeWsStream = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+struct PersistentEdgeWs {
+    ws: EdgeWsStream,
+    last_used: Instant,
+    turns_count: usize,
+}
+
 lazy_static::lazy_static! {
     static ref SKEW_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
     static ref EDGE_TTS_SEMAPHORE: tokio::sync::Semaphore = tokio::sync::Semaphore::new(1);
+    static ref PERSISTENT_EDGE_WS: tokio::sync::Mutex<Option<PersistentEdgeWs>> = tokio::sync::Mutex::new(None);
     static ref EDGE_CHROMIUM_VERSION: std::sync::Mutex<String> = std::sync::Mutex::new("143.0.3650.75".to_string());
     static ref EDGE_GEC_VERSION: std::sync::Mutex<String> = std::sync::Mutex::new("2-143.0.3650.75".to_string());
 }
@@ -630,71 +639,20 @@ fn build_expressive_ssml_params(raw_text: &str, base_rate: f32, expressive: bool
     let trimmed = trimmed.trim();
 
     let base_pct = ((base_rate - 1.0) * 100.0).round() as i32;
-    let char_count = trimmed.chars().count();
-    let lower = trimmed.to_lowercase();
 
+    // Чтобы сервер Microsoft Edge TTS отдавал прямой нейросетевой поток за 160–250 мс
+    // без включения медленного серверного DSP-постпроцессора (который задерживает старт на 3–6 сек
+    // и вызывает сброс TCP-соединения на голосе ru-RU-DmitryNeural), оставляем базовые rate/pitch (+0%, +0Hz)
+    // для обычного повествовательного текста, применяя сдвиги только при явных тегах интонации.
     let (rate_delta, pitch_str) = if !expressive {
         (0, "+0Hz")
     } else {
         match tag_mode {
-            Some("question") => (-2, "+6Hz"),
-            Some("excited") => (3, "+5Hz"),
-            Some("header") => (-5, "-3Hz"),
-            Some("calm") => (-3, "-2Hz"),
-            _ => {
-                let is_question_context = trimmed.ends_with("?!")
-                    || trimmed.ends_with("!?")
-                    || trimmed.ends_with('?')
-                    || lower.starts_with("почему ")
-                    || lower.starts_with("зачем ")
-                    || lower.starts_with("нельзя ли")
-                    || lower.starts_with("неужели ")
-                    || lower.starts_with("как же ");
-
-                let is_excited_context = trimmed.ends_with('!')
-                    || lower.contains("успешно")
-                    || lower.contains("отлично")
-                    || lower.contains("возобновил")
-                    || lower.contains("ни одной секунды")
-                    || lower.contains("важно:")
-                    || lower.contains("внимание:")
-                    || lower.contains("критическ")
-                    || lower.contains("ошибка:")
-                    || lower.contains("поздравля")
-                    || lower.contains("полностью готов");
-
-                let is_header_context = trimmed.ends_with(':')
-                    || lower.starts_with("раунд ")
-                    || lower.starts_with("вариант ")
-                    || lower.starts_with("этап ")
-                    || lower.starts_with("шаг ")
-                    || lower.starts_with("итог")
-                    || lower.starts_with("вывод")
-                    || lower.starts_with("резюме")
-                    || lower.starts_with("во-первых")
-                    || lower.starts_with("во-вторых")
-                    || lower.starts_with("в-третьих");
-
-                if trimmed.ends_with("?!") || trimmed.ends_with("!?") {
-                    (2, "+7Hz")
-                } else if is_question_context {
-                    (-2, "+6Hz")
-                } else if is_excited_context {
-                    (3, "+5Hz")
-                } else if is_header_context {
-                    (-5, "-3Hz")
-                } else if trimmed.ends_with("...") || trimmed.ends_with('…') {
-                    (-4, "-2Hz")
-                } else if trimmed.contains(" — ") || trimmed.contains(" - ") || (trimmed.contains('(') && trimmed.contains(')')) {
-                    if char_count < 60 {
-                        (-2, "+2Hz")
-                    } else {
-                        (-2, "-2Hz")
-                    }
-                } else {
-                    (0, "+0Hz")
-                }
-            }
+            Some("question") => (0, "+4Hz"),
+            Some("excited") => (2, "+3Hz"),
+            Some("header") => (-2, "-2Hz"),
+            Some("calm") => (-2, "-1Hz"),
+            _ => (0, "+0Hz"),
         }
     };
 
@@ -713,7 +671,18 @@ fn build_expressive_ssml_params(raw_text: &str, base_rate: f32, expressive: bool
         })
         .collect();
 
-    let escaped = sanitized
+    // Очищаем одиночный знак вопроса перед закрывающей скобкой или запятой внутри предложения
+    // (например, "(Prepared Statements с символом ?),"), из-за которого парсер DmitryNeural сбрасывает сокет.
+    let cleaned_punct = sanitized
+        .replace(" ?),", "),")
+        .replace("?),", "),")
+        .replace(" ?)", ")")
+        .replace("?)", ")")
+        .replace(" ?]", "]")
+        .replace("?]", "]")
+        .replace(" ?,", ",");
+
+    let escaped = cleaned_punct
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;");
@@ -737,36 +706,36 @@ async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: Strin
 
     let _permit = EDGE_TTS_SEMAPHORE.acquire().await.map_err(|e| e.to_string())?;
 
-    // Выдерживаем паузу 250 мс между окончанием предыдущего WebSocket-запроса и началом следующего,
-    // чтобы анти-спам фильтр Microsoft (speech.platform.bing.com) не сбрасывал соединение.
+    // Выдерживаем паузу 300 мс между окончанием предыдущего WebSocket-запроса и началом следующего,
+    // чтобы анти-спам лимитер Microsoft (speech.platform.bing.com) не сбрасывал постоянный сокет на 5-м запросе.
     let now_ms = chrono::Utc::now().timestamp_millis();
     let prev_ms = LAST_EDGE_TTS_FINISHED_MS.load(Ordering::Relaxed);
-    if prev_ms > 0 && now_ms > prev_ms && (now_ms - prev_ms) < 250 {
-        tokio::time::sleep(Duration::from_millis((250 - (now_ms - prev_ms)) as u64)).await;
+    if prev_ms > 0 && now_ms > prev_ms && (now_ms - prev_ms) < 300 {
+        tokio::time::sleep(Duration::from_millis((300 - (now_ms - prev_ms)) as u64)).await;
     }
 
-    // Попытка 1: стандартный последовательный запрос к Microsoft Edge Neural TTS с Sec-MS-GEC v2
+    // Попытка 1: запрос через постоянную (Persistent) WebSocket-сессию с Sec-MS-GEC v2
     let res = match speak_edge_tts_internal(text.clone(), voice.clone(), rate, false, expressive).await {
         Ok(b64) => Ok(b64),
         Err(first_err) => {
-            println!("SincPro TTS Auto-Heal: Первая попытка не удалась ({}), ждём 400 мс перед второй попыткой...", first_err);
-            let is_auth_err = first_err.contains("403") || first_err.contains("401");
-            tokio::time::sleep(Duration::from_millis(400)).await;
+            println!("SincPro TTS Auto-Heal: Первая попытка не удалась ({}), ждём 300 мс перед второй попыткой...", first_err);
+            let is_auth_err = first_err.contains("403") || first_err.contains("401") || first_err.contains("400");
+            tokio::time::sleep(Duration::from_millis(300)).await;
             if is_auth_err {
                 let _ = get_clock_skew(true).await;
                 refresh_edge_drm_constants().await;
             }
-            // Попытка 2: повтор с новым WebSocket-соединением
-            match speak_edge_tts_internal(text.clone(), voice.clone(), rate, is_auth_err, expressive).await {
+            // Попытка 2: повтор с принудительно новым WebSocket-соединением
+            match speak_edge_tts_internal(text.clone(), voice.clone(), rate, true, expressive).await {
                 Ok(b64) => {
                     println!("SincPro TTS Auto-Heal: Озвучка успешно восстановлена со второй попытки!");
                     Ok(b64)
                 }
                 Err(second_err) => {
-                    println!("SincPro TTS Auto-Heal: Вторая попытка не удалась ({}), ждём 800 мс перед третьей попыткой...", second_err);
-                    tokio::time::sleep(Duration::from_millis(800)).await;
+                    println!("SincPro TTS Auto-Heal: Вторая попытка не удалась ({}), ждём 600 мс перед третьей попыткой...", second_err);
+                    tokio::time::sleep(Duration::from_millis(600)).await;
                     let _ = get_clock_skew(true).await;
-                    // Попытка 3: финальная попытка с принудительно обновлённым clock skew и базовой интонацией (+0Hz)
+                    // Попытка 3: финальная попытка с обновлённым clock skew и базовой интонацией (+0Hz)
                     match speak_edge_tts_internal(text.clone(), voice.clone(), rate, true, false).await {
                         Ok(b64) => {
                             println!("SincPro TTS Auto-Heal: Озвучка успешно восстановлена с третьей попытки!");
@@ -797,12 +766,7 @@ async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: Strin
     res
 }
 
-async fn speak_edge_tts_internal(text: String, voice: String, rate: f32, force_skew: bool, expressive: bool) -> Result<String, String> {
-    let (ssml_text, rate_str, pitch_str) = build_expressive_ssml_params(&text, rate, expressive);
-    if ssml_text.trim().is_empty() {
-        return Err("Пустой текст для озвучки".into());
-    }
-
+async fn connect_edge_ws_session(force_skew: bool) -> Result<EdgeWsStream, String> {
     let skew = get_clock_skew(force_skew).await;
     let gec = generate_sec_ms_gec(skew);
     let gec_version = EDGE_GEC_VERSION.lock().unwrap().clone();
@@ -836,76 +800,214 @@ async fn speak_edge_tts_internal(text: String, voice: String, rate: f32, force_s
     let adjusted_now = chrono::Utc::now() + chrono::Duration::seconds(skew);
     let ts_str = adjusted_now.format("%Y-%m-%dT%H:%M:%S.000Z").to_string();
 
-    let net_result = tokio::time::timeout(Duration::from_secs(12), async {
-        let (mut ws, _) = connect_async_tls_with_config(request, None, false, None)
-            .await
-            .map_err(|e| format!("WebSocket connect failed: {}", e))?;
+    let (mut ws, _) = tokio::time::timeout(
+        Duration::from_secs(6),
+        connect_async_tls_with_config(request, None, false, None),
+    )
+    .await
+    .map_err(|_| "Timeout connecting to Edge TTS WebSocket (6s)".to_string())?
+    .map_err(|e| format!("WebSocket connect failed: {}", e))?;
 
-        let config_msg = format!(
-            "X-Timestamp:{ts}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n\
-             {{\"context\":{{\"synthesis\":{{\"audio\":{{\"metadataoptions\":{{\"sentenceBoundaryEnabled\":false,\
-             \"wordBoundaryEnabled\":false}},\"outputFormat\":\"audio-24khz-48kbitrate-mono-mp3\"}}}}}}}}",
-            ts = ts_str
-        );
-        ws.send(Message::Text(config_msg.into())).await
-            .map_err(|e| format!("Send config failed: {}", e))?;
+    // Отправляем Path:speech.config ТОЛЬКО ОДИН РАЗ при открытии нового WebSocket-соединения!
+    // Повторная отправка speech.config на уже открытом сокете замедляет синтез с 250 мс до 3.5–6 сек.
+    let config_msg = format!(
+        "X-Timestamp:{ts}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n\
+         {{\"context\":{{\"synthesis\":{{\"audio\":{{\"metadataoptions\":{{\"sentenceBoundaryEnabled\":false,\
+         \"wordBoundaryEnabled\":false}},\"outputFormat\":\"audio-24khz-48kbitrate-mono-mp3\"}}}}}}}}",
+        ts = ts_str
+    );
+    ws.send(Message::Text(config_msg.into()))
+        .await
+        .map_err(|e| format!("Send config failed: {}", e))?;
 
-        let request_id = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
-        let ssml_msg = format!(
-            "X-RequestId:{req}\r\nContent-Type:application/ssml+xml\r\n\
-             X-Timestamp:{ts}\r\nPath:ssml\r\n\r\n\
-             <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>\
-             <voice name='{voice}'><prosody pitch='{pitch}' rate='{rate}' volume='+0%'>{text}</prosody></voice></speak>",
-            req = request_id,
-            ts = ts_str,
-            voice = voice,
-            pitch = pitch_str,
-            rate = rate_str,
-            text = ssml_text,
-        );
-        ws.send(Message::Text(ssml_msg.into())).await
-            .map_err(|e| format!("Send SSML failed: {}", e))?;
+    Ok(ws)
+}
 
-        let mut audio_bytes: Vec<u8> = Vec::new();
-        let separator = b"Path:audio\r\n";
+async fn run_edge_ws_turn(
+    mut ws: EdgeWsStream,
+    turns_count: usize,
+    ssml_msg: &str,
+) -> Result<(EdgeWsStream, usize, Vec<u8>), (String, Vec<u8>)> {
+    if let Err(e) = ws.send(Message::Text(ssml_msg.to_string().into())).await {
+        return Err((format!("Send SSML failed: {}", e), Vec::new()));
+    }
 
-        loop {
-            match ws.next().await {
-                Some(Ok(Message::Binary(data))) => {
-                    if let Some(pos) = data.windows(separator.len()).position(|w| w == separator) {
-                        let audio_start = pos + separator.len();
-                        if audio_start < data.len() {
-                            audio_bytes.extend_from_slice(&data[audio_start..]);
-                        }
+    let mut audio_bytes: Vec<u8> = Vec::new();
+    let separator = b"Path:audio\r\n";
+
+    loop {
+        let wait_dur = if audio_bytes.is_empty() {
+            Duration::from_millis(6500)
+        } else {
+            Duration::from_millis(4000)
+        };
+
+        match tokio::time::timeout(wait_dur, ws.next()).await {
+            Ok(Some(Ok(Message::Binary(data)))) => {
+                if let Some(pos) = data.windows(separator.len()).position(|w| w == separator) {
+                    let audio_start = pos + separator.len();
+                    if audio_start < data.len() {
+                        audio_bytes.extend_from_slice(&data[audio_start..]);
                     }
                 }
-                Some(Ok(Message::Text(t))) => {
-                    if t.contains("Path:turn.end") {
-                        break;
-                    }
+            }
+            Ok(Some(Ok(Message::Text(t)))) => {
+                if t.contains("Path:turn.end") {
+                    break;
                 }
-                Some(Ok(Message::Close(_))) | None => break,
-                Some(Err(e)) => {
-                    let err_str = e.to_string();
-                    if !audio_bytes.is_empty() && (err_str.contains("Connection reset without closing handshake") || err_str.contains("ResetWithoutClosingHandshake")) {
-                        break;
-                    }
-                    return Err(format!("WebSocket error: {}", e));
+            }
+            Ok(Some(Ok(Message::Ping(payload)))) => {
+                let _ = ws.send(Message::Pong(payload)).await;
+            }
+            Ok(Some(Ok(Message::Close(_)))) | Ok(None) => {
+                if !audio_bytes.is_empty() {
+                    return Ok((ws, 999, audio_bytes));
                 }
-                _ => {}
+                return Err(("WebSocket closed by server before audio".to_string(), audio_bytes));
+            }
+            Ok(Some(Err(e))) => {
+                let err_str = e.to_string();
+                if !audio_bytes.is_empty()
+                    && (err_str.contains("Connection reset without closing handshake")
+                        || err_str.contains("ResetWithoutClosingHandshake"))
+                {
+                    return Ok((ws, 999, audio_bytes));
+                }
+                return Err((format!("WebSocket error: {}", e), audio_bytes));
+            }
+            Ok(_) => {}
+            Err(_) => {
+                return Err((
+                    format!(
+                        "Timeout waiting for Edge TTS audio stream ({}ms)",
+                        wait_dur.as_millis()
+                    ),
+                    audio_bytes,
+                ));
             }
         }
-        Ok(audio_bytes)
-    }).await;
+    }
 
-    let audio_bytes = match net_result {
-        Ok(inner_res) => inner_res?,
-        Err(_) => return Err("Timeout requesting Edge TTS (12s)".into()),
+    Ok((ws, turns_count + 1, audio_bytes))
+}
+
+async fn speak_edge_tts_internal(
+    text: String,
+    voice: String,
+    rate: f32,
+    force_reconnect: bool,
+    expressive: bool,
+) -> Result<String, String> {
+    let (ssml_text, rate_str, pitch_str) = build_expressive_ssml_params(&text, rate, expressive);
+    if ssml_text.trim().is_empty() {
+        return Err("Пустой текст для озвучки".into());
+    }
+
+    let skew = get_clock_skew(false).await;
+    let adjusted_now = chrono::Utc::now() + chrono::Duration::seconds(skew);
+    let ts_str = adjusted_now.format("%Y-%m-%dT%H:%M:%S.000Z").to_string();
+
+    // Определяем корректный xml:lang по префиксу выбранного голоса (например, "ru-RU" для "ru-RU-DmitryNeural")
+    let voice_lang: String = voice.split('-').take(2).collect::<Vec<&str>>().join("-");
+    let xml_lang = if voice_lang.len() >= 5 {
+        voice_lang
+    } else {
+        "ru-RU".to_string()
     };
 
-    if audio_bytes.is_empty() {
-        return Err("Edge TTS вернул пустой аудио-ответ".into());
-    }
+    let request_id = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
+    let ssml_msg = format!(
+        "X-RequestId:{req}\r\nContent-Type:application/ssml+xml\r\n\
+         X-Timestamp:{ts}\r\nPath:ssml\r\n\r\n\
+         <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='{lang}'>\
+         <voice name='{voice}'><prosody pitch='{pitch}' rate='{rate}' volume='+0%'>{text}</prosody></voice></speak>",
+        req = request_id,
+        ts = ts_str,
+        lang = xml_lang,
+        voice = voice,
+        pitch = pitch_str,
+        rate = rate_str,
+        text = ssml_text,
+    );
+
+    // Забираем существующую постоянную WebSocket-сессию, если она свежая (< 25 сек простоя) и обработала < 7 запросов
+    // (сервер Microsoft закрывает сокет на 9-м запросе подряд, поэтому планово переоткрываем после 7 запросов).
+    let existing_session = {
+        let mut guard = PERSISTENT_EDGE_WS.lock().await;
+        if force_reconnect {
+            *guard = None;
+            None
+        } else if let Some(sess) = guard.take() {
+            if sess.turns_count < 7 && sess.last_used.elapsed() < Duration::from_secs(25) {
+                Some(sess)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+
+    let (ws_stream, turns_count, was_reused) = match existing_session {
+        Some(sess) => (sess.ws, sess.turns_count, true),
+        None => {
+            let fresh_ws = connect_edge_ws_session(force_reconnect).await?;
+            (fresh_ws, 0, false)
+        }
+    };
+
+    let turn_res = run_edge_ws_turn(ws_stream, turns_count, &ssml_msg).await;
+
+    let audio_bytes = match turn_res {
+        Ok((ws_back, new_turns, bytes)) if !bytes.is_empty() => {
+            if new_turns < 7 {
+                let mut guard = PERSISTENT_EDGE_WS.lock().await;
+                *guard = Some(PersistentEdgeWs {
+                    ws: ws_back,
+                    last_used: Instant::now(),
+                    turns_count: new_turns,
+                });
+            }
+            bytes
+        }
+        Ok((_, _, _)) | Err((_, _)) if was_reused => {
+            // Если переиспользованный сокет был закрыт сервером во время простоя —
+            // мгновенно (через 80 мс) открываем свежий сокет и выполняем запрос без потери попытки!
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            let fresh_ws = connect_edge_ws_session(false).await?;
+            let fresh_req_id = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
+            let fresh_ssml = ssml_msg.replacen(&request_id, &fresh_req_id, 1);
+            match run_edge_ws_turn(fresh_ws, 0, &fresh_ssml).await {
+                Ok((ws_back, new_turns, bytes)) if !bytes.is_empty() => {
+                    if new_turns < 7 {
+                        let mut guard = PERSISTENT_EDGE_WS.lock().await;
+                        *guard = Some(PersistentEdgeWs {
+                            ws: ws_back,
+                            last_used: Instant::now(),
+                            turns_count: new_turns,
+                        });
+                    }
+                    bytes
+                }
+                Ok(_) => return Err("Edge TTS вернул пустой аудио-ответ".into()),
+                Err((err_msg, partial)) => {
+                    if !partial.is_empty() {
+                        partial
+                    } else {
+                        return Err(err_msg);
+                    }
+                }
+            }
+        }
+        Ok(_) => return Err("Edge TTS вернул пустой аудио-ответ".into()),
+        Err((err_msg, partial)) => {
+            if !partial.is_empty() {
+                partial
+            } else {
+                return Err(err_msg);
+            }
+        }
+    };
 
     Ok(STANDARD.encode(&audio_bytes))
 }
