@@ -21,10 +21,11 @@ const EDGE_TRUSTED_TOKEN: &str = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
 
 static LAST_SKEW_UPDATE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 static CACHED_SKEW: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+static LAST_EDGE_TTS_FINISHED_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 
 lazy_static::lazy_static! {
     static ref SKEW_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
-    static ref EDGE_TTS_SEMAPHORE: tokio::sync::Semaphore = tokio::sync::Semaphore::new(3);
+    static ref EDGE_TTS_SEMAPHORE: tokio::sync::Semaphore = tokio::sync::Semaphore::new(1);
     static ref EDGE_CHROMIUM_VERSION: std::sync::Mutex<String> = std::sync::Mutex::new("143.0.3650.75".to_string());
     static ref EDGE_GEC_VERSION: std::sync::Mutex<String> = std::sync::Mutex::new("2-143.0.3650.75".to_string());
 }
@@ -729,51 +730,53 @@ async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: Strin
     }
 
     let _permit = EDGE_TTS_SEMAPHORE.acquire().await.map_err(|e| e.to_string())?;
-    // Попытка 1: стандартный запрос к Microsoft Edge Neural TTS с Sec-MS-GEC v2
-    match speak_edge_tts_internal(text.clone(), voice.clone(), rate, false, expressive).await {
+
+    // Выдерживаем спокойную паузу минимум 160 мс между окончанием предыдущего WebSocket-запроса и началом следующего,
+    // чтобы анти-спам фильтр Microsoft (speech.platform.bing.com) никогда не сбрасывал соединение.
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let prev_ms = LAST_EDGE_TTS_FINISHED_MS.load(Ordering::Relaxed);
+    if prev_ms > 0 && now_ms > prev_ms && (now_ms - prev_ms) < 160 {
+        tokio::time::sleep(Duration::from_millis((160 - (now_ms - prev_ms)) as u64)).await;
+    }
+
+    // Попытка 1: стандартный последовательный запрос к Microsoft Edge Neural TTS с Sec-MS-GEC v2
+    let res = match speak_edge_tts_internal(text.clone(), voice.clone(), rate, false, expressive).await {
         Ok(b64) => Ok(b64),
         Err(first_err) => {
-            println!("SincPro TTS Auto-Heal: Первая попытка не удалась ({}), обновляем профиль и DRM...", first_err);
-            tokio::time::sleep(Duration::from_millis(300)).await;
-            let _ = get_clock_skew(true).await;
-            if first_err.contains("403") {
+            println!("SincPro TTS Auto-Heal: Первая попытка не удалась ({}), ждём перед мягким повтором...", first_err);
+            let is_auth_err = first_err.contains("403") || first_err.contains("401");
+            tokio::time::sleep(Duration::from_millis(900)).await;
+            if is_auth_err {
+                let _ = get_clock_skew(true).await;
                 refresh_edge_drm_constants().await;
             }
-            // Попытка 2: повторный запрос с обновленным clock skew
-            match speak_edge_tts_internal(text.clone(), voice.clone(), rate, true, expressive).await {
+            // Попытка 2: спокойный повторный запрос без агрессивного спама
+            match speak_edge_tts_internal(text.clone(), voice.clone(), rate, is_auth_err, expressive).await {
                 Ok(b64) => {
                     println!("SincPro TTS Auto-Heal: Озвучка успешно восстановлена со второй попытки!");
                     Ok(b64)
                 }
                 Err(second_err) => {
-                    println!("SincPro TTS Auto-Heal: Вторая попытка не удалась ({}), третья попытка...", second_err);
-                    tokio::time::sleep(Duration::from_millis(600)).await;
-                    refresh_edge_drm_constants().await;
-                    // Попытка 3: финальная попытка Edge TTS (без переключения на роботизированный голос Google)
-                    match speak_edge_tts_internal(text.clone(), voice.clone(), rate, true, expressive).await {
-                        Ok(b64) => {
-                            println!("SincPro TTS Auto-Heal: Озвучка успешно восстановлена с третьей попытки!");
-                            Ok(b64)
-                        }
-                        Err(third_err) => {
-                            log_tts_error(&text, &third_err);
-                            if !config.yandex_api_key.trim().is_empty() {
-                                if let Ok(ya_b64) = speak_yandex_tts(&config.yandex_api_key, &text, &voice, rate).await {
-                                    println!("SincPro TTS Auto-Heal: Использован резервный канал Yandex SpeechKit");
-                                    return Ok(ya_b64);
-                                }
-                            }
-                            if let Ok(local_b64) = speak_local_tts(&app_handle, text.clone(), voice.clone(), rate).await {
-                                println!("SincPro TTS Auto-Heal: Использован локальный резервный движок Piper");
-                                return Ok(local_b64);
-                            }
-                            Err(third_err)
+                    log_tts_error(&text, &second_err);
+                    if !config.yandex_api_key.trim().is_empty() {
+                        if let Ok(ya_b64) = speak_yandex_tts(&config.yandex_api_key, &text, &voice, rate).await {
+                            println!("SincPro TTS Auto-Heal: Использован резервный канал Yandex SpeechKit");
+                            LAST_EDGE_TTS_FINISHED_MS.store(chrono::Utc::now().timestamp_millis(), Ordering::Relaxed);
+                            return Ok(ya_b64);
                         }
                     }
+                    if let Ok(local_b64) = speak_local_tts(&app_handle, text.clone(), voice.clone(), rate).await {
+                        println!("SincPro TTS Auto-Heal: Использован локальный резервный движок Piper");
+                        LAST_EDGE_TTS_FINISHED_MS.store(chrono::Utc::now().timestamp_millis(), Ordering::Relaxed);
+                        return Ok(local_b64);
+                    }
+                    Err(second_err)
                 }
             }
         }
-    }
+    };
+    LAST_EDGE_TTS_FINISHED_MS.store(chrono::Utc::now().timestamp_millis(), Ordering::Relaxed);
+    res
 }
 
 async fn speak_edge_tts_internal(text: String, voice: String, rate: f32, force_skew: bool, expressive: bool) -> Result<String, String> {
@@ -824,7 +827,7 @@ async fn speak_edge_tts_internal(text: String, voice: String, rate: f32, force_s
     let adjusted_now = chrono::Utc::now() + chrono::Duration::seconds(skew);
     let ts_str = adjusted_now.format("%Y-%m-%dT%H:%M:%S.000Z").to_string();
 
-    let net_result = tokio::time::timeout(Duration::from_secs(12), async {
+    let net_result = tokio::time::timeout(Duration::from_secs(18), async {
         let (mut ws, _) = connect_async_tls_with_config(request, None, false, None)
             .await
             .map_err(|e| format!("WebSocket connect failed: {}", e))?;
@@ -869,10 +872,19 @@ async fn speak_edge_tts_internal(text: String, voice: String, rate: f32, force_s
                     }
                 }
                 Some(Ok(Message::Text(t))) => {
-                    if t.contains("Path:turn.end") { break; }
+                    if t.contains("Path:turn.end") {
+                        let _ = ws.close(None).await;
+                        break;
+                    }
                 }
                 Some(Ok(Message::Close(_))) | None => break,
-                Some(Err(e)) => return Err(format!("WebSocket error: {}", e)),
+                Some(Err(e)) => {
+                    let err_str = e.to_string();
+                    if !audio_bytes.is_empty() && (err_str.contains("Connection reset without closing handshake") || err_str.contains("ResetWithoutClosingHandshake")) {
+                        break;
+                    }
+                    return Err(format!("WebSocket error: {}", e));
+                }
                 _ => {}
             }
         }
@@ -881,7 +893,7 @@ async fn speak_edge_tts_internal(text: String, voice: String, rate: f32, force_s
 
     let audio_bytes = match net_result {
         Ok(inner_res) => inner_res?,
-        Err(_) => return Err("Timeout requesting Edge TTS (12s)".into()),
+        Err(_) => return Err("Timeout requesting Edge TTS (18s)".into()),
     };
 
     if audio_bytes.is_empty() {

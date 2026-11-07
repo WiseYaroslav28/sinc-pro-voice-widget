@@ -40,7 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (textToPlay === DEFAULT_PLACEHOLDER) {
                         return;
                     }
-                    if (isTextChanged || !engine.currentText) {
+                    if (isTextChanged || engine.sentences.length === 0) {
                         engine.loadText(textToPlay);
                         engine.broadcastState('load', { text: textToPlay });
                         isTextChanged = false;
@@ -64,6 +64,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     engine.broadcastState('setting', { volume: engine.settings.volume });
                 }
                 if (payload.voice !== undefined || payload.tts_local_voice !== undefined || payload.tts_engine !== undefined) {
+                    const wasPlaying = engine.isPlaying;
                     if (payload.voice !== undefined) engine.settings.voice = payload.voice;
                     if (payload.tts_engine !== undefined) engine.settings.tts_engine = payload.tts_engine;
                     if (payload.tts_local_voice !== undefined) engine.settings.tts_local_voice = payload.tts_local_voice;
@@ -74,11 +75,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         tts_local_voice: engine.settings.tts_local_voice
                     });
                     
-                    // Если сменили голос — загружаем текст заново, чтобы перекачать кэш
+                    // Если сменили голос — загружаем текст заново, чтобы подтянуть кэш для нового голоса
                     if (contentEditable && contentEditable.innerText.trim() && contentEditable.innerText.trim() !== DEFAULT_PLACEHOLDER) {
-                        engine.loadText(contentEditable.innerText);
+                        const sourceText = (!isTextChanged && engine.currentText) ? engine.currentText : contentEditable.innerText;
+                        engine.loadText(sourceText, wasPlaying);
                         isTextChanged = false;
-                        if (engine.isPlaying) engine.play();
                     }
                 }
                 if (payload.translate !== undefined) {
@@ -96,15 +97,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const DEFAULT_PLACEHOLDER = "Вставьте сюда текст для озвучивания, или выделите текст в любом приложении и нажмите Ctrl+Shift...";
 
     contentEditable.addEventListener('input', () => {
-        // Сброс при изменении текста
+        // Сброс только при реальном редактировании текста пользователем
         isTextChanged = true;
         engine.stop();
     });
 
     contentEditable.addEventListener('focus', () => {
-        isTextChanged = true;
         if (contentEditable.innerText.trim() === DEFAULT_PLACEHOLDER) {
             contentEditable.innerText = '';
+            isTextChanged = true;
         }
         if (engine.isPlaying || engine.isPaused) {
             engine.stop();
@@ -193,7 +194,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (timeCurrent) {
-            if (engine.isPlaying || engine.isPaused) {
+            if (engine.isPlaying && engine.isPrebuffering) {
+                timeCurrent.textContent = `Буферизация: ${engine.getReadyPrebufferCount()} из ${engine.getTargetPrebufferCount()}...`;
+            } else if (engine.isPlaying || engine.isPaused) {
                 timeCurrent.textContent = `Чтение: ${engine.currentSentenceIndex + 1} из ${engine.sentences.length}`;
             } else {
                 timeCurrent.textContent = 'Готово';
