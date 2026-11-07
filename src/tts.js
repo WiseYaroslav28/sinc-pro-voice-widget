@@ -194,9 +194,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (timeCurrent) {
-            if (engine.isPlaying && engine.isPrebuffering) {
-                timeCurrent.textContent = `Буферизация: ${engine.getReadyPrebufferCount()} из ${engine.getTargetPrebufferCount()}...`;
-            } else if (engine.isPlaying || engine.isPaused) {
+            if (engine.isPlaying || engine.isPaused) {
                 timeCurrent.textContent = `Чтение: ${engine.currentSentenceIndex + 1} из ${engine.sentences.length}`;
             } else {
                 timeCurrent.textContent = 'Готово';
@@ -245,7 +243,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         for (let i = 0; i < progressSegmentEls.length; i++) {
             const { segment, fillEl } = progressSegmentEls[i];
-            const isDownloaded = !!engine.audioBuffers[i];
+            const isDownloaded = !!(engine.audioBuffers[i] && engine.audioBuffers[i] !== "ERROR");
             segment.style.backgroundColor = isDownloaded ? 'rgba(142, 82, 255, 0.2)' : '';
             let fillPercent = 0;
             if (i < engine.currentSentenceIndex) fillPercent = 100;
