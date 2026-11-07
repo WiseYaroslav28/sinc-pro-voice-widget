@@ -172,6 +172,7 @@ class VoiceCore {
             speed: 1.0,
             volume: 1.0,
             translate: false,
+            expressive: true,
             tts_engine: 'edge',
             tts_local_voice: 'ru_RU-dmitri-medium.onnx'
         };
@@ -189,6 +190,7 @@ class VoiceCore {
                 if (config.tts_speed) this.settings.speed = config.tts_speed;
                 if (config.tts_volume !== undefined) this.settings.volume = Math.max(0, Math.min(2.0, parseFloat(config.tts_volume)));
                 if (config.tts_translate !== undefined) this.settings.translate = config.tts_translate;
+                if (config.tts_expressive_intonation !== undefined) this.settings.expressive = !!config.tts_expressive_intonation;
                 if (config.tts_engine) this.settings.tts_engine = config.tts_engine;
                 if (config.tts_local_voice) this.settings.tts_local_voice = config.tts_local_voice;
                 this.settings.installedVoices = voices;
@@ -204,6 +206,7 @@ class VoiceCore {
                 speed: savedSettings.speed || 1.0,
                 volume: savedSettings.volume !== undefined ? Math.max(0, Math.min(2.0, parseFloat(savedSettings.volume))) : 1.0,
                 translate: savedSettings.translate || false,
+                expressive: savedSettings.expressive !== undefined ? !!savedSettings.expressive : true,
                 tts_engine: savedSettings.tts_engine || 'edge',
                 tts_local_voice: savedSettings.tts_local_voice || 'ru_RU-dmitri-medium.onnx'
             };
@@ -498,7 +501,11 @@ class VoiceCore {
 
     async loadCachedSentences(startIndex = 0) {
         const currentBuffersRef = this.audioBuffers;
-        const voiceKey = this.settings.voice || 'ru-RU-SvetlanaNeural';
+        const isLocal = this.settings.tts_engine === 'local';
+        const baseVoiceKey = isLocal 
+            ? (this.settings.tts_local_voice || 'ru_RU-dmitri-medium.onnx')
+            : (this.settings.voice || 'ru-RU-SvetlanaNeural');
+        const cacheVoiceKey = `${baseVoiceKey}${this.settings.expressive !== false ? '' : '_flat'}`;
         const BATCH_SIZE = 8;
 
         // Проверяем кэш небольшими порциями, чтобы не забивать очередь IndexedDB при больших текстах
@@ -511,7 +518,7 @@ class VoiceCore {
                 const sentence = this.sentences[i];
                 batchPromises.push((async () => {
                     try {
-                        const cachedAudio = await this.cache.get(voiceKey, sentence);
+                        const cachedAudio = await this.cache.get(cacheVoiceKey, sentence);
                         if (cachedAudio && this.audioBuffers === currentBuffersRef) {
                             this.audioBuffers[i] = cachedAudio;
                         }
@@ -618,9 +625,10 @@ class VoiceCore {
             const voiceKey = isLocal 
                 ? (this.settings.tts_local_voice || 'ru_RU-dmitri-medium.onnx')
                 : (this.settings.voice || 'ru-RU-SvetlanaNeural');
+            const cacheVoiceKey = `${voiceKey}${this.settings.expressive !== false ? '' : '_flat'}`;
             
             // 1. Проверяем IndexedDB кэш (мгновенно, без задержек)
-            const cachedAudio = await this.cache.get(voiceKey, this.sentences[i]);
+            const cachedAudio = await this.cache.get(cacheVoiceKey, this.sentences[i]);
             if (cachedAudio) {
                 if (this.audioBuffers === currentBuffersRef) {
                     this.log(`Cache HIT for sentence ${i}`);
@@ -678,7 +686,7 @@ class VoiceCore {
                             }
 
                             // Сохраняем в локальный кэш асинхронно, не блокируя воркер предзагрузки следующего предложения!
-                            this.cache.set(voiceKey, this.sentences[i], dataUrl).catch(() => {});
+                            this.cache.set(cacheVoiceKey, this.sentences[i], dataUrl).catch(() => {});
                         }
                         return; // Успешно загружено — выходим из цикла попыток
                     } catch (err) {
@@ -972,6 +980,7 @@ class VoiceCore {
                 } else if (p.action === 'append') {
                     this.appendText(p.text);
                 } else if (p.action === 'settings' || p.action === 'setting') {
+                    const prevExpressive = this.settings.expressive;
                     const src = p.settings || p;
                     if (p.settings) {
                         this.settings = { ...this.settings, ...p.settings };
@@ -980,6 +989,7 @@ class VoiceCore {
                         if (p.volume !== undefined) this.settings.volume = Math.max(0, Math.min(2.0, parseFloat(p.volume)));
                         if (p.voice !== undefined) this.settings.voice = p.voice;
                         if (p.translate !== undefined) this.settings.translate = p.translate;
+                        if (p.expressive !== undefined) this.settings.expressive = !!p.expressive;
                         if (p.tts_engine !== undefined) this.settings.tts_engine = p.tts_engine;
                         if (p.tts_local_voice !== undefined) this.settings.tts_local_voice = p.tts_local_voice;
                         if (p.installedVoices !== undefined) this.settings.installedVoices = p.installedVoices;
@@ -990,6 +1000,15 @@ class VoiceCore {
                     if (src.volume !== undefined) {
                         this.applyEffectiveVolume(src.volume);
                     }
+                    if (this.settings.expressive !== prevExpressive && this.sentences.length > 0) {
+                        this.audioBuffers = new Array(this.sentences.length).fill(null);
+                        this.currentlyLoading.clear();
+                        this.isPrefetching = false;
+                        this.currentQueueId = null;
+                        this._playingSentenceIndex = -1;
+                        this.startPrefetchQueue();
+                        this.loadCachedSentences(0);
+                    }
                     localStorage.setItem('tts-settings', JSON.stringify(this.settings));
                     if (window.__TAURI__) {
                         const { invoke } = window.__TAURI__.core;
@@ -998,6 +1017,7 @@ class VoiceCore {
                             tts_speed: this.settings.speed,
                             tts_volume: this.settings.volume,
                             tts_translate: this.settings.translate,
+                            tts_expressive_intonation: this.settings.expressive,
                             tts_engine: this.settings.tts_engine,
                             tts_local_voice: this.settings.tts_local_voice
                         }}).catch(()=>{});

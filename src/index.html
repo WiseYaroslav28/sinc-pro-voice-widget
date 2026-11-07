@@ -856,6 +856,20 @@
                   <input type="checkbox" id="setting-capsule-magnet" style="display:none;" checked />
                 </div>
 
+                <!-- Выразительная интонация озвучки -->
+                <div class="flex items-center justify-between pt-4 border-t border-[#4a4455]/20">
+                  <div>
+                    <div class="text-[13px] text-[#e4e1e9] font-medium">Выразительная интонация озвучки</div>
+                    <div class="text-[11px] text-[#ccc3d8] mt-0.5">Динамически менять тон и темп голоса по смыслу, контексту и знакам препинания (вопросы, восклицания, заголовки и паузы)</div>
+                  </div>
+                  <div id="intonation-toggle-track"
+                       style="width:40px; height:22px; border-radius:11px; background:#8e52ff; position:relative; cursor:pointer; transition:background 0.2s; flex-shrink:0;">
+                    <div id="intonation-toggle-thumb"
+                         style="width:18px; height:18px; border-radius:50%; background:white; position:absolute; top:2px; left:20px; transition:left 0.2s; box-shadow:0 1px 3px rgba(0,0,0,0.4);"></div>
+                  </div>
+                  <input type="checkbox" id="setting-tts-intonation" style="display:none;" checked />
+                </div>
+
                 <!-- Масштаб плавающих виджетов -->
                 <div class="flex flex-col gap-2.5 pt-4 border-t border-[#4a4455]/20">
                   <div class="flex items-center justify-between gap-4">
@@ -1254,6 +1268,12 @@
               magnetToggle.checked = magnetVal;
               syncMagnetToggleUI(magnetVal);
             }
+            const intonationToggle = document.getElementById('setting-tts-intonation');
+            if (intonationToggle) {
+              const intonationVal = config.tts_expressive_intonation !== undefined ? config.tts_expressive_intonation : true;
+              intonationToggle.checked = intonationVal;
+              syncIntonationToggleUI(intonationVal);
+            }
 
             const scalePercent = Math.round(Math.max(0.7, Math.min(1.5, parseFloat(config.widget_scale) || 1.0)) * 100);
             const scaleSlider = document.getElementById('setting-widget-scale');
@@ -1304,6 +1324,8 @@
 
           const scaleSliderEl = document.getElementById('setting-widget-scale');
           const widgetScaleVal = scaleSliderEl ? Math.max(0.7, Math.min(1.5, (parseInt(scaleSliderEl.value, 10) || 100) / 100)) : 1.0;
+          const intonationToggleEl = document.getElementById('setting-tts-intonation');
+          const ttsExpressiveVal = intonationToggleEl ? intonationToggleEl.checked : true;
 
           const fields = {
             user_name: userNameVal,
@@ -1328,6 +1350,7 @@
             tts_engine: document.getElementById('setting-tts-engine').value,
             stt_local_model: sttLocalModel,
             tts_local_voice: document.getElementById('setting-tts-local-voice').value,
+            tts_expressive_intonation: ttsExpressiveVal,
             widget_scale: widgetScaleVal,
             layout_excluded_words: layoutExcludedWords,
             layout_excluded_processes: layoutExcludedProcesses,
@@ -1346,7 +1369,8 @@
                 action: 'settings',
                 settings: {
                   tts_engine: fields.tts_engine,
-                  tts_local_voice: fields.tts_local_voice
+                  tts_local_voice: fields.tts_local_voice,
+                  expressive: fields.tts_expressive_intonation
                 }
               });
             }
@@ -3111,6 +3135,53 @@
         });
       }
 
+      // Настройка Выразительной интонации озвучки
+      const intonationToggle = document.getElementById('setting-tts-intonation');
+      const intonationTrack  = document.getElementById('intonation-toggle-track');
+      const intonationThumb  = document.getElementById('intonation-toggle-thumb');
+
+      function syncIntonationToggleUI(isChecked) {
+        if (!intonationTrack || !intonationThumb) return;
+        intonationTrack.style.background = isChecked ? '#8e52ff' : '#35343a';
+        intonationThumb.style.left = isChecked ? '20px' : '2px';
+      }
+
+      if (intonationToggle) {
+        intonationToggle.checked = true;
+        syncIntonationToggleUI(true);
+
+        intonationToggle.addEventListener('change', async () => {
+          const isChecked = intonationToggle.checked;
+          syncIntonationToggleUI(isChecked);
+          if (window.ttsEngine) {
+            window.ttsEngine.settings.expressive = isChecked;
+            if (window.ttsEngine.sentences && window.ttsEngine.sentences.length > 0) {
+              window.ttsEngine.audioBuffers = new Array(window.ttsEngine.sentences.length).fill(null);
+              window.ttsEngine.currentlyLoading.clear();
+              window.ttsEngine.isPrefetching = false;
+              window.ttsEngine.currentQueueId = null;
+              window.ttsEngine._playingSentenceIndex = -1;
+              window.ttsEngine.startPrefetchQueue();
+              window.ttsEngine.loadCachedSentences(0);
+            }
+          }
+          if (window.__TAURI__) {
+            const { invoke } = window.__TAURI__.core;
+            await invoke('update_config_fields', { fields: { tts_expressive_intonation: isChecked } }).catch(() => {});
+            window.__TAURI__.event.emit('tts-state-sync', {
+              action: 'settings',
+              settings: { expressive: isChecked }
+            }).catch(() => {});
+          }
+          showToast(
+            isChecked
+              ? 'Выразительная интонация озвучки включена'
+              : 'Выразительная интонация выключена (ровное чтение)',
+            false
+          );
+        });
+      }
+
       // Настройка Автозапуска
       const autostartToggle = document.getElementById('setting-autostart');
       const autostartTrack  = document.getElementById('autostart-toggle-track');
@@ -3314,6 +3385,14 @@
         if (magnetTrack && magnetToggle) {
           magnetTrack.addEventListener('click', () => {
             magnetToggle.click();
+          });
+        }
+
+        const intonationTrack = document.getElementById('intonation-toggle-track');
+        const intonationToggle = document.getElementById('setting-tts-intonation');
+        if (intonationTrack && intonationToggle) {
+          intonationTrack.addEventListener('click', () => {
+            intonationToggle.click();
           });
         }
 
@@ -3781,13 +3860,13 @@
             console.error("Failed to load app version:", err);
             const versionDisplay = document.getElementById('app-version-display');
             if (versionDisplay) {
-              versionDisplay.textContent = `Текущая версия: 3.5.26`;
+              versionDisplay.textContent = `Текущая версия: 3.5.27`;
             }
           });
         } else {
           const versionDisplay = document.getElementById('app-version-display');
           if (versionDisplay) {
-            versionDisplay.textContent = `Текущая версия: 3.5.26 (Mock)`;
+            versionDisplay.textContent = `Текущая версия: 3.5.27 (Mock)`;
           }
         }
 

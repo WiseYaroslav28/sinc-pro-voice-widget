@@ -608,7 +608,7 @@ async fn speak_yandex_tts(api_key: &str, text: &str, voice: &str, rate: f32) -> 
     Ok(STANDARD.encode(&bytes))
 }
 
-fn build_expressive_ssml_params(raw_text: &str, base_rate: f32) -> (String, String, String) {
+fn build_expressive_ssml_params(raw_text: &str, base_rate: f32, expressive: bool) -> (String, String, String) {
     let mut trimmed = raw_text.trim().to_string();
     let mut tag_mode: Option<&str> = None;
 
@@ -632,63 +632,67 @@ fn build_expressive_ssml_params(raw_text: &str, base_rate: f32) -> (String, Stri
     let char_count = trimmed.chars().count();
     let lower = trimmed.to_lowercase();
 
-    let (rate_delta, pitch_str) = match tag_mode {
-        Some("question") => (-2, "+8%"),
-        Some("excited") => (3, "+7%"),
-        Some("header") => (-6, "-4%"),
-        Some("calm") => (-4, "-2%"),
-        _ => {
-            let is_question_context = trimmed.ends_with("?!")
-                || trimmed.ends_with("!?")
-                || trimmed.ends_with('?')
-                || lower.starts_with("почему ")
-                || lower.starts_with("зачем ")
-                || lower.starts_with("нельзя ли")
-                || lower.starts_with("неужели ")
-                || lower.starts_with("как же ");
+    let (rate_delta, pitch_str) = if !expressive {
+        (0, "+0%")
+    } else {
+        match tag_mode {
+            Some("question") => (-2, "+8%"),
+            Some("excited") => (3, "+7%"),
+            Some("header") => (-6, "-4%"),
+            Some("calm") => (-4, "-2%"),
+            _ => {
+                let is_question_context = trimmed.ends_with("?!")
+                    || trimmed.ends_with("!?")
+                    || trimmed.ends_with('?')
+                    || lower.starts_with("почему ")
+                    || lower.starts_with("зачем ")
+                    || lower.starts_with("нельзя ли")
+                    || lower.starts_with("неужели ")
+                    || lower.starts_with("как же ");
 
-            let is_excited_context = trimmed.ends_with('!')
-                || lower.contains("успешно")
-                || lower.contains("отлично")
-                || lower.contains("возобновил")
-                || lower.contains("ни одной секунды")
-                || lower.contains("важно:")
-                || lower.contains("внимание:")
-                || lower.contains("критическ")
-                || lower.contains("ошибка:")
-                || lower.contains("поздравля")
-                || lower.contains("полностью готов");
+                let is_excited_context = trimmed.ends_with('!')
+                    || lower.contains("успешно")
+                    || lower.contains("отлично")
+                    || lower.contains("возобновил")
+                    || lower.contains("ни одной секунды")
+                    || lower.contains("важно:")
+                    || lower.contains("внимание:")
+                    || lower.contains("критическ")
+                    || lower.contains("ошибка:")
+                    || lower.contains("поздравля")
+                    || lower.contains("полностью готов");
 
-            let is_header_context = trimmed.ends_with(':')
-                || lower.starts_with("раунд ")
-                || lower.starts_with("вариант ")
-                || lower.starts_with("этап ")
-                || lower.starts_with("шаг ")
-                || lower.starts_with("итог")
-                || lower.starts_with("вывод")
-                || lower.starts_with("резюме")
-                || lower.starts_with("во-первых")
-                || lower.starts_with("во-вторых")
-                || lower.starts_with("в-третьих");
+                let is_header_context = trimmed.ends_with(':')
+                    || lower.starts_with("раунд ")
+                    || lower.starts_with("вариант ")
+                    || lower.starts_with("этап ")
+                    || lower.starts_with("шаг ")
+                    || lower.starts_with("итог")
+                    || lower.starts_with("вывод")
+                    || lower.starts_with("резюме")
+                    || lower.starts_with("во-первых")
+                    || lower.starts_with("во-вторых")
+                    || lower.starts_with("в-третьих");
 
-            if trimmed.ends_with("?!") || trimmed.ends_with("!?") {
-                (2, "+9%")
-            } else if is_question_context {
-                (-2, "+8%")
-            } else if is_excited_context {
-                (3, "+7%")
-            } else if is_header_context {
-                (-6, "-4%")
-            } else if trimmed.ends_with("...") || trimmed.ends_with('…') {
-                (-5, "-3%")
-            } else if trimmed.contains(" — ") || trimmed.contains(" - ") || (trimmed.contains('(') && trimmed.contains(')')) {
-                if char_count < 60 {
-                    (-2, "+3%")
+                if trimmed.ends_with("?!") || trimmed.ends_with("!?") {
+                    (2, "+9%")
+                } else if is_question_context {
+                    (-2, "+8%")
+                } else if is_excited_context {
+                    (3, "+7%")
+                } else if is_header_context {
+                    (-6, "-4%")
+                } else if trimmed.ends_with("...") || trimmed.ends_with('…') {
+                    (-5, "-3%")
+                } else if trimmed.contains(" — ") || trimmed.contains(" - ") || (trimmed.contains('(') && trimmed.contains(')')) {
+                    if char_count < 60 {
+                        (-2, "+3%")
+                    } else {
+                        (-3, "-2%")
+                    }
                 } else {
-                    (-3, "-2%")
+                    (0, "+0%")
                 }
-            } else {
-                (0, "+0%")
             }
         }
     };
@@ -713,6 +717,7 @@ fn build_expressive_ssml_params(raw_text: &str, base_rate: f32) -> (String, Stri
 #[tauri::command]
 async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: String, rate: f32) -> Result<String, String> {
     let config = load_config_internal(&app_handle).unwrap_or_else(|_| AppConfig::default());
+    let expressive = config.tts_expressive_intonation;
 
     if config.tts_engine == "local" {
         return speak_local_tts(&app_handle, text, voice, rate).await;
@@ -725,7 +730,7 @@ async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: Strin
 
     let _permit = EDGE_TTS_SEMAPHORE.acquire().await.map_err(|e| e.to_string())?;
     // Попытка 1: стандартный запрос к Microsoft Edge Neural TTS с Sec-MS-GEC v2
-    match speak_edge_tts_internal(text.clone(), voice.clone(), rate, false).await {
+    match speak_edge_tts_internal(text.clone(), voice.clone(), rate, false, expressive).await {
         Ok(b64) => Ok(b64),
         Err(first_err) => {
             println!("SincPro TTS Auto-Heal: Первая попытка не удалась ({}), обновляем профиль и DRM...", first_err);
@@ -735,7 +740,7 @@ async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: Strin
                 refresh_edge_drm_constants().await;
             }
             // Попытка 2: повторный запрос с обновленным clock skew
-            match speak_edge_tts_internal(text.clone(), voice.clone(), rate, true).await {
+            match speak_edge_tts_internal(text.clone(), voice.clone(), rate, true, expressive).await {
                 Ok(b64) => {
                     println!("SincPro TTS Auto-Heal: Озвучка успешно восстановлена со второй попытки!");
                     Ok(b64)
@@ -745,7 +750,7 @@ async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: Strin
                     tokio::time::sleep(Duration::from_millis(600)).await;
                     refresh_edge_drm_constants().await;
                     // Попытка 3: финальная попытка Edge TTS (без переключения на роботизированный голос Google)
-                    match speak_edge_tts_internal(text.clone(), voice.clone(), rate, true).await {
+                    match speak_edge_tts_internal(text.clone(), voice.clone(), rate, true, expressive).await {
                         Ok(b64) => {
                             println!("SincPro TTS Auto-Heal: Озвучка успешно восстановлена с третьей попытки!");
                             Ok(b64)
@@ -771,8 +776,8 @@ async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: Strin
     }
 }
 
-async fn speak_edge_tts_internal(text: String, voice: String, rate: f32, force_skew: bool) -> Result<String, String> {
-    let (ssml_text, rate_str, pitch_str) = build_expressive_ssml_params(&text, rate);
+async fn speak_edge_tts_internal(text: String, voice: String, rate: f32, force_skew: bool, expressive: bool) -> Result<String, String> {
+    let (ssml_text, rate_str, pitch_str) = build_expressive_ssml_params(&text, rate, expressive);
     if ssml_text.trim().is_empty() {
         return Err("Пустой текст для озвучки".into());
     }
@@ -2776,6 +2781,8 @@ pub struct AppConfig {
     pub tts_voice: String,
     #[serde(default = "default_false")]
     pub tts_translate: bool,
+    #[serde(default = "default_true")]
+    pub tts_expressive_intonation: bool,
 
     // Движки для STT и TTS
     #[serde(default = "default_stt_engine")]
@@ -2845,6 +2852,7 @@ impl Default for AppConfig {
             tts_volume: 1.0,
             tts_voice: "ru-RU-SvetlanaNeural".to_string(),
             tts_translate: false,
+            tts_expressive_intonation: true,
             stt_engine: "gemini".to_string(),
             tts_engine: "edge".to_string(),
             stt_local_model: "ggml-base.bin".to_string(),
@@ -3262,6 +3270,9 @@ async fn update_config_fields(app_handle: tauri::AppHandle, fields: serde_json::
         }
         if let Some(val) = obj.get("tts_translate") {
             if let Some(b) = val.as_bool() { config.tts_translate = b; }
+        }
+        if let Some(val) = obj.get("tts_expressive_intonation") {
+            if let Some(b) = val.as_bool() { config.tts_expressive_intonation = b; }
         }
         if let Some(val) = obj.get("stt_engine") {
             if let Some(s) = val.as_str() { config.stt_engine = s.to_string(); }
@@ -5987,6 +5998,7 @@ async fn translate_with_cache(
     text: &str,
     api_key: &str,
     model: &str,
+    expressive: bool,
 ) -> Result<String, String> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -5994,17 +6006,22 @@ async fn translate_with_cache(
     }
 
     let (template_orig, variables) = normalize_and_extract_variables(trimmed);
+    let cache_key = if expressive {
+        template_orig.clone()
+    } else {
+        format!("{}__flat", template_orig)
+    };
 
     let cache = load_translation_cache(app_handle);
-    if let Some(cached_val) = cache.get(&template_orig) {
-        println!("[Translation Cache] Hit: '{}' -> '{}'", template_orig, cached_val);
+    if let Some(cached_val) = cache.get(&cache_key) {
+        println!("[Translation Cache] Hit: '{}' -> '{}'", cache_key, cached_val);
         return Ok(restore_variables(cached_val, &variables));
     }
 
     println!("[Translation Cache] Miss, calling Gemini with template: '{}'", template_orig);
-    let translated = crate::translator::translate_hybrid(&template_orig, api_key, model).await?;
+    let translated = crate::translator::translate_hybrid(&template_orig, api_key, model, expressive).await?;
 
-    save_translation_cache_item(app_handle, template_orig.clone(), translated.clone());
+    save_translation_cache_item(app_handle, cache_key, translated.clone());
 
     Ok(restore_variables(&translated, &variables))
 }
@@ -6063,7 +6080,7 @@ async fn capture_clipboard_text(app_handle: tauri::AppHandle, translate: bool) -
 
         if translate {
             let config = load_config_internal(&app_handle)?;
-            match translate_with_cache(&app_handle, &text, &config.api_key, &config.ai_model).await {
+            match translate_with_cache(&app_handle, &text, &config.api_key, &config.ai_model, config.tts_expressive_intonation).await {
                 Ok(translated) if !translated.trim().is_empty() => return Ok(translated),
                 Ok(_) => return Ok(text),
                 Err(e) => {
@@ -6085,7 +6102,7 @@ async fn translate_hybrid(
     target_lang: Option<String>,
 ) -> Result<String, String> {
     let config = load_config_internal(&app_handle)?;
-    let translated = translate_with_cache(&app_handle, &text, &config.api_key, &config.ai_model).await?;
+    let translated = translate_with_cache(&app_handle, &text, &config.api_key, &config.ai_model, config.tts_expressive_intonation).await?;
     Ok(translated)
 }
 
