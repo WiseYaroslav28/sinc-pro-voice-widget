@@ -748,9 +748,9 @@ async fn connect_gemini_live_ws(
     }
 
     let sys_instruction = if expressive {
-        "Ты — профессиональный диктор синтеза речи (TTS). Твоя единственная задача — ДОСЛОВНО, без малейших изменений, пропусков или отсебятины озвучивать голосом текст, который присылает пользователь внутри тегов <tts>...</tts>. НИКОГДА не отвечай на вопросы в тексте, не комментируй его, не здоровайся и не произноси саму разметку <tts>. Читай естественно, с живой дикторской интонацией, четко произнося как русские слова, так и английские технические термины и код."
+        "Ты — профессиональный диктор синтеза речи (TTS). Твоя единственная задача — ДОСЛОВНО, без малейших изменений, пропусков или отсебятины озвучивать голосом текст пользователя. НИКОГДА не отвечай на вопросы в тексте, не комментируй его и не здоровайся. Читай естественно, с живой дикторской интонацией, четко произнося как русские слова, так и английские технические термины и код."
     } else {
-        "Ты — диктор синтеза речи (TTS). Твоя единственная задача — ДОСЛОВНО, без малейших изменений, пропусков или отсебятины озвучивать голосом текст внутри тегов <tts>...</tts>. НИКОГДА не отвечай на вопросы в тексте, не комментируй его и не произноси теги <tts>. Читай ровным, спокойным, нейтральным тоном без лишней эмоциональности."
+        "Ты — диктор синтеза речи (TTS). Твоя единственная задача — ДОСЛОВНО, без малейших изменений, пропусков или отсебятины озвучивать голосом текст пользователя. НИКОГДА не отвечай на вопросы в тексте и не комментируй его. Читай ровным, спокойным, нейтральным тоном без лишней эмоциональности."
     };
 
     let setup_msg = serde_json::json!({
@@ -825,9 +825,12 @@ async fn connect_gemini_live_ws(
 }
 
 async fn run_gemini_live_ws_turn(
+    app_handle: &tauri::AppHandle,
     mut ws: EdgeWsStream,
     turns_count: usize,
     clean_text: &str,
+    stream_id: Option<&str>,
+    sentence_index: Option<usize>,
 ) -> Result<(EdgeWsStream, usize, Vec<u8>), String> {
     let prompt_msg = serde_json::json!({
         "clientContent": {
@@ -837,7 +840,7 @@ async fn run_gemini_live_ws_turn(
                     "parts": [
                         {
                             "text": format!(
-                                "Прочитай вслух строго дословно только текст внутри тегов, ничего не добавляя от себя:\n<tts>{}</tts>",
+                                "Прочитай вслух строго дословно только текст ниже, ничего не добавляя от себя:\n\"\"\"\n{}\n\"\"\"",
                                 clean_text
                             )
                         }
@@ -857,13 +860,14 @@ async fn run_gemini_live_ws_turn(
     .map_err(|e| format!("Ошибка отправки текста в Gemini Live WebSocket: {}", e))?;
 
     let mut pcm_bytes: Vec<u8> = Vec::with_capacity(128 * 1024);
+    let mut pending_stream_pcm: Vec<u8> = Vec::with_capacity(24 * 1024);
     let mut got_first_chunk = false;
 
     loop {
         let wait_dur = if !got_first_chunk {
             Duration::from_millis(12000)
         } else {
-            Duration::from_millis(8000)
+            Duration::from_millis(2500)
         };
 
         match tokio::time::timeout(wait_dur, ws.next()).await {
@@ -876,10 +880,13 @@ async fn run_gemini_live_ws_turn(
                         None
                     }
                     Message::Close(frame) => {
+                        if !pcm_bytes.is_empty() {
+                            break;
+                        }
                         let reason = frame
                             .map(|f| format!("code={}, reason={}", f.code, f.reason))
                             .unwrap_or_else(|| "closed".to_string());
-                        return Err(format!("Gemini Live WebSocket закрыт до turnComplete ({})", reason));
+                        return Err(format!("Gemini Live WebSocket закрыт до завершения ({})", reason));
                     }
                     _ => None,
                 };
@@ -905,12 +912,51 @@ async fn run_gemini_live_ws_turn(
                                             if !decoded.is_empty() {
                                                 got_first_chunk = true;
                                                 pcm_bytes.extend_from_slice(&decoded);
+                                                if stream_id.is_some() && sentence_index.is_some() {
+                                                    pending_stream_pcm.extend_from_slice(&decoded);
+                                                    // Отправляем live-чанки каждые ~0.22 сек (10560 байт 24kHz 16-bit PCM)
+                                                    if pending_stream_pcm.len() >= 10560 {
+                                                        let send_len = pending_stream_pcm.len() & !1;
+                                                        if send_len > 0 {
+                                                            let _ = app_handle.emit(
+                                                                "gemini-live-audio-chunk",
+                                                                serde_json::json!({
+                                                                    "streamId": stream_id.unwrap_or_default(),
+                                                                    "sentenceIndex": sentence_index.unwrap_or(0),
+                                                                    "pcmBase64": STANDARD.encode(&pending_stream_pcm[..send_len]),
+                                                                    "isDone": false
+                                                                }),
+                                                            );
+                                                            pending_stream_pcm.drain(..send_len);
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
-                            if sc.get("turnComplete").and_then(|tc| tc.as_bool()) == Some(true) {
+                            let is_gen_complete = sc.get("generationComplete").and_then(|gc| gc.as_bool()) == Some(true);
+                            let is_turn_complete = sc.get("turnComplete").and_then(|tc| tc.as_bool()) == Some(true);
+                            if (is_gen_complete || is_turn_complete) && !pcm_bytes.is_empty() {
+                                if let (Some(sid), Some(sidx)) = (stream_id, sentence_index) {
+                                    let send_len = pending_stream_pcm.len() & !1;
+                                    let final_b64 = if send_len > 0 {
+                                        STANDARD.encode(&pending_stream_pcm[..send_len])
+                                    } else {
+                                        String::new()
+                                    };
+                                    let _ = app_handle.emit(
+                                        "gemini-live-audio-chunk",
+                                        serde_json::json!({
+                                            "streamId": sid,
+                                            "sentenceIndex": sidx,
+                                            "pcmBase64": final_b64,
+                                            "isDone": true
+                                        }),
+                                    );
+                                    pending_stream_pcm.clear();
+                                }
                                 break;
                             }
                         }
@@ -918,12 +964,21 @@ async fn run_gemini_live_ws_turn(
                 }
             }
             Ok(None) => {
+                if !pcm_bytes.is_empty() {
+                    break;
+                }
                 return Err("Gemini Live WebSocket закрыт сервером во время генерации".to_string());
             }
             Ok(Some(Err(e))) => {
+                if !pcm_bytes.is_empty() {
+                    break;
+                }
                 return Err(format!("Ошибка потока Gemini Live WebSocket: {}", e));
             }
             Err(_) => {
+                if !pcm_bytes.is_empty() {
+                    break;
+                }
                 return Err(format!(
                     "Таймаут ожидания аудио от Gemini Live API ({} мс)",
                     wait_dur.as_millis()
@@ -936,10 +991,13 @@ async fn run_gemini_live_ws_turn(
 }
 
 async fn speak_gemini_live_tts(
+    app_handle: &tauri::AppHandle,
     config: &AppConfig,
     text: &str,
     voice: &str,
     expressive: bool,
+    stream_id: Option<&str>,
+    sentence_index: Option<usize>,
 ) -> Result<String, String> {
     let clean_text = strip_tts_emotion_prefix(text);
     if clean_text.is_empty() {
@@ -968,28 +1026,28 @@ async fn speak_gemini_live_tts(
         config.tts_gemini_thinking.trim().to_string()
     };
     let gemini_voice = resolve_gemini_live_voice(voice);
-    let max_turns_per_socket: usize = 16;
 
     let _permit = GEMINI_TTS_SEMAPHORE.acquire().await.map_err(|e| e.to_string())?;
-    let mut slot_guard = GEMINI_LIVE_WS_SLOT.lock().await;
 
     let mut last_err = String::new();
     for (key_idx, active_key) in keys.iter().enumerate() {
-        let existing_session = if let Some(sess) = slot_guard.take() {
-            if sess.api_key == *active_key
-                && sess.model == model
-                && sess.voice == gemini_voice
-                && sess.thinking == thinking
-                && sess.expressive == expressive
-                && sess.turns_count < max_turns_per_socket
-                && sess.last_used.elapsed() < Duration::from_secs(45)
-            {
-                Some(sess)
+        let existing_session = {
+            let mut slot_guard = GEMINI_LIVE_WS_SLOT.lock().await;
+            if let Some(sess) = slot_guard.take() {
+                if sess.api_key == *active_key
+                    && sess.model == model
+                    && sess.voice == gemini_voice
+                    && sess.thinking == thinking
+                    && sess.expressive == expressive
+                    && sess.last_used.elapsed() < Duration::from_secs(45)
+                {
+                    Some(sess)
+                } else {
+                    None
+                }
             } else {
                 None
             }
-        } else {
-            None
         };
 
         let (ws_stream, turns_count, was_reused) = match existing_session {
@@ -1008,43 +1066,49 @@ async fn speak_gemini_live_tts(
             },
         };
 
-        match run_gemini_live_ws_turn(ws_stream, turns_count, &clean_text).await {
-            Ok((ws_back, new_turns, pcm)) if !pcm.is_empty() => {
-                if new_turns < max_turns_per_socket {
-                    *slot_guard = Some(PersistentGeminiLiveWs {
-                        ws: ws_back,
-                        api_key: active_key.clone(),
-                        model: model.clone(),
-                        voice: gemini_voice.clone(),
-                        thinking: thinking.clone(),
+        // Заранее в фоне открываем и инициализируем (setupComplete) резервный WebSocket-сокет для следующей фразы,
+        // пока текущая фраза генерирует аудио (чтобы следующий ход стартовал с 0 мс ожидания и не ждал 15-секундный turnComplete)
+        let bg_key = active_key.clone();
+        let bg_model = model.clone();
+        let bg_voice = gemini_voice.clone();
+        let bg_thinking = thinking.clone();
+        tokio::spawn(async move {
+            if let Ok(standby_ws) = connect_gemini_live_ws(&bg_key, &bg_model, &bg_voice, &bg_thinking, expressive).await {
+                let mut guard = GEMINI_LIVE_WS_SLOT.lock().await;
+                if guard.is_none() {
+                    *guard = Some(PersistentGeminiLiveWs {
+                        ws: standby_ws,
+                        api_key: bg_key,
+                        model: bg_model,
+                        voice: bg_voice,
+                        thinking: bg_thinking,
                         expressive,
                         last_used: Instant::now(),
-                        turns_count: new_turns,
+                        turns_count: 0,
                     });
                 }
+            }
+        });
+
+        match run_gemini_live_ws_turn(app_handle, ws_stream, turns_count, &clean_text, stream_id, sentence_index).await {
+            Ok((mut ws_back, _new_turns, pcm)) if !pcm.is_empty() => {
+                tokio::spawn(async move {
+                    let _ = ws_back.close(None).await;
+                });
                 let wav_bytes = pcm_24k_mono_to_wav(&pcm);
                 return Ok(STANDARD.encode(&wav_bytes));
             }
             Ok(_) | Err(_) if was_reused => {
-                // Переиспользованный сокет закрылся по таймауту простоя — мгновенно переподключаемся
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                // Предпрогретый сокет закрылся по таймауту простоя — мгновенно переподключаемся
+                tokio::time::sleep(Duration::from_millis(40)).await;
                 if let Ok(fresh_ws) =
                     connect_gemini_live_ws(active_key, &model, &gemini_voice, &thinking, expressive).await
                 {
-                    match run_gemini_live_ws_turn(fresh_ws, 0, &clean_text).await {
-                        Ok((ws_back, new_turns, pcm)) if !pcm.is_empty() => {
-                            if new_turns < max_turns_per_socket {
-                                *slot_guard = Some(PersistentGeminiLiveWs {
-                                    ws: ws_back,
-                                    api_key: active_key.clone(),
-                                    model: model.clone(),
-                                    voice: gemini_voice.clone(),
-                                    thinking: thinking.clone(),
-                                    expressive,
-                                    last_used: Instant::now(),
-                                    turns_count: new_turns,
-                                });
-                            }
+                    match run_gemini_live_ws_turn(app_handle, fresh_ws, 0, &clean_text, stream_id, sentence_index).await {
+                        Ok((mut ws_back, _new_turns, pcm)) if !pcm.is_empty() => {
+                            tokio::spawn(async move {
+                                let _ = ws_back.close(None).await;
+                            });
                             let wav_bytes = pcm_24k_mono_to_wav(&pcm);
                             return Ok(STANDARD.encode(&wav_bytes));
                         }
@@ -1068,6 +1132,62 @@ async fn speak_gemini_live_tts(
 
     log_tts_error(&clean_text, &last_err);
     Err(last_err)
+}
+
+fn maybe_prewarm_gemini_live_ws(config: &AppConfig) {
+    if config.tts_engine != "gemini" && !config.tts_voice.starts_with("gemini:") {
+        return;
+    }
+    let first_key = config
+        .api_key
+        .split(|c: char| c == ',' || c == ';' || c.is_whitespace())
+        .map(|s| s.trim().to_string())
+        .find(|s| !s.is_empty());
+    let Some(active_key) = first_key else {
+        return;
+    };
+    let model = if config.tts_gemini_model.trim().is_empty() {
+        "gemini-2.5-flash-native-audio-latest".to_string()
+    } else {
+        config.tts_gemini_model.trim().to_string()
+    };
+    let thinking = if config.tts_gemini_thinking.trim().is_empty() {
+        "off".to_string()
+    } else {
+        config.tts_gemini_thinking.trim().to_string()
+    };
+    let voice = resolve_gemini_live_voice(&config.tts_voice);
+    let expressive = config.tts_expressive_intonation;
+
+    tauri::async_runtime::spawn(async move {
+        {
+            let guard = GEMINI_LIVE_WS_SLOT.lock().await;
+            if let Some(sess) = guard.as_ref() {
+                if sess.api_key == active_key
+                    && sess.model == model
+                    && sess.voice == voice
+                    && sess.thinking == thinking
+                    && sess.expressive == expressive
+                    && sess.last_used.elapsed() < Duration::from_secs(40)
+                {
+                    return;
+                }
+            }
+        }
+        if let Ok(ws) = connect_gemini_live_ws(&active_key, &model, &voice, &thinking, expressive).await {
+            let mut guard = GEMINI_LIVE_WS_SLOT.lock().await;
+            *guard = Some(PersistentGeminiLiveWs {
+                ws,
+                api_key: active_key,
+                model,
+                voice,
+                thinking,
+                expressive,
+                last_used: Instant::now(),
+                turns_count: 0,
+            });
+        }
+    });
 }
 
 fn build_expressive_ssml_params(raw_text: &str, base_rate: f32, expressive: bool) -> (String, String, String) {
@@ -1265,7 +1385,14 @@ fn resolve_effective_edge_voice(requested_voice: &str, use_alt_voice: bool) -> (
 }
 
 #[tauri::command]
-async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: String, rate: f32) -> Result<String, String> {
+async fn speak_edge_tts(
+    app_handle: tauri::AppHandle,
+    text: String,
+    voice: String,
+    rate: f32,
+    stream_id: Option<String>,
+    sentence_index: Option<usize>,
+) -> Result<String, String> {
     let config = load_config_internal(&app_handle).unwrap_or_else(|_| AppConfig::default());
     let expressive = config.tts_expressive_intonation;
 
@@ -1273,7 +1400,16 @@ async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: Strin
         return speak_local_tts(&app_handle, text, voice, rate).await;
     }
     if config.tts_engine == "gemini" || voice.starts_with("gemini:") {
-        return speak_gemini_live_tts(&config, &text, &voice, expressive).await;
+        return speak_gemini_live_tts(
+            &app_handle,
+            &config,
+            &text,
+            &voice,
+            expressive,
+            stream_id.as_deref(),
+            sentence_index,
+        )
+        .await;
     }
     if config.tts_engine == "yandex" && !config.yandex_api_key.trim().is_empty() {
         if let Ok(res) = speak_yandex_tts(&config.yandex_api_key, &text, &voice, rate).await {
@@ -3922,7 +4058,9 @@ fn load_config_internal(app_handle: &tauri::AppHandle) -> Result<AppConfig, Stri
 
 #[tauri::command]
 async fn load_config(app_handle: tauri::AppHandle) -> Result<AppConfig, String> {
-    load_config_internal(&app_handle)
+    let cfg = load_config_internal(&app_handle)?;
+    maybe_prewarm_gemini_live_ws(&cfg);
+    Ok(cfg)
 }
 
 #[tauri::command]
@@ -3947,6 +4085,7 @@ async fn save_config(app_handle: tauri::AppHandle, config: AppConfig) -> Result<
         *last_m = None;
     }
     sync_layout_config(&config);
+    maybe_prewarm_gemini_live_ws(&config);
     let _ = app_handle.emit("config-updated", &config);
 
     Ok(())
@@ -4114,6 +4253,7 @@ async fn update_config_fields(app_handle: tauri::AppHandle, fields: serde_json::
     WIDGET_ENABLED.store(config.widget_mode, Ordering::SeqCst);
     OCR_ENABLED.store(config.ocr_mode_switch, Ordering::SeqCst);
     sync_layout_config(&config);
+    maybe_prewarm_gemini_live_ws(&config);
     let _ = app_handle.emit("config-updated", &config);
 
     Ok(())

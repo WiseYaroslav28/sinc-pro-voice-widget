@@ -410,6 +410,10 @@ class VoiceCore {
         return cleaned;
     }
 
+    isGeminiEngine() {
+        return this.settings.tts_engine === 'gemini' || Boolean(this.settings.voice && this.settings.voice.startsWith('gemini:'));
+    }
+
     splitIntoSentences(text) {
         text = this.cleanText(text);
         if (!text) return [];
@@ -443,29 +447,27 @@ class VoiceCore {
         // Разбиваем по концам предложений (. ! ?), по точке с запятой (;), И по всем переносам строк (\n+)
         let rawSentences = processed.split(/(?<=[.!?])\s+|(?<=;)\s+|\n+/u);
 
-        const splitLongSentence = (sentence, maxLen = 200) => {
+        const splitLongSentence = (sentence, maxLen = 340) => {
             if (sentence.length <= maxLen) return [sentence];
             const parts = [];
             let remaining = sentence.trim();
             while (remaining.length > maxLen) {
-                // Ищем естественную пунктуационную границу клаузы (тире, двоеточие, запятая, скобка, слэш) в окне до maxLen + 35,
-                // чтобы никогда не разрывать предложение посреди словосочетания ("за частые | стуки")
-                const punctLimit = Math.min(maxLen + 35, Math.max(55, remaining.length - 30));
+                // Ищем естественную пунктуационную границу клаузы (тире, двоеточие, запятая) в окне до maxLen + 40,
+                // НЕ разрывая предложение по закрывающей скобке ") " или слэшу " / " внутри фразы
+                const punctLimit = Math.min(maxLen + 40, Math.max(80, remaining.length - 40));
                 const punctSlice = remaining.slice(0, punctLimit);
                 const dashIdx = Math.max(punctSlice.lastIndexOf(' — '), punctSlice.lastIndexOf(' - '));
                 const colonIdx = punctSlice.lastIndexOf(': ');
                 const commaIdx = punctSlice.lastIndexOf(', ');
-                const closeParenIdx = punctSlice.lastIndexOf(') ');
-                const slashIdx = punctSlice.lastIndexOf(' / ');
-                const punctMatch = Math.max(dashIdx, colonIdx, commaIdx, closeParenIdx, slashIdx);
+                const punctMatch = Math.max(dashIdx, colonIdx, commaIdx);
                 let splitIdx = -1;
-                if (punctMatch >= 40) {
+                if (punctMatch >= 60) {
                     splitIdx = punctMatch + (punctSlice[punctMatch] === ' ' ? 3 : 1);
                 } else {
-                    const spaceLimit = Math.min(maxLen, Math.max(55, remaining.length - 30));
+                    const spaceLimit = Math.min(maxLen, Math.max(80, remaining.length - 40));
                     const spaceSlice = remaining.slice(0, spaceLimit);
                     const spaceIdx = spaceSlice.lastIndexOf(' ');
-                    splitIdx = spaceIdx >= 40 ? spaceIdx : spaceLimit;
+                    splitIdx = spaceIdx >= 60 ? spaceIdx : spaceLimit;
                 }
                 const chunk = remaining.slice(0, splitIdx).trim();
                 if (chunk.length > 0 && /[\p{L}\p{N}]/u.test(chunk)) {
@@ -479,31 +481,25 @@ class VoiceCore {
             return parts;
         };
 
+        const isGemini = this.isGeminiEngine();
+        const maxChunkLen = isGemini ? 420 : 340;
         const rawClean = [];
         for (let s of rawSentences) {
             s = s.replace(/<DOT>/g, ".");
             s = s.replace(/<ELLIPSIS>/g, "...");
             const trimmed = s.trim();
             if (trimmed.length === 0 || !/[\p{L}\p{N}]/u.test(trimmed)) continue;
-            // Сохраняем естественные границы предложений (до 150 симв. для первого и до 200 симв. для последующих),
-            // не дробя нормальные предложения на мелкие обрывки и не утраивая число сетевых запросов к Microsoft.
-            const maxChunkLen = rawClean.length === 0 ? 150 : 200;
             for (const sub of splitLongSentence(trimmed, maxChunkLen)) {
                 rawClean.push(sub);
             }
         }
 
-        // Сохраняем первое предложение компактным для быстрого отклика на шкале, а последующие короткие предложения (< 115 симв.)
-        // объединяем с соседним (до 210 симв.), чтобы один сетевой запрос давал 7-10 сек речи на скорости 1.75x без пауз.
+        // Не склеиваем полноценные предложения друг с другом (чтобы подсветка всегда шла строго по предложениям),
+        // объединяем только одиночные короткие маркеры списков (< 12 симв., например "1." или "Шаг 1:") со следующим предложением.
         const finalSentences = [];
         for (let i = 0; i < rawClean.length; i++) {
             let cur = rawClean[i];
-            if (finalSentences.length > 0) {
-                while (cur.length < 115 && i + 1 < rawClean.length && (cur.length + 1 + rawClean[i + 1].length) <= 210) {
-                    i++;
-                    cur += " " + rawClean[i];
-                }
-            } else if (cur.length < 40 && i + 1 < rawClean.length && (cur.length + 1 + rawClean[i + 1].length) <= 160) {
+            while (cur.length < 12 && i + 1 < rawClean.length) {
                 i++;
                 cur += " " + rawClean[i];
             }
@@ -583,8 +579,10 @@ class VoiceCore {
         if (!this.sentences || this.sentences.length === 0 || this.currentSentenceIndex >= this.sentences.length) {
             return { loadedChars: 0, targetChars: 0, allLoaded: true, isReady: true, neededSentencesCount: 0 };
         }
+        const isGemini = this.isGeminiEngine();
         const rawLimit = parseInt(this.settings.startBufferChars, 10);
-        const limitChars = isNaN(rawLimit) ? 300 : Math.max(0, rawLimit);
+        // Для Gemini Live API отключаем предварительную буферизацию по символам (поток сразу после генерации первой фразы)
+        const limitChars = isGemini ? 0 : (isNaN(rawLimit) ? 300 : Math.max(0, rawLimit));
 
         let totalRemainingChars = 0;
         let allRemainingLoaded = true;
@@ -619,6 +617,7 @@ class VoiceCore {
 
         const firstReady = !!(this.audioBuffers[this.currentSentenceIndex] && this.audioBuffers[this.currentSentenceIndex].startsWith('data:'));
         const isReady = firstReady && (
+            isGemini ||
             this._forceBypassBuffer ||
             this._initialBufferCompleted ||
             targetChars <= 0 ||
@@ -640,11 +639,14 @@ class VoiceCore {
         this.audioElement.removeAttribute('src');
         this._playingSentenceIndex = -1;
         this.isPrefetching = false;
-        const limitChars = Math.max(0, parseInt(this.settings.startBufferChars ?? 300, 10) || 0);
+        const isGemini = this.isGeminiEngine();
+        const limitChars = isGemini ? 0 : Math.max(0, parseInt(this.settings.startBufferChars ?? 300, 10) || 0);
         this.isPrebuffering = limitChars > 0;
         this._prebufferCompleted = false;
         this._initialBufferCompleted = false;
         this._forceBypassBuffer = false;
+        this._liveStreamBytesByIndex = {};
+        this._liveStreamSeconds = 0;
         this.currentQueueId = null;
         this.currentlyLoading.clear();
         this.currentText = "";
@@ -710,6 +712,8 @@ class VoiceCore {
         });
         this.audioDurations = new Array(this.sentences.length).fill(0);
         this._retryCountByIndex = {};
+        this._liveStreamBytesByIndex = {};
+        this._liveStreamSeconds = 0;
         this.currentSentenceIndex = 0;
         this.isPlaying = autoPlay;
         this.isPaused = false;
@@ -784,7 +788,7 @@ class VoiceCore {
             }
 
             if (window.__TAURI__) {
-                const maxAttempts = 2;
+                const maxAttempts = 3;
                 let lastErr = null;
 
                 for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -794,12 +798,18 @@ class VoiceCore {
 
                     const distance = i - this.currentSentenceIndex;
                     this.log(`Fetching sentence ${i} sequentially from network (len=${this.sentences[i].length}, distance=${distance}, attempt=${attempt}/${maxAttempts})`);
+                    if (this._liveStreamBytesByIndex) {
+                        this._liveStreamBytesByIndex[i] = 0;
+                    }
+                    const streamId = `${this.instanceId}_${queueId}_${i}`;
                     
                     try {
                         const base64Audio = await window.__TAURI__.core.invoke('speak_edge_tts', {
                             text: this.sentences[i],
                             voice: voiceKey,
-                            rate: 1.0
+                            rate: 1.0,
+                            streamId,
+                            sentenceIndex: i
                         });
                         this.lastNetworkRequestTime = Date.now();
                         
@@ -807,6 +817,10 @@ class VoiceCore {
                             const mime = base64Audio.startsWith('UklGR') ? 'audio/wav' : 'audio/mp3';
                             const dataUrl = `data:${mime};base64,${base64Audio}`;
                             this.audioBuffers[i] = dataUrl;
+                            if (this._liveStreamBytesByIndex) {
+                                delete this._liveStreamBytesByIndex[i];
+                            }
+                            this._liveStreamSeconds = 0;
                             // Сохраняем в RAM и 3-дневную базу IndexedDB
                             this.cache.set(cacheVoiceKey, this.sentences[i], dataUrl).catch(() => {});
                             this.updateProgress();
@@ -1327,6 +1341,21 @@ class VoiceCore {
                 this.pause();
             }
         });
+
+        window.__TAURI__.event.listen('gemini-live-audio-chunk', (event) => {
+            const p = event.payload;
+            if (!p || !p.streamId || !String(p.streamId).startsWith(`${this.instanceId}_${this.currentQueueId}_`)) return;
+            const sIdx = typeof p.sentenceIndex === 'number' ? p.sentenceIndex : -1;
+            if (sIdx < 0 || sIdx >= this.sentences.length) return;
+            if (!this._liveStreamBytesByIndex) this._liveStreamBytesByIndex = {};
+            const chunkBytes = p.pcmBase64 ? Math.floor((p.pcmBase64.length * 3) / 4) : 0;
+            this._liveStreamBytesByIndex[sIdx] = (this._liveStreamBytesByIndex[sIdx] || 0) + chunkBytes;
+            if (sIdx === this.currentSentenceIndex) {
+                // 24 кГц 16-бит моно = 48000 байт/сек
+                this._liveStreamSeconds = this._liveStreamBytesByIndex[sIdx] / 48000;
+            }
+            this.updateProgress();
+        });
     }
 
     notifyState() {
@@ -1353,6 +1382,10 @@ class VoiceCore {
             totalChars += sLen;
             if (this.audioBuffers[i] && this.audioBuffers[i] !== "ERROR") {
                 bufferedChars += sLen;
+            } else if (this._liveStreamBytesByIndex && this._liveStreamBytesByIndex[i] > 0) {
+                // Плавное отображение live-потока Gemini (примерно 3600 байт PCM на 1 символ текста)
+                const estFraction = Math.min(0.95, this._liveStreamBytesByIndex[i] / Math.max(18000, sLen * 3600));
+                bufferedChars += sLen * estFraction;
             }
             if (i < this.currentSentenceIndex) {
                 playedCharsBeforeCurrent += sLen;

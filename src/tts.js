@@ -227,8 +227,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (timeCurrent) {
             if (engine.isPlaying && engine.isPrebuffering) {
-                const targetStr = targetBufferChars > 0 ? `${bufferedChars || 0} / ${targetBufferChars} симв.` : 'загрузка...';
-                timeCurrent.textContent = `Накопление буфера: ${targetStr} (нажмите Play для старта)`;
+                if (engine.isGeminiEngine && engine.isGeminiEngine()) {
+                    const liveSec = engine._liveStreamSeconds > 0 ? ` (${engine._liveStreamSeconds.toFixed(1)} сек)` : '';
+                    timeCurrent.textContent = `Поток Gemini Live: приём аудио${liveSec}...`;
+                } else {
+                    const targetStr = targetBufferChars > 0 ? `${bufferedChars || 0} / ${targetBufferChars} симв.` : 'загрузка...';
+                    timeCurrent.textContent = `Накопление буфера: ${targetStr} (нажмите Play для старта)`;
+                }
             } else if (engine.isPlaying || engine.isPaused) {
                 timeCurrent.textContent = `Чтение: ${engine.currentSentenceIndex + 1} из ${engine.sentences.length}`;
             } else {
@@ -279,7 +284,10 @@ document.addEventListener('DOMContentLoaded', () => {
         for (let i = 0; i < progressSegmentEls.length; i++) {
             const { segment, fillEl } = progressSegmentEls[i];
             const isDownloaded = !!(engine.audioBuffers[i] && engine.audioBuffers[i] !== "ERROR");
-            segment.style.backgroundColor = isDownloaded ? 'rgba(37, 99, 235, 0.45)' : '';
+            const isStreamingNow = !isDownloaded && !!(engine._liveStreamBytesByIndex && engine._liveStreamBytesByIndex[i] > 0);
+            segment.style.backgroundColor = isDownloaded
+                ? 'rgba(37, 99, 235, 0.45)'
+                : (isStreamingNow ? 'rgba(37, 99, 235, 0.28)' : '');
             let fillPercent = 0;
             if (i < engine.currentSentenceIndex) fillPercent = 100;
             else if (i === engine.currentSentenceIndex) {

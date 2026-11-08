@@ -163,7 +163,7 @@ window.renderTtsWidget = function(container, isMain = false) {
             <span id="tts-selected-voice-label" class="flex-1 text-left truncate">Загрузка...</span>
             <span class="material-symbols-outlined text-[14px] text-[#4a4455]">expand_more</span>
           </button>
-          <div class="absolute top-[calc(100%+8px)] left-0 bg-[#1b1b22]/95 border border-[#8e52ff]/35 rounded-[12px] p-1.5 hidden flex-col gap-[2px] shadow-[0_12px_32px_rgba(0,0,0,0.7)] backdrop-blur-md max-h-[280px] overflow-y-auto z-50 w-[195px]" id="tts-voice-menu">
+          <div class="absolute top-[calc(100%+8px)] left-0 bg-[#1b1b22]/95 border border-[#8e52ff]/35 rounded-[12px] p-1.5 hidden flex-col gap-[2px] shadow-[0_12px_32px_rgba(0,0,0,0.7)] backdrop-blur-md max-h-[320px] overflow-y-auto z-50 w-[205px]" id="tts-voice-menu">
             <div class="text-[9px] uppercase tracking-widest text-[#8e52ff] px-2 mb-1 opacity-70">Голоса</div>
             <!-- Заполняется динамически -->
           </div>
@@ -251,14 +251,14 @@ function initTtsWidgetLogic(container, isMain) {
   ];
 
   const GEMINI_LIVE_VOICES = [
-    { label: 'Aoede (Gemini Ж, мягкий)',    id: 'gemini:Aoede'  },
-    { label: 'Kore (Gemini Ж, чёткий)',     id: 'gemini:Kore'   },
-    { label: 'Leda (Gemini Ж, тёплый)',     id: 'gemini:Leda'   },
-    { label: 'Zephyr (Gemini Ж, живой)',    id: 'gemini:Zephyr' },
-    { label: 'Charon (Gemini М, глубокий)', id: 'gemini:Charon' },
-    { label: 'Fenrir (Gemini М, мощный)',   id: 'gemini:Fenrir' },
-    { label: 'Puck (Gemini М, бодрый)',     id: 'gemini:Puck'   },
-    { label: 'Orus (Gemini М, спокойный)',  id: 'gemini:Orus'   },
+    { label: '✨ Aoede (Gemini Ж, мягкий)',    id: 'gemini:Aoede'  },
+    { label: '✨ Charon (Gemini М, глубокий)', id: 'gemini:Charon' },
+    { label: '✨ Kore (Gemini Ж, чёткий)',     id: 'gemini:Kore'   },
+    { label: '✨ Fenrir (Gemini М, мощный)',   id: 'gemini:Fenrir' },
+    { label: '✨ Leda (Gemini Ж, тёплый)',     id: 'gemini:Leda'   },
+    { label: '✨ Puck (Gemini М, бодрый)',     id: 'gemini:Puck'   },
+    { label: '✨ Zephyr (Gemini Ж, живой)',    id: 'gemini:Zephyr' },
+    { label: '✨ Orus (Gemini М, спокойный)',  id: 'gemini:Orus'   },
   ];
 
   // 0.5 на самом верху, 3.0 в самом низу
@@ -305,15 +305,24 @@ function initTtsWidgetLogic(container, isMain) {
     if (installedVoices !== undefined) {
       currentInstalledVoices = installedVoices;
     }
-    let html = `<div class="text-[9px] uppercase tracking-widest text-[#8e52ff] px-2 py-0.5 opacity-75">Microsoft Edge (Online)</div>`;
-    html += PREFERRED_VOICES.map(v => 
+    const ruVoices = PREFERRED_VOICES.slice(0, 2);
+    const otherEdgeVoices = PREFERRED_VOICES.slice(2);
+
+    let html = `<div class="text-[9px] uppercase tracking-widest text-[#8e52ff] px-2 py-0.5 opacity-80">Русские (Edge Online)</div>`;
+    html += ruVoices.map(v => 
       `<div class="px-2 py-1.5 text-[11px] cursor-pointer hover:bg-[#8e52ff]/20 rounded-md transition-colors voice-item" data-id="${v.edgeId}" data-label="${v.label}">${v.label}</div>`
     ).join('');
 
     html += `<div class="h-px bg-[#4a4455]/40 my-1"></div>`;
-    html += `<div class="text-[9px] uppercase tracking-widest text-[#7bd6d1] px-2 py-0.5 opacity-85">Gemini Live API (WebSocket)</div>`;
+    html += `<div class="text-[9px] uppercase tracking-widest text-[#7bd6d1] font-semibold px-2 py-0.5">Gemini Live API (RU/EN)</div>`;
     html += GEMINI_LIVE_VOICES.map(v =>
       `<div class="px-2 py-1.5 text-[11px] cursor-pointer hover:bg-[#8e52ff]/20 rounded-md transition-colors voice-item" data-id="${v.id}" data-label="${v.label}">${v.label}</div>`
+    ).join('');
+
+    html += `<div class="h-px bg-[#4a4455]/40 my-1"></div>`;
+    html += `<div class="text-[9px] uppercase tracking-widest text-[#8e52ff] px-2 py-0.5 opacity-70">Иностранные (Edge Online)</div>`;
+    html += otherEdgeVoices.map(v => 
+      `<div class="px-2 py-1.5 text-[11px] cursor-pointer hover:bg-[#8e52ff]/20 rounded-md transition-colors voice-item" data-id="${v.edgeId}" data-label="${v.label}">${v.label}</div>`
     ).join('');
 
     if (currentInstalledVoices.length > 0) {
