@@ -465,22 +465,22 @@ class VoiceCore {
             s = s.replace(/<ELLIPSIS>/g, "...");
             const trimmed = s.trim();
             if (trimmed.length === 0 || !/[\p{L}\p{N}]/u.test(trimmed)) continue;
-            // Первую фразу делаем компактной (до 75 символов) для быстрого первого старта,
-            // а последующие предложения — до 115 символов для безошибочного последовательного синтеза и кэширования в БД
-            const maxChunkLen = rawClean.length === 0 ? 75 : 115;
+            // Первую фразу делаем компактной (до 95 символов) для быстрого старта и запаса времени воспроизведения,
+            // а последующие предложения — до 110 символов (оптимум скорости генерации <4.5с без таймаутов и кэширования в БД)
+            const maxChunkLen = rawClean.length === 0 ? 95 : 110;
             for (const sub of splitLongSentence(trimmed, maxChunkLen)) {
                 rawClean.push(sub);
             }
         }
 
-        // Приклеиваем только крошечные осколки (< 22 символов, например "1)" или "Да.") к соседнему предложению,
-        // сохраняя 0-е предложение коротким для моментального старта озвучки
+        // Приклеиваем короткие фразы (< 35 символов) к соседнему предложению (до 110 символов),
+        // чтобы на скорости 1.75x каждое предложение звучало достаточно долго для бесшовной подгрузки следующих
         const finalSentences = [];
         for (let i = 0; i < rawClean.length; i++) {
             const cur = rawClean[i];
-            if (cur.length < 22 && i + 1 < rawClean.length && (cur.length + 1 + rawClean[i + 1].length) <= 115) {
+            if (cur.length < 35 && i + 1 < rawClean.length && (cur.length + 1 + rawClean[i + 1].length) <= 110) {
                 rawClean[i + 1] = cur + " " + rawClean[i + 1];
-            } else if (cur.length < 22 && finalSentences.length > 0 && (finalSentences.length > 1 || finalSentences[0].length < 45) && (finalSentences[finalSentences.length - 1].length + 1 + cur.length) <= 115) {
+            } else if (cur.length < 35 && finalSentences.length > 0 && (finalSentences[finalSentences.length - 1].length + 1 + cur.length) <= 110) {
                 finalSentences[finalSentences.length - 1] += " " + cur;
             } else {
                 finalSentences.push(cur);
@@ -605,6 +605,7 @@ class VoiceCore {
         }
         this._playingSentenceIndex = -1;
         this.isPrefetching = false; // Останавливаем старую очередь загрузки
+        this._activeWorkers = 0;
         this.currentQueueId = null;
         this.currentText = this.cleanText(text);
         this.sentences = this.splitIntoSentences(this.currentText);
@@ -653,9 +654,7 @@ class VoiceCore {
         this.updateProgress();
         
         this.loadCachedSentences(oldLength).finally(() => {
-            if (!this.isPrefetching) {
-                this.startPrefetchQueue();
-            }
+            this.startPrefetchQueue();
         });
     }
 
@@ -772,23 +771,35 @@ class VoiceCore {
     }
 
     async startPrefetchQueue() {
-        if (this.isPrefetching) {
+        const CONCURRENCY = 2;
+        const windowSize = 8; // текущее предложение + 7 предложений наперёд
+
+        if (!this.currentQueueId) {
+            this.currentQueueId = Date.now() + Math.random();
+            this._activeWorkers = 0;
+        }
+        const queueId = this.currentQueueId;
+        const currentBuffersRef = this.audioBuffers;
+
+        const hasUnloadedInWindow = () => {
+            const startIndex = this.currentSentenceIndex;
+            const endIndex = Math.min(startIndex + windowSize, this.sentences.length);
+            for (let i = startIndex; i < endIndex; i++) {
+                if (!this.audioBuffers[i] && !this.currentlyLoading.has(i)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        if ((this._activeWorkers || 0) >= CONCURRENCY || !hasUnloadedInWindow()) {
             return;
         }
 
-        const queueId = Date.now() + Math.random();
-        this.currentQueueId = queueId;
-        this.isPrefetching = true;
-
-        const currentBuffersRef = this.audioBuffers;
-        // СТРОГО ПОСЛЕДОВАТЕЛЬНАЯ подгрузка по 1 предложению за раз (CONCURRENCY = 1) с паузой 250 мс в Rust!
-        // Параллельные запросы (CONCURRENCY >= 2) приводят к сбросу соединения и троттлингу анти-спам фильтром Microsoft.
-        const CONCURRENCY = 1;
-        const windowSize = 7; // текущее предложение + 6 предложений наперёд
-        this.log(`Prefetch queue started with ID ${queueId} (workers=${CONCURRENCY}, window=${windowSize})`);
-
-        try {
-            const runWorker = async () => {
+        const runWorker = async () => {
+            this._activeWorkers = (this._activeWorkers || 0) + 1;
+            this.isPrefetching = true;
+            try {
                 while (true) {
                     if (this.currentQueueId !== queueId || this.audioBuffers !== currentBuffersRef) {
                         return;
@@ -812,27 +823,21 @@ class VoiceCore {
                     this.currentlyLoading.add(targetIndex);
                     await this.fetchSentence(targetIndex, queueId, currentBuffersRef);
                 }
-            };
-
-            await runWorker();
-        } catch (err) {
-            this.log('Error in prefetch queue loop: ' + err);
-        } finally {
-            if (this.currentQueueId === queueId) {
-                this.isPrefetching = false;
-                this.log('Prefetch queue ' + queueId + ' stopped');
-                // Если за время завершения воркера чтение продвинулось вперёд — догружаем открывшееся окно
-                if (this.audioBuffers === currentBuffersRef) {
-                    const startIdx = this.currentSentenceIndex;
-                    const endIdx = Math.min(startIdx + windowSize, this.sentences.length);
-                    for (let i = startIdx; i < endIdx; i++) {
-                        if (!this.audioBuffers[i] && !this.currentlyLoading.has(i)) {
-                            this.startPrefetchQueue();
-                            break;
-                        }
+            } catch (err) {
+                this.log('Error in prefetch worker: ' + err);
+            } finally {
+                if (this.currentQueueId === queueId) {
+                    this._activeWorkers = Math.max(0, (this._activeWorkers || 1) - 1);
+                    this.isPrefetching = this._activeWorkers > 0;
+                    if (this.audioBuffers === currentBuffersRef && hasUnloadedInWindow() && this._activeWorkers < CONCURRENCY) {
+                        this.startPrefetchQueue();
                     }
                 }
             }
+        };
+
+        while ((this._activeWorkers || 0) < CONCURRENCY && hasUnloadedInWindow()) {
+            runWorker();
         }
     }
 
@@ -849,6 +854,7 @@ class VoiceCore {
             
             // Принудительно сбрасываем предыдущий префетч при seek
             this.isPrefetching = false;
+            this._activeWorkers = 0;
             this.currentQueueId = null;
             this.currentlyLoading.clear();
             
@@ -924,6 +930,7 @@ class VoiceCore {
         this._prebufferCompleted = true;
         this._playingSentenceIndex = -1;
         this.isPrefetching = false;
+        this._activeWorkers = 0;
         this.currentQueueId = null;
         this.audioElement.pause();
         this.audioElement.removeAttribute('src'); // Правильное удаление ресурса
@@ -970,34 +977,12 @@ class VoiceCore {
                 return;
             } else {
                 this.audioBuffers[this.currentSentenceIndex] = null;
-                if (!this.isPrefetching) {
-                    this.startPrefetchQueue();
-                }
+                this.startPrefetchQueue();
                 return;
             }
         }
 
         if (currentBuf && currentBuf.startsWith("data:")) {
-            // Если на высокой скорости (1.25x–2.0x) плеер догнал загрузчик (isPrebuffering = true),
-            // ждём накопления запаса из 3 предложений подряд перед возобновлением речи, чтобы дальше читать без единой запинки!
-            if (this.isPrebuffering && this._rebufferTargetIndex > this.currentSentenceIndex) {
-                const targetIdx = Math.min(this._rebufferTargetIndex, this.sentences.length - 1);
-                let allCushionReady = true;
-                for (let k = this.currentSentenceIndex; k <= targetIdx; k++) {
-                    if (!this.audioBuffers[k]) {
-                        allCushionReady = false;
-                        break;
-                    }
-                }
-                if (!allCushionReady) {
-                    this.log(`playCurrentSentence() - waiting for buffer cushion (${this.currentSentenceIndex}..${targetIdx})...`);
-                    if (!this.isPrefetching) {
-                        this.startPrefetchQueue();
-                    }
-                    this.updateProgress();
-                    return;
-                }
-            }
             this.isPrebuffering = false;
             this._rebufferTargetIndex = -1;
 
@@ -1021,21 +1006,11 @@ class VoiceCore {
                     this.pause();
                 }
             });
-            // Убеждаемся, что пока играет текущее предложение, фоновая последовательная очередь подгружает 6 предложений вперёд
-            if (!this.isPrefetching) {
-                this.startPrefetchQueue();
-            }
+            // Убеждаемся, что пока играет текущее предложение, фоновая очередь подгружает окно вперёд
+            this.startPrefetchQueue();
         } else {
-            // Если это НЕ 0-е предложение (0-е стартует моментально!), а чтение в процессе догнало загрузчик —
-            // включаем накопление запаса из 3 предложений (или до конца текста), чтобы исключить рваное чтение
-            if (this.currentSentenceIndex > 0 && (this.settings.speed || 1.0) >= 1.15) {
-                this.isPrebuffering = true;
-                this._rebufferTargetIndex = Math.min(this.currentSentenceIndex + 2, this.sentences.length - 1);
-            }
             this.log('playCurrentSentence() - buffer not ready, ensuring prefetch queue is active and waiting...');
-            if (!this.isPrefetching) {
-                this.startPrefetchQueue();
-            }
+            this.startPrefetchQueue();
         }
         this.updateProgress();
     }

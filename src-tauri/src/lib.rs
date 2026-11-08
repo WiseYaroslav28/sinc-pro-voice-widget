@@ -21,6 +21,7 @@ const EDGE_TRUSTED_TOKEN: &str = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
 
 static LAST_SKEW_UPDATE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 static CACHED_SKEW: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+static DMITRY_FALLBACK_UNTIL_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 
 type EdgeWsStream = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -37,7 +38,8 @@ struct EdgeWsSlot {
 
 lazy_static::lazy_static! {
     static ref SKEW_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
-    static ref EDGE_TTS_SEMAPHORE: tokio::sync::Semaphore = tokio::sync::Semaphore::new(1);
+    static ref EDGE_TTS_SEMAPHORE: tokio::sync::Semaphore = tokio::sync::Semaphore::new(2);
+    static ref EDGE_LAST_START_MS: tokio::sync::Mutex<i64> = tokio::sync::Mutex::new(0);
     static ref EDGE_WS_SLOT_0: tokio::sync::Mutex<EdgeWsSlot> = tokio::sync::Mutex::new(EdgeWsSlot {
         session: None,
         last_finished_ms: 0,
@@ -477,16 +479,16 @@ fn generate_sec_ms_gec(skew: i64) -> String {
 
 fn log_tts_error(text: &str, err: &str) {
     use std::io::Write;
-    let log_path = "tts_errors.log";
-    if let Ok(meta) = std::fs::metadata(log_path) {
+    let log_path = std::env::temp_dir().join("sincpro_tts_errors.log");
+    if let Ok(meta) = std::fs::metadata(&log_path) {
         if meta.len() > 2 * 1024 * 1024 {
-            let _ = std::fs::write(log_path, "");
+            let _ = std::fs::write(&log_path, "");
         }
     }
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(log_path)
+        .open(&log_path)
     {
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
         let preview: String = text.chars().take(120).collect();
@@ -664,11 +666,13 @@ fn build_expressive_ssml_params(raw_text: &str, base_rate: f32, expressive: bool
         (0, "+0Hz")
     } else {
         match tag_mode {
-            Some("question") => (2, "+6Hz"),
-            Some("excited") => (3, "+4Hz"),
-            Some("header") => (-3, "-3Hz"),
+            Some("question") => (2, "+4Hz"),
+            Some("excited") => (2, "+3Hz"),
+            Some("header") => (-2, "-2Hz"),
             Some("calm") => (-2, "-2Hz"),
-            _ => (0, "+2Hz"),
+            // Для обычных повествовательных предложений всегда используем +0Hz,
+            // чтобы сервер Microsoft Edge TTS не включал медленный DSP-модуль сдвига тона (+3..4 сек задержки).
+            _ => (0, "+0Hz"),
         }
     };
 
@@ -697,11 +701,12 @@ fn build_expressive_ssml_params(raw_text: &str, base_rate: f32, expressive: bool
         .replace("?]", "]")
         .replace(" ?,", ",");
 
-    // Заменяем внутренние двоеточия, точки с запятой и длинные тире на запятую,
-    // а технические символы (<, >, _) внутри SSML — на пробелы, чтобы сервер Microsoft Edge TTS
-    // синтезировал программный код, теги (<img onerror=alert...>, <PERSON_1>) и snake_case за один проход
-    // без внутренней паузы и без пропуска токенов. (Оригинальный текст в окне плеера не меняется!)
+    // Заменяем символ % на слово "процентов", а внутренние двоеточия, точки с запятой и длинные тире на запятую,
+    // и технические символы (<, >, _) внутри SSML — на пробелы, чтобы сервер Microsoft Edge TTS
+    // синтезировал программный код, теги (<img onerror=alert...>, <PERSON_1>) и проценты (80%) за один быстрый проход
+    // без зависаний G2P-транскриптора и без пропуска токенов. (Оригинальный текст в окне плеера не меняется!)
     cleaned_punct = cleaned_punct
+        .replace('%', " процентов ")
         .replace('<', " ")
         .replace('>', " ")
         .replace('_', " ")
@@ -715,6 +720,42 @@ fn build_expressive_ssml_params(raw_text: &str, base_rate: f32, expressive: bool
         .replace('»', "")
         .replace('“', "")
         .replace('”', "");
+
+    // Убираем буквенные наращения после числительных ("5-м" -> "5", "6-м" -> "6", "1-го" -> "1")
+    // и дефис на стыке латиницы и кириллицы ("SQL-инъекций" -> "SQL инъекций"), которые вызывают зависание G2P
+    let mut norm_num = String::with_capacity(cleaned_punct.len());
+    let chars: Vec<char> = cleaned_punct.chars().collect();
+    let mut idx = 0;
+    while idx < chars.len() {
+        if idx > 0
+            && chars[idx - 1].is_ascii_digit()
+            && (chars[idx] == '-' || chars[idx] == '–' || chars[idx] == '—')
+            && idx + 1 < chars.len()
+            && chars[idx + 1].is_alphabetic()
+        {
+            let mut end_alpha = idx + 1;
+            while end_alpha < chars.len() && chars[end_alpha].is_alphabetic() {
+                end_alpha += 1;
+            }
+            if end_alpha - (idx + 1) <= 3 {
+                idx = end_alpha;
+                continue;
+            }
+        }
+        if idx > 0
+            && (chars[idx] == '-' || chars[idx] == '–' || chars[idx] == '—')
+            && idx + 1 < chars.len()
+            && ((chars[idx - 1].is_ascii_alphabetic() && !chars[idx + 1].is_ascii() && chars[idx + 1].is_alphabetic())
+                || (!chars[idx - 1].is_ascii() && chars[idx - 1].is_alphabetic() && chars[idx + 1].is_ascii_alphabetic()))
+        {
+            norm_num.push(' ');
+            idx += 1;
+            continue;
+        }
+        norm_num.push(chars[idx]);
+        idx += 1;
+    }
+    cleaned_punct = norm_num;
 
     // Если выразительная интонация отключена в настройках — убираем вопросительные и восклицательные
     // акценты, чтобы диктор читал текст максимально ровно и нейтрально.
@@ -759,9 +800,11 @@ fn resolve_effective_edge_voice(requested_voice: &str, use_alt_voice: bool) -> (
     };
 
     // Всегда используем чистый русский голос (ru-RU) без подмены на иностранные голоса (de-DE / fr-FR).
-    // Если кластер ru-RU-DmitryNeural после 5 попыток подряд сбрасывает соединение, на 6-й (финальной) попытке
-    // страхуем чистым русским голосом ru-RU-SvetlanaNeural, чтобы ни одно предложение никогда не пропускалось.
-    if use_alt_voice && requested_voice == "ru-RU-DmitryNeural" {
+    // Если кластер ru-RU-DmitryNeural сбрасывает соединения по 3-секундному таймауту прокси Microsoft,
+    // мгновенно переключаемся на стабильный кластер ru-RU-SvetlanaNeural на 15 минут без потери 10 секунд на холостые повторы.
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let dmitry_in_cooldown = now_ms < DMITRY_FALLBACK_UNTIL_MS.load(Ordering::Relaxed);
+    if requested_voice == "ru-RU-DmitryNeural" && (use_alt_voice || dmitry_in_cooldown) {
         return ("ru-RU-SvetlanaNeural".to_string(), "ru-RU".to_string());
     }
 
@@ -782,22 +825,41 @@ async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: Strin
         }
     }
 
+    // Два постоянных WebSocket-слота со строгим разнесением старта запросов минимум на 650 мс
+    // и паузой 250 мс внутри каждого слота: пока играет 0-е предложение, 1-е и 2-е уже готовы в буфере без единой паузы на 1.75x!
     let _permit = EDGE_TTS_SEMAPHORE.acquire().await.map_err(|e| e.to_string())?;
-    let mut slot_guard = EDGE_WS_SLOT_0.lock().await;
+    let mut slot_guard = match EDGE_WS_SLOT_0.try_lock() {
+        Ok(g) => g,
+        Err(_) => EDGE_WS_SLOT_1.lock().await,
+    };
 
-    // Строго выдерживаем паузу 250 мс между окончанием предыдущего запроса и началом следующего,
-    // чтобы сервер Microsoft не воспринимал последовательную подгрузку предложений как спам.
+    // 1. Пауза 250 мс после завершения предыдущего запроса на этом же WebSocket-слоте
     let now_ms = chrono::Utc::now().timestamp_millis();
     let prev_ms = slot_guard.last_finished_ms;
     if prev_ms > 0 && now_ms > prev_ms && (now_ms - prev_ms) < 250 {
         tokio::time::sleep(Duration::from_millis((250 - (now_ms - prev_ms)) as u64)).await;
     }
 
+    // 2. Глобальный сдвиг по фазе (stagger 650 мс) между моментами старта запросов двух слотов,
+    // чтобы запросы никогда не отправлялись одновременно и не вызывали анти-спам троттлинг Microsoft
+    {
+        let mut last_start = EDGE_LAST_START_MS.lock().await;
+        let cur_ms = chrono::Utc::now().timestamp_millis();
+        let wait_ms = (*last_start + 650) - cur_ms;
+        if wait_ms > 0 {
+            *last_start = cur_ms + wait_ms;
+            drop(last_start);
+            tokio::time::sleep(Duration::from_millis(wait_ms as u64)).await;
+        } else {
+            *last_start = cur_ms;
+        }
+    }
+
     let mut last_err = String::new();
-    for attempt in 1..=4 {
+    for attempt in 1..=3 {
         let force_reconnect = attempt > 1;
-        let use_expressive = if attempt <= 2 { expressive } else { false };
-        let use_alt_voice = attempt == 4;
+        let use_expressive = if attempt == 1 { expressive } else { false };
+        let use_alt_voice = attempt >= 2;
         match speak_edge_tts_internal(
             &mut slot_guard.session,
             text.clone(),
@@ -821,8 +883,14 @@ async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: Strin
             }
             Err(err) => {
                 last_err = err.clone();
+                // Если кластер ru-RU-DmitryNeural сбросил соединение — запоминаем деградацию кластера на 15 минут,
+                // чтобы не терять по 3 секунды на каждом следующем предложении текста!
+                if voice == "ru-RU-DmitryNeural" {
+                    let until_ms = chrono::Utc::now().timestamp_millis() + 900_000;
+                    DMITRY_FALLBACK_UNTIL_MS.store(until_ms, Ordering::Relaxed);
+                }
                 println!(
-                    "SincPro TTS Auto-Heal: Попытка {}/4 не удалась ({}), переподключение...",
+                    "SincPro TTS Auto-Heal: Попытка {}/3 не удалась ({}), переподключение...",
                     attempt, err
                 );
                 let is_auth_err = err.contains("403") || err.contains("401") || err.contains("400");
@@ -832,8 +900,8 @@ async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: Strin
                         refresh_edge_drm_constants().await;
                     }
                 }
-                if attempt < 4 {
-                    tokio::time::sleep(Duration::from_millis(180)).await;
+                if attempt < 3 {
+                    tokio::time::sleep(Duration::from_millis(120)).await;
                 }
             }
         }
@@ -889,7 +957,7 @@ async fn connect_edge_ws_session(force_skew: bool) -> Result<EdgeWsStream, Strin
     headers.insert("Cookie", format!("muid={};", muid).parse().unwrap());
 
     let adjusted_now = chrono::Utc::now() + chrono::Duration::seconds(skew);
-    let ts_str = adjusted_now.format("%a %b %d %Y %H:%M:%S GMT+0000 (Coordinated Universal Time)").to_string();
+    let ts_str = adjusted_now.format("%Y-%m-%dT%H:%M:%S.000Z").to_string();
 
     let (mut ws, _) = tokio::time::timeout(
         Duration::from_secs(5),
@@ -903,7 +971,7 @@ async fn connect_edge_ws_session(force_skew: bool) -> Result<EdgeWsStream, Strin
     let config_msg = format!(
         "X-Timestamp:{ts}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n\
          {{\"context\":{{\"synthesis\":{{\"audio\":{{\"metadataoptions\":{{\"sentenceBoundaryEnabled\":false,\
-         \"wordBoundaryEnabled\":false}},\"outputFormat\":\"audio-24khz-48kbitrate-mono-mp3\"}}}}}}}}\r\n",
+         \"wordBoundaryEnabled\":false}},\"outputFormat\":\"audio-24khz-48kbitrate-mono-mp3\"}}}}}}}}",
         ts = ts_str
     );
     ws.send(Message::Text(config_msg.into()))
@@ -927,9 +995,9 @@ async fn run_edge_ws_turn(
 
     loop {
         let wait_dur = if audio_bytes.is_empty() {
-            Duration::from_millis(10000)
+            Duration::from_millis(7500)
         } else {
-            Duration::from_millis(6000)
+            Duration::from_millis(5000)
         };
 
         match tokio::time::timeout(wait_dur, ws.next()).await {
@@ -992,14 +1060,14 @@ async fn speak_edge_tts_internal(
     let ts_str = adjusted_now.format("%Y-%m-%dT%H:%M:%S.000Z").to_string();
 
     let (effective_voice, xml_lang) = resolve_effective_edge_voice(&voice, use_alt_voice);
-    let max_turns_per_socket: usize = if effective_voice.contains("Dmitry") { 2 } else { 5 };
+    let max_turns_per_socket: usize = 15;
 
     let request_id = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
-    let prosody_open = if pitch_str == "+0Hz" {
-        format!("<prosody rate='{rate}'>", rate = rate_str)
-    } else {
-        format!("<prosody pitch='{pitch}' rate='{rate}'>", pitch = pitch_str, rate = rate_str)
-    };
+    let prosody_open = format!(
+        "<prosody pitch='{pitch}' rate='{rate}' volume='+0%'>",
+        pitch = pitch_str,
+        rate = rate_str
+    );
     let ssml_msg = format!(
         "X-RequestId:{req}\r\nContent-Type:application/ssml+xml\r\n\
          X-Timestamp:{ts}\r\nPath:ssml\r\n\r\n\
@@ -1048,7 +1116,7 @@ async fn speak_edge_tts_internal(
             }
             bytes
         }
-        Ok((_, _, _)) | Err((_, _)) if was_reused => {
+        Ok((_, _, _)) | Err((_, _)) if was_reused && !effective_voice.contains("Dmitry") => {
             // Если переиспользованный сокет был закрыт сервером во время простоя —
             // мгновенно (через 60 мс) открываем свежий сокет и выполняем запрос без потери попытки!
             tokio::time::sleep(Duration::from_millis(60)).await;
