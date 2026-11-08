@@ -698,9 +698,14 @@ fn build_expressive_ssml_params(raw_text: &str, base_rate: f32, expressive: bool
         .replace(" ?,", ",");
 
     // Заменяем внутренние двоеточия, точки с запятой и длинные тире на запятую,
-    // чтобы сервер Microsoft Edge TTS синтезировал фразу за один непрерывный проход
-    // без внутренней 5-секундной паузы между сегментами.
+    // а технические символы (<, >, _) внутри SSML — на пробелы, чтобы сервер Microsoft Edge TTS
+    // синтезировал программный код, теги (<img onerror=alert...>, <PERSON_1>) и snake_case за один проход
+    // без внутренней паузы и без пропуска токенов. (Оригинальный текст в окне плеера не меняется!)
     cleaned_punct = cleaned_punct
+        .replace('<', " ")
+        .replace('>', " ")
+        .replace('_', " ")
+        .replace('=', " = ")
         .replace(": ", ", ")
         .replace("; ", ", ")
         .replace(" — ", ", ")
@@ -789,10 +794,10 @@ async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: Strin
     }
 
     let mut last_err = String::new();
-    for attempt in 1..=6 {
+    for attempt in 1..=4 {
         let force_reconnect = attempt > 1;
-        let use_expressive = if attempt <= 4 { expressive } else { false };
-        let use_alt_voice = attempt == 6;
+        let use_expressive = if attempt <= 2 { expressive } else { false };
+        let use_alt_voice = attempt == 4;
         match speak_edge_tts_internal(
             &mut slot_guard.session,
             text.clone(),
@@ -817,17 +822,17 @@ async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: Strin
             Err(err) => {
                 last_err = err.clone();
                 println!(
-                    "SincPro TTS Auto-Heal: Попытка {}/6 не удалась ({}), переподключение...",
+                    "SincPro TTS Auto-Heal: Попытка {}/4 не удалась ({}), переподключение...",
                     attempt, err
                 );
                 let is_auth_err = err.contains("403") || err.contains("401") || err.contains("400");
-                if is_auth_err || attempt == 3 {
+                if is_auth_err || attempt == 2 {
                     let _ = get_clock_skew(true).await;
                     if is_auth_err {
                         refresh_edge_drm_constants().await;
                     }
                 }
-                if attempt < 6 {
+                if attempt < 4 {
                     tokio::time::sleep(Duration::from_millis(180)).await;
                 }
             }
@@ -897,8 +902,8 @@ async fn connect_edge_ws_session(force_skew: bool) -> Result<EdgeWsStream, Strin
     // Отправляем Path:speech.config ТОЛЬКО ОДИН РАЗ при открытии нового WebSocket-соединения!
     let config_msg = format!(
         "X-Timestamp:{ts}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n\
-         {{\"context\":{{\"synthesis\":{{\"audio\":{{\"metadataoptions\":{{\"sentenceBoundaryEnabled\":\"true\",\
-         \"wordBoundaryEnabled\":\"false\"}},\"outputFormat\":\"audio-24khz-48kbitrate-mono-mp3\"}}}}}}}}\r\n",
+         {{\"context\":{{\"synthesis\":{{\"audio\":{{\"metadataoptions\":{{\"sentenceBoundaryEnabled\":false,\
+         \"wordBoundaryEnabled\":false}},\"outputFormat\":\"audio-24khz-48kbitrate-mono-mp3\"}}}}}}}}\r\n",
         ts = ts_str
     );
     ws.send(Message::Text(config_msg.into()))
@@ -990,17 +995,21 @@ async fn speak_edge_tts_internal(
     let max_turns_per_socket: usize = if effective_voice.contains("Dmitry") { 2 } else { 5 };
 
     let request_id = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
+    let prosody_open = if pitch_str == "+0Hz" {
+        format!("<prosody rate='{rate}'>", rate = rate_str)
+    } else {
+        format!("<prosody pitch='{pitch}' rate='{rate}'>", pitch = pitch_str, rate = rate_str)
+    };
     let ssml_msg = format!(
         "X-RequestId:{req}\r\nContent-Type:application/ssml+xml\r\n\
          X-Timestamp:{ts}\r\nPath:ssml\r\n\r\n\
          <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='{lang}'>\
-         <voice name='{voice}'><prosody pitch='{pitch}' rate='{rate}' volume='+0%'>{text}</prosody></voice></speak>",
+         <voice name='{voice}'>{prosody_open}{text}</prosody></voice></speak>",
         req = request_id,
         ts = ts_str,
         lang = xml_lang,
         voice = effective_voice,
-        pitch = pitch_str,
-        rate = rate_str,
+        prosody_open = prosody_open,
         text = ssml_text,
     );
 
