@@ -605,6 +605,31 @@
                     <option value="local">Локальный (Без ИИ / Полностью оффлайн)</option>
                   </select>
                 </div>
+                <div class="h-px bg-[#4a4455]/25 my-1"></div>
+                <div class="flex flex-col gap-2">
+                  <div class="flex items-center justify-between">
+                    <label class="text-[11px] text-[#7bd6d1] font-semibold">Модель озвучки Gemini Live API (Постоянный WebSocket)</label>
+                    <span class="text-[10px] text-[#7bd6d1]/80 bg-[#7bd6d1]/10 px-2 py-0.5 rounded border border-[#7bd6d1]/25">Unlimited RPM / RPD</span>
+                  </div>
+                  <select class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#7bd6d1]" id="setting-tts-gemini-model">
+                    <option value="gemini-2.5-flash-native-audio-latest">Gemini 2.5 Flash Native Audio Dialog — 1M TPM, Unlimited RPM/RPD</option>
+                    <option value="gemini-3.8-live">Gemini 3.8 Live — Сверхбыстрая (~0.5с), Unlimited RPM/RPD</option>
+                    <option value="gemini-3.1-flash-live-preview">Gemini 3 Flash Live — 65K TPM, Unlimited RPM/RPD</option>
+                    <option value="gemini-3.8-live-extended-thinking">Gemini 3.8 Live Extended Thinking — С размышлением, Unlimited RPM/RPD</option>
+                  </select>
+                </div>
+                <div class="flex flex-col gap-2">
+                  <label class="text-[11px] text-[#ccc3d8]">Глубина размышления при озвучке Gemini (Thinking)</label>
+                  <select class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#7bd6d1]" id="setting-tts-gemini-thinking">
+                    <option value="off">Отключено / Минимальная (Budget: 0 / LOW) — мгновенный старт</option>
+                    <option value="low">Низкая (Budget: 128 / LOW)</option>
+                    <option value="medium">Средняя (Budget: 512 / MEDIUM)</option>
+                    <option value="high">Глубокая (Budget: 1024 / HIGH)</option>
+                  </select>
+                  <div class="text-[10px] text-[#ccc3d8]/65 leading-relaxed">
+                    Для включения озвучки через Gemini выберите любой голос <b>Gemini (Aoede, Kore, Charon, Fenrir...)</b> в меню выбора голоса плеера. Соединение держится через единый постоянный WebSocket с поддержкой обратной текстовой транскрибации.
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -707,6 +732,7 @@
                   <!-- Выбор активного движка (скрыт, так как переключается выбором голоса в плеере) -->
                   <select class="hidden" id="setting-tts-engine">
                     <option value="edge">Облако</option>
+                    <option value="gemini">Gemini Live API</option>
                     <option value="local">Локально</option>
                   </select>
                 </div>
@@ -1275,6 +1301,14 @@
 
             document.getElementById('setting-stt-local-model').value = config.stt_local_model || 'ggml-base.bin';
             document.getElementById('setting-tts-local-voice').value = config.tts_local_voice || 'ru_RU-dmitri-medium.onnx';
+            const geminiTtsModelEl = document.getElementById('setting-tts-gemini-model');
+            if (geminiTtsModelEl) {
+              geminiTtsModelEl.value = config.tts_gemini_model || 'gemini-2.5-flash-native-audio-latest';
+            }
+            const geminiTtsThinkingEl = document.getElementById('setting-tts-gemini-thinking');
+            if (geminiTtsThinkingEl) {
+              geminiTtsThinkingEl.value = config.tts_gemini_thinking || 'off';
+            }
             const magnetToggle = document.getElementById('setting-capsule-magnet');
             if (magnetToggle) {
               const magnetVal = config.capsule_magnet !== undefined ? config.capsule_magnet : true;
@@ -1296,12 +1330,19 @@
             if (window.ttsEngine) {
               window.ttsEngine.settings.expressive = intonationVal;
               window.ttsEngine.settings.startBufferChars = startBufferCharsVal;
+              window.ttsEngine.settings.tts_gemini_model = config.tts_gemini_model || 'gemini-2.5-flash-native-audio-latest';
+              window.ttsEngine.settings.tts_gemini_thinking = config.tts_gemini_thinking || 'off';
               localStorage.setItem('tts-settings', JSON.stringify(window.ttsEngine.settings));
             }
             if (window.__TAURI__) {
               window.__TAURI__.event.emit('tts-state-sync', {
                 action: 'settings',
-                settings: { expressive: intonationVal, startBufferChars: startBufferCharsVal }
+                settings: {
+                  expressive: intonationVal,
+                  startBufferChars: startBufferCharsVal,
+                  tts_gemini_model: config.tts_gemini_model || 'gemini-2.5-flash-native-audio-latest',
+                  tts_gemini_thinking: config.tts_gemini_thinking || 'off'
+                }
               }).catch(() => {});
             }
 
@@ -1381,9 +1422,11 @@
             hotkey_layout_undo: currentHotkeys.hotkey_layout_undo,
             hotkey_layout_exclude: currentHotkeys.hotkey_layout_exclude,
             stt_engine: sttEngine,
-            tts_engine: document.getElementById('setting-tts-engine').value,
+            tts_engine: document.getElementById('setting-tts-engine').value || 'edge',
             stt_local_model: sttLocalModel,
             tts_local_voice: document.getElementById('setting-tts-local-voice').value,
+            tts_gemini_model: document.getElementById('setting-tts-gemini-model')?.value || 'gemini-2.5-flash-native-audio-latest',
+            tts_gemini_thinking: document.getElementById('setting-tts-gemini-thinking')?.value || 'off',
             tts_expressive_intonation: ttsExpressiveVal,
             tts_start_buffer_chars: ttsStartBufferCharsVal,
             widget_scale: widgetScaleVal,
@@ -1400,6 +1443,8 @@
             if (window.ttsEngine) {
               window.ttsEngine.settings.expressive = fields.tts_expressive_intonation;
               window.ttsEngine.settings.startBufferChars = fields.tts_start_buffer_chars;
+              window.ttsEngine.settings.tts_gemini_model = fields.tts_gemini_model;
+              window.ttsEngine.settings.tts_gemini_thinking = fields.tts_gemini_thinking;
               localStorage.setItem('tts-settings', JSON.stringify(window.ttsEngine.settings));
             }
             
@@ -1410,6 +1455,8 @@
                 settings: {
                   tts_engine: fields.tts_engine,
                   tts_local_voice: fields.tts_local_voice,
+                  tts_gemini_model: fields.tts_gemini_model,
+                  tts_gemini_thinking: fields.tts_gemini_thinking,
                   expressive: fields.tts_expressive_intonation,
                   startBufferChars: fields.tts_start_buffer_chars
                 }
@@ -1977,6 +2024,8 @@
       document.getElementById('setting-tts-engine').addEventListener('change', () => saveConfig(true));
       document.getElementById('setting-stt-local-model').addEventListener('change', () => saveConfig(true));
       document.getElementById('setting-tts-local-voice').addEventListener('change', () => saveConfig(true));
+      document.getElementById('setting-tts-gemini-model')?.addEventListener('change', () => saveConfig(true));
+      document.getElementById('setting-tts-gemini-thinking')?.addEventListener('change', () => saveConfig(true));
 
       const userNameInputEl = document.getElementById('setting-user-name');
       if (userNameInputEl) {
@@ -3917,13 +3966,13 @@
             console.error("Failed to load app version:", err);
             const versionDisplay = document.getElementById('app-version-display');
             if (versionDisplay) {
-              versionDisplay.textContent = `Текущая версия: 3.5.36`;
+              versionDisplay.textContent = `Текущая версия: 3.5.38`;
             }
           });
         } else {
           const versionDisplay = document.getElementById('app-version-display');
           if (versionDisplay) {
-            versionDisplay.textContent = `Текущая версия: 3.5.36 (Mock)`;
+            versionDisplay.textContent = `Текущая версия: 3.5.38 (Mock)`;
           }
         }
 

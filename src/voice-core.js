@@ -205,7 +205,9 @@ class VoiceCore {
             expressive: true,
             startBufferChars: 300,
             tts_engine: 'edge',
-            tts_local_voice: 'ru_RU-dmitri-medium.onnx'
+            tts_local_voice: 'ru_RU-dmitri-medium.onnx',
+            tts_gemini_model: 'gemini-2.5-flash-native-audio-latest',
+            tts_gemini_thinking: 'off'
         };
         this._lastProgressBroadcastTime = 0;
         this._lastBroadcastPlayedPct = -1;
@@ -229,6 +231,8 @@ class VoiceCore {
                 }
                 if (config.tts_engine) this.settings.tts_engine = config.tts_engine;
                 if (config.tts_local_voice) this.settings.tts_local_voice = config.tts_local_voice;
+                if (config.tts_gemini_model) this.settings.tts_gemini_model = config.tts_gemini_model;
+                if (config.tts_gemini_thinking) this.settings.tts_gemini_thinking = config.tts_gemini_thinking;
                 this.settings.installedVoices = voices;
                 this.audioElement.playbackRate = this.settings.speed;
                 this.applyEffectiveVolume(this.settings.volume);
@@ -246,7 +250,9 @@ class VoiceCore {
                 expressive: savedSettings.expressive !== undefined ? !!savedSettings.expressive : true,
                 startBufferChars: isNaN(parsedBuf) ? 300 : Math.max(0, Math.min(5000, parsedBuf)),
                 tts_engine: savedSettings.tts_engine || 'edge',
-                tts_local_voice: savedSettings.tts_local_voice || 'ru_RU-dmitri-medium.onnx'
+                tts_local_voice: savedSettings.tts_local_voice || 'ru_RU-dmitri-medium.onnx',
+                tts_gemini_model: savedSettings.tts_gemini_model || 'gemini-2.5-flash-native-audio-latest',
+                tts_gemini_thinking: savedSettings.tts_gemini_thinking || 'off'
             };
         }
 
@@ -509,9 +515,12 @@ class VoiceCore {
 
     getCacheVoiceKey() {
         const isLocal = this.settings.tts_engine === 'local';
+        const isGemini = this.settings.tts_engine === 'gemini' || (this.settings.voice && this.settings.voice.startsWith('gemini:'));
         const baseVoiceKey = isLocal 
             ? (this.settings.tts_local_voice || 'ru_RU-dmitri-medium.onnx')
-            : (this.settings.voice || 'ru-RU-SvetlanaNeural');
+            : isGemini
+                ? `${this.settings.voice || 'gemini:Aoede'}_${this.settings.tts_gemini_model || 'gemini-2.5-flash-native-audio-latest'}_${this.settings.tts_gemini_thinking || 'off'}`
+                : (this.settings.voice || 'ru-RU-SvetlanaNeural');
         return `${baseVoiceKey}${this.settings.expressive !== false ? '' : '_flat'}`;
     }
 
@@ -795,7 +804,8 @@ class VoiceCore {
                         this.lastNetworkRequestTime = Date.now();
                         
                         if (this.audioBuffers === currentBuffersRef) {
-                            const dataUrl = `data:audio/mp3;base64,${base64Audio}`;
+                            const mime = base64Audio.startsWith('UklGR') ? 'audio/wav' : 'audio/mp3';
+                            const dataUrl = `data:${mime};base64,${base64Audio}`;
                             this.audioBuffers[i] = dataUrl;
                             // Сохраняем в RAM и 3-дневную базу IndexedDB
                             this.cache.set(cacheVoiceKey, this.sentences[i], dataUrl).catch(() => {});
@@ -1250,7 +1260,13 @@ class VoiceCore {
                         }
                         if (p.tts_engine !== undefined) this.settings.tts_engine = p.tts_engine;
                         if (p.tts_local_voice !== undefined) this.settings.tts_local_voice = p.tts_local_voice;
+                        if (p.tts_gemini_model !== undefined) this.settings.tts_gemini_model = p.tts_gemini_model;
+                        if (p.tts_gemini_thinking !== undefined) this.settings.tts_gemini_thinking = p.tts_gemini_thinking;
                         if (p.installedVoices !== undefined) this.settings.installedVoices = p.installedVoices;
+                    }
+                    if (src.tts_engine !== undefined) {
+                        const ttsEngEl = document.getElementById('setting-tts-engine');
+                        if (ttsEngEl) ttsEngEl.value = src.tts_engine;
                     }
                     if (src.startBufferChars !== undefined) {
                         const parsedBuf = parseInt(src.startBufferChars, 10);
@@ -1295,7 +1311,9 @@ class VoiceCore {
                             tts_expressive_intonation: this.settings.expressive,
                             tts_start_buffer_chars: this.settings.startBufferChars,
                             tts_engine: this.settings.tts_engine,
-                            tts_local_voice: this.settings.tts_local_voice
+                            tts_local_voice: this.settings.tts_local_voice,
+                            tts_gemini_model: this.settings.tts_gemini_model,
+                            tts_gemini_thinking: this.settings.tts_gemini_thinking
                         }}).catch(()=>{});
                     }
                     if (this.onSettingsSync) this.onSettingsSync(this.settings);

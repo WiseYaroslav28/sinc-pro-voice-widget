@@ -2,6 +2,25 @@
 
 Все заметные изменения в этом проекте документируются в этом файле по стандарту [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/).
 
+## [3.5.38] - 2026-11-09
+
+### Added
+- **Озвучка текста через Gemini Live API по постоянному WebSocket-соединению (`BidiGenerateContent`) с управлением глубиной размышления (`src-tauri/src/lib.rs`, `src/tts-widget.js`, `src/voice-core.js`, `src/tts.js`, `src/index.html`)**:
+  - **Поддержка всех 4 моделей Gemini Live API (квоты `Unlimited RPM` и `Unlimited RPD` в Google AI Studio)**:
+    - `gemini-2.5-flash-native-audio-latest` (*Gemini 2.5 Flash Native Audio Dialog*, `1M TPM`)
+    - `gemini-3.8-live` (*Gemini 3.8 Live*, сверхбыстрый отклик ~`0.5–0.7 с` до первого аудио-чанка)
+    - `gemini-3.1-flash-live-preview` (*Gemini 3 Flash Live*)
+    - `gemini-3.8-live-extended-thinking` (*Gemini 3.8 Live Extended Thinking*)
+  - **Единое постоянное двунаправленное WebSocket-соединение (`PersistentGeminiLiveWs` через `BidiGenerateContent`)**:
+    - Сокет открывается и инициализируется (`setup` → `setupComplete`) один раз, после чего последовательно озвучивает серию предложений без повторного TLS/WebSocket-рукопожатия.
+    - Поддерживается автоматическая ротация нескольких ключей API (через запятую/пробел в настройках) и мгновенное переподключение при закрытии сокета по таймауту простоя.
+  - **Управление глубиной размышления при озвучке (`tts_gemini_thinking`)**:
+    - Для `gemini-2.5-flash-native-audio-latest` управляется через `thinkingConfig.thinkingBudget` (`0` — размышление полностью отключено для мгновенного старта озвучки, либо `128` / `512` / `1024`).
+    - Для `gemini-3.8-live-extended-thinking` управляется через `thinkingConfig.thinkingLevel` (`"LOW"`, `"MEDIUM"`, `"HIGH"`).
+  - **8 нативных голосов Gemini Live в меню выбора голоса плеера (`#tts-voice-menu`)**:
+    - Добавлены женские (`Aoede`, `Kore`, `Leda`, `Zephyr`) и мужские (`Charon`, `Fenrir`, `Puck`, `Orus`) голоса Gemini Live (24 кГц, 16-бит PCM → WAV) с поддержкой как выразительной дикторской подачи, так и спокойного нейтрального чтения технических текстов, кода и смешанной русско-английской терминологии без акцента и без пропусков.
+  - **Включена обратная текстовая транскрибация (`outputAudioTranscription: {}`)** в WebSocket-сессии Gemini Live API.
+
 ## [3.5.37] - 2026-11-08
 
 ### Fixed

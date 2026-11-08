@@ -56,6 +56,10 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (action === 'setting') {
                 if (payload.speed !== undefined) {
                     engine.settings.speed = payload.speed;
+                    localStorage.setItem('tts-settings', JSON.stringify(engine.settings));
+                    if (invoke) {
+                        invoke('update_config_fields', { fields: { tts_speed: payload.speed } }).catch(() => {});
+                    }
                     engine.broadcastState('setting', { speed: payload.speed });
                     if (engine.isPlaying) {
                         engine.audioElement.playbackRate = engine.settings.speed;
@@ -63,13 +67,29 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 if (payload.volume !== undefined) {
                     engine.applyEffectiveVolume(payload.volume);
+                    localStorage.setItem('tts-settings', JSON.stringify(engine.settings));
+                    if (invoke) {
+                        invoke('update_config_fields', { fields: { tts_volume: engine.settings.volume } }).catch(() => {});
+                    }
                     engine.broadcastState('setting', { volume: engine.settings.volume });
                 }
                 if (payload.voice !== undefined || payload.tts_local_voice !== undefined || payload.tts_engine !== undefined) {
                     const wasPlaying = engine.isPlaying;
                     if (payload.voice !== undefined) engine.settings.voice = payload.voice;
-                    if (payload.tts_engine !== undefined) engine.settings.tts_engine = payload.tts_engine;
+                    if (payload.tts_engine !== undefined) {
+                        engine.settings.tts_engine = payload.tts_engine;
+                        const ttsEngEl = document.getElementById('setting-tts-engine');
+                        if (ttsEngEl) ttsEngEl.value = payload.tts_engine;
+                    }
                     if (payload.tts_local_voice !== undefined) engine.settings.tts_local_voice = payload.tts_local_voice;
+                    localStorage.setItem('tts-settings', JSON.stringify(engine.settings));
+                    if (invoke) {
+                        invoke('update_config_fields', { fields: {
+                            tts_voice: engine.settings.voice,
+                            tts_engine: engine.settings.tts_engine,
+                            tts_local_voice: engine.settings.tts_local_voice
+                        }}).catch(() => {});
+                    }
                     
                     engine.broadcastState('setting', { 
                         voice: engine.settings.voice,
