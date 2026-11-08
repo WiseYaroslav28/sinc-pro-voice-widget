@@ -563,7 +563,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const { action, ...payload } = e.detail;
       
       // Отправляем в главное окно
-      if (action === 'play' || action === 'pause' || action === 'stop') {
+      if (action === 'play' || action === 'force_play' || action === 'pause' || action === 'stop') {
         await emit('tts-state-sync', { action });
       } else if (action === 'setting') {
         // VoiceCore ожидает action: 'settings' в событии tts-state-sync
@@ -571,10 +571,10 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
-    // Мгновенный отклик кнопки Play -> Pause (0 мс) прямо по нажатию глобального хоткея Ctrl+Shift / Ctrl+Alt
+    // Мгновенный отклик кнопки Play (режим ожидания стартового буфера с миганием) прямо по нажатию глобального хоткея Ctrl+Shift / Ctrl+Alt
     const activateImmediatePlayState = () => {
       if (root && root.updateState) {
-        root.updateState({ isPlaying: true, isPaused: false, percentBuffered: 6, percentPlayed: 0 });
+        root.updateState({ isPlaying: true, isPaused: false, isPrebuffering: true, percentBuffered: 4, percentPlayed: 0 });
       }
       if (widgetContainer && widgetContainer.classList.contains('hover-collapsed') && hoveredPlayWhileCollapsed) {
         widgetContainer.classList.add('stop-peek');
@@ -589,25 +589,51 @@ document.addEventListener('DOMContentLoaded', () => {
       if (event.payload) {
         const p = event.payload;
         if (p.action === 'play') {
-          root.updateState({ isPlaying: true, isPaused: false });
+          root.updateState({
+            isPlaying: true,
+            isPaused: false,
+            isPrebuffering: p.isPrebuffering !== undefined ? !!p.isPrebuffering : false,
+            bufferedChars: p.bufferedChars,
+            targetBufferChars: p.targetBufferChars
+          });
           if (widgetContainer && widgetContainer.classList.contains('hover-collapsed') && hoveredPlayWhileCollapsed) {
             widgetContainer.classList.add('stop-peek');
             updateClickRegion('hover_collapsed');
           }
+        } else if (p.action === 'prebuffering') {
+          root.updateState({
+            isPlaying: true,
+            isPaused: false,
+            isPrebuffering: true,
+            bufferedChars: p.bufferedChars,
+            targetBufferChars: p.targetBufferChars
+          });
+          if (widgetContainer && widgetContainer.classList.contains('hover-collapsed') && hoveredPlayWhileCollapsed) {
+            widgetContainer.classList.add('stop-peek');
+            updateClickRegion('hover_collapsed');
+          }
+        } else if (p.action === 'force_play') {
+          root.updateState({ isPlaying: true, isPaused: false, isPrebuffering: false });
         } else if (p.action === 'pause') {
-          root.updateState({ isPlaying: false, isPaused: true });
+          root.updateState({ isPlaying: false, isPaused: true, isPrebuffering: false });
           if (widgetContainer && widgetContainer.classList.contains('hover-collapsed') && hoveredPlayWhileCollapsed) {
             widgetContainer.classList.add('stop-peek');
             updateClickRegion('hover_collapsed');
           }
         } else if (p.action === 'stop') {
-          root.updateState({ isPlaying: false, isPaused: false });
+          root.updateState({ isPlaying: false, isPaused: false, isPrebuffering: false });
           if (widgetContainer && widgetContainer.classList.contains('stop-peek')) {
             widgetContainer.classList.remove('stop-peek');
             updateClickRegion('hover_collapsed');
           }
         } else if (p.action === 'progress') {
-          root.updateState({ percentBuffered: p.percentBuffered, percentPlayed: p.percentPlayed });
+          root.updateState({
+            percentBuffered: p.percentBuffered,
+            percentPlayed: p.percentPlayed,
+            isPrebuffering: p.isPrebuffering,
+            bufferedChars: p.bufferedChars,
+            targetBufferChars: p.targetBufferChars
+          });
         } else if (p.action === 'settings' || p.action === 'setting') {
           root.updateState(p.settings || p);
         }

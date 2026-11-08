@@ -870,6 +870,19 @@
                   <input type="checkbox" id="setting-tts-intonation" style="display:none;" checked />
                 </div>
 
+                <!-- Стартовый буфер озвучки (в символах) -->
+                <div class="flex items-center justify-between gap-4 pt-4 border-t border-[#4a4455]/20">
+                  <div>
+                    <div class="text-[13px] text-[#e4e1e9] font-medium">Стартовый буфер озвучки (символов)</div>
+                    <div class="text-[11px] text-[#ccc3d8] mt-0.5">Начинать чтение после предзагрузки указанного объёма символов (если текст короче лимита — после полной загрузки; клик по мигающей кнопке Play запускает речь сразу)</div>
+                  </div>
+                  <div class="flex items-center gap-2 flex-shrink-0">
+                    <input type="number" id="setting-tts-buffer-chars" min="0" max="5000" step="50" value="300"
+                           class="w-[96px] bg-[#1b1b20] border border-[#4a4455]/40 focus:border-[#8e52ff] text-[#e4e1e9] font-mono font-bold text-[13px] text-center rounded-lg px-2.5 py-1.5 focus:outline-none transition-colors" />
+                    <span class="text-[11px] text-[#ccc3d8] font-mono">симв.</span>
+                  </div>
+                </div>
+
                 <!-- Масштаб плавающих виджетов -->
                 <div class="flex flex-col gap-2.5 pt-4 border-t border-[#4a4455]/20">
                   <div class="flex items-center justify-between gap-4">
@@ -1274,14 +1287,21 @@
               intonationToggle.checked = intonationVal;
               syncIntonationToggleUI(intonationVal);
             }
+            const rawBufferChars = parseInt(config.tts_start_buffer_chars, 10);
+            const startBufferCharsVal = isNaN(rawBufferChars) ? 300 : Math.max(0, Math.min(5000, rawBufferChars));
+            const bufferCharsInput = document.getElementById('setting-tts-buffer-chars');
+            if (bufferCharsInput) {
+              bufferCharsInput.value = String(startBufferCharsVal);
+            }
             if (window.ttsEngine) {
               window.ttsEngine.settings.expressive = intonationVal;
+              window.ttsEngine.settings.startBufferChars = startBufferCharsVal;
               localStorage.setItem('tts-settings', JSON.stringify(window.ttsEngine.settings));
             }
             if (window.__TAURI__) {
               window.__TAURI__.event.emit('tts-state-sync', {
                 action: 'settings',
-                settings: { expressive: intonationVal }
+                settings: { expressive: intonationVal, startBufferChars: startBufferCharsVal }
               }).catch(() => {});
             }
 
@@ -1336,6 +1356,10 @@
           const widgetScaleVal = scaleSliderEl ? Math.max(0.7, Math.min(1.5, (parseInt(scaleSliderEl.value, 10) || 100) / 100)) : 1.0;
           const intonationToggleEl = document.getElementById('setting-tts-intonation');
           const ttsExpressiveVal = intonationToggleEl ? intonationToggleEl.checked : true;
+          const bufferCharsInputEl = document.getElementById('setting-tts-buffer-chars');
+          const rawBufVal = bufferCharsInputEl ? parseInt(bufferCharsInputEl.value, 10) : 300;
+          const ttsStartBufferCharsVal = isNaN(rawBufVal) ? 300 : Math.max(0, Math.min(5000, rawBufVal));
+          if (bufferCharsInputEl) bufferCharsInputEl.value = String(ttsStartBufferCharsVal);
 
           const fields = {
             user_name: userNameVal,
@@ -1361,6 +1385,7 @@
             stt_local_model: sttLocalModel,
             tts_local_voice: document.getElementById('setting-tts-local-voice').value,
             tts_expressive_intonation: ttsExpressiveVal,
+            tts_start_buffer_chars: ttsStartBufferCharsVal,
             widget_scale: widgetScaleVal,
             layout_excluded_words: layoutExcludedWords,
             layout_excluded_processes: layoutExcludedProcesses,
@@ -1372,6 +1397,11 @@
             syncHotkeysEverywhere();
             updateApiStatus(fields.api_key);
             localStorage.setItem('apiKey', fields.api_key || '');
+            if (window.ttsEngine) {
+              window.ttsEngine.settings.expressive = fields.tts_expressive_intonation;
+              window.ttsEngine.settings.startBufferChars = fields.tts_start_buffer_chars;
+              localStorage.setItem('tts-settings', JSON.stringify(window.ttsEngine.settings));
+            }
             
             // Синхронизируем VoiceCore
             if (window.__TAURI__) {
@@ -1380,7 +1410,8 @@
                 settings: {
                   tts_engine: fields.tts_engine,
                   tts_local_voice: fields.tts_local_voice,
-                  expressive: fields.tts_expressive_intonation
+                  expressive: fields.tts_expressive_intonation,
+                  startBufferChars: fields.tts_start_buffer_chars
                 }
               });
             }
@@ -1951,6 +1982,17 @@
       if (userNameInputEl) {
         userNameInputEl.addEventListener('change', () => saveConfig(true));
         userNameInputEl.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            saveConfig(true);
+          }
+        });
+      }
+
+      const ttsBufferCharsInputEl = document.getElementById('setting-tts-buffer-chars');
+      if (ttsBufferCharsInputEl) {
+        ttsBufferCharsInputEl.addEventListener('change', () => saveConfig(true));
+        ttsBufferCharsInputEl.addEventListener('keydown', (e) => {
           if (e.key === 'Enter') {
             e.preventDefault();
             saveConfig(true);
@@ -3875,13 +3917,13 @@
             console.error("Failed to load app version:", err);
             const versionDisplay = document.getElementById('app-version-display');
             if (versionDisplay) {
-              versionDisplay.textContent = `Текущая версия: 3.5.35`;
+              versionDisplay.textContent = `Текущая версия: 3.5.36`;
             }
           });
         } else {
           const versionDisplay = document.getElementById('app-version-display');
           if (versionDisplay) {
-            versionDisplay.textContent = `Текущая версия: 3.5.35 (Mock)`;
+            versionDisplay.textContent = `Текущая версия: 3.5.36 (Mock)`;
           }
         }
 

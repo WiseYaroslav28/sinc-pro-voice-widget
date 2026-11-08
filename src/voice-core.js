@@ -187,6 +187,8 @@ class VoiceCore {
         this.isPrefetching = false; // Флаг работы фоновой очереди
         this.isPrebuffering = false; // Флаг начального накопления буфера перед стартом звука
         this._prebufferCompleted = false;
+        this._initialBufferCompleted = false;
+        this._forceBypassBuffer = false;
         this.currentlyLoading = new Set(); // Набор индексов предложений, находящихся в процессе загрузки
         this.lastNetworkRequestTime = 0; // Время завершения последнего сетевого запроса к Edge TTS
         this.isNetworkFetching = false; // Флаг активного сетевого запроса к Edge TTS
@@ -201,12 +203,14 @@ class VoiceCore {
             volume: 1.0,
             translate: false,
             expressive: true,
+            startBufferChars: 300,
             tts_engine: 'edge',
             tts_local_voice: 'ru_RU-dmitri-medium.onnx'
         };
         this._lastProgressBroadcastTime = 0;
         this._lastBroadcastPlayedPct = -1;
         this._lastBroadcastBufferedPct = -1;
+        this._lastBroadcastPrebuffering = null;
 
         if (window.__TAURI__) {
             const { invoke } = window.__TAURI__.core;
@@ -219,6 +223,10 @@ class VoiceCore {
                 if (config.tts_volume !== undefined) this.settings.volume = Math.max(0, Math.min(2.0, parseFloat(config.tts_volume)));
                 if (config.tts_translate !== undefined) this.settings.translate = config.tts_translate;
                 if (config.tts_expressive_intonation !== undefined) this.settings.expressive = !!config.tts_expressive_intonation;
+                if (config.tts_start_buffer_chars !== undefined) {
+                    const parsedBuf = parseInt(config.tts_start_buffer_chars, 10);
+                    this.settings.startBufferChars = isNaN(parsedBuf) ? 300 : Math.max(0, Math.min(5000, parsedBuf));
+                }
                 if (config.tts_engine) this.settings.tts_engine = config.tts_engine;
                 if (config.tts_local_voice) this.settings.tts_local_voice = config.tts_local_voice;
                 this.settings.installedVoices = voices;
@@ -229,12 +237,14 @@ class VoiceCore {
             }).catch(()=>{});
         } else {
             const savedSettings = JSON.parse(localStorage.getItem('tts-settings') || '{}');
+            const parsedBuf = parseInt(savedSettings.startBufferChars, 10);
             this.settings = {
                 voice: savedSettings.voice || 'ru-RU-SvetlanaNeural',
                 speed: savedSettings.speed || 1.0,
                 volume: savedSettings.volume !== undefined ? Math.max(0, Math.min(2.0, parseFloat(savedSettings.volume))) : 1.0,
                 translate: savedSettings.translate || false,
                 expressive: savedSettings.expressive !== undefined ? !!savedSettings.expressive : true,
+                startBufferChars: isNaN(parsedBuf) ? 300 : Math.max(0, Math.min(5000, parsedBuf)),
                 tts_engine: savedSettings.tts_engine || 'edge',
                 tts_local_voice: savedSettings.tts_local_voice || 'ru_RU-dmitri-medium.onnx'
             };
@@ -553,13 +563,72 @@ class VoiceCore {
         }
     }
 
+    getStartBufferStatus() {
+        if (!this.sentences || this.sentences.length === 0 || this.currentSentenceIndex >= this.sentences.length) {
+            return { loadedChars: 0, targetChars: 0, allLoaded: true, isReady: true, neededSentencesCount: 0 };
+        }
+        const rawLimit = parseInt(this.settings.startBufferChars, 10);
+        const limitChars = isNaN(rawLimit) ? 300 : Math.max(0, rawLimit);
+
+        let totalRemainingChars = 0;
+        let allRemainingLoaded = true;
+        let neededSentencesCount = 0;
+        let accTargetChars = 0;
+
+        for (let i = this.currentSentenceIndex; i < this.sentences.length; i++) {
+            const len = (this.sentences[i] || '').length;
+            totalRemainingChars += len;
+            if (accTargetChars < limitChars) {
+                accTargetChars += len;
+                neededSentencesCount++;
+            }
+            const buf = this.audioBuffers[i];
+            if (!buf || (!buf.startsWith('data:') && buf !== 'ERROR')) {
+                allRemainingLoaded = false;
+            }
+        }
+
+        const targetChars = Math.min(limitChars, totalRemainingChars);
+
+        // Считаем суммарную длину непрерывно загруженных предложений начиная с currentSentenceIndex
+        let loadedChars = 0;
+        for (let i = this.currentSentenceIndex; i < this.sentences.length; i++) {
+            const buf = this.audioBuffers[i];
+            if (buf && (buf.startsWith('data:') || buf === 'ERROR')) {
+                loadedChars += (this.sentences[i] || '').length;
+            } else {
+                break;
+            }
+        }
+
+        const firstReady = !!(this.audioBuffers[this.currentSentenceIndex] && this.audioBuffers[this.currentSentenceIndex].startsWith('data:'));
+        const isReady = firstReady && (
+            this._forceBypassBuffer ||
+            this._initialBufferCompleted ||
+            targetChars <= 0 ||
+            loadedChars >= targetChars ||
+            allRemainingLoaded
+        );
+
+        return {
+            loadedChars,
+            targetChars,
+            allLoaded: allRemainingLoaded,
+            isReady,
+            neededSentencesCount: Math.max(1, neededSentencesCount)
+        };
+    }
+
     preparePlayback() {
         this.audioElement.pause();
         this.audioElement.removeAttribute('src');
         this._playingSentenceIndex = -1;
         this.isPrefetching = false;
-        this.isPrebuffering = false;
-        this._prebufferCompleted = true;
+        const limitChars = Math.max(0, parseInt(this.settings.startBufferChars ?? 300, 10) || 0);
+        this.isPrebuffering = limitChars > 0;
+        this._prebufferCompleted = false;
+        this._initialBufferCompleted = false;
+        this._forceBypassBuffer = false;
         this.currentQueueId = null;
         this.currentlyLoading.clear();
         this.currentText = "";
@@ -570,15 +639,22 @@ class VoiceCore {
         this.isPlaying = true;
         this.isPaused = false;
         this.notifyState();
-        this.broadcastState('play');
+        this.broadcastState('play', {
+            isPrebuffering: this.isPrebuffering,
+            bufferedChars: 0,
+            targetBufferChars: limitChars
+        });
         if (this.onProgress) {
-            this.onProgress(6, 0);
+            this.onProgress(4, 0);
         }
         if (window.__TAURI__) {
             window.__TAURI__.event.emit('tts-state-sync', {
                 action: 'progress',
-                percentBuffered: 6,
-                percentPlayed: 0
+                percentBuffered: 4,
+                percentPlayed: 0,
+                isPrebuffering: this.isPrebuffering,
+                bufferedChars: 0,
+                targetBufferChars: limitChars
             });
         }
     }
@@ -620,18 +696,19 @@ class VoiceCore {
         this.currentSentenceIndex = 0;
         this.isPlaying = autoPlay;
         this.isPaused = false;
-        this.isPrebuffering = false;
-        this._prebufferCompleted = true;
+        this._initialBufferCompleted = false;
+        this._forceBypassBuffer = false;
+        const bufStatus = this.getStartBufferStatus();
+        this.isPrebuffering = autoPlay && this.sentences.length > 0 && !bufStatus.isReady;
+        this._prebufferCompleted = !this.isPrebuffering;
         this.notifyState();
         this.updateProgress();
         
         if (this.sentences.length > 0) {
-            // Если первое предложение уже в памяти/кэше и включен autoPlay — начинаем говорить в 0 мс!
             if (autoPlay) {
                 this.playCurrentSentence();
             }
-            // Мгновенно запускаем последовательную очередь (она сразу проверит кэш для 0-го предложения или скачает его),
-            // и параллельно поднимаем остальные закэшированные предложения из 3-дневной базы IndexedDB
+            // Мгновенно запускаем очередь предзагрузки и параллельно поднимаем закэшированные предложения из базы IndexedDB
             this.startPrefetchQueue();
             this.loadCachedSentences(0);
         }
@@ -772,7 +849,7 @@ class VoiceCore {
 
     async startPrefetchQueue() {
         const CONCURRENCY = 2;
-        const windowSize = 8; // текущее предложение + 7 предложений наперёд
+        const baseWindowSize = 8; // минимум 8 предложений наперёд
 
         if (!this.currentQueueId) {
             this.currentQueueId = Date.now() + Math.random();
@@ -781,9 +858,16 @@ class VoiceCore {
         const queueId = this.currentQueueId;
         const currentBuffersRef = this.audioBuffers;
 
+        const getEffectiveWindowEnd = () => {
+            const startIndex = this.currentSentenceIndex;
+            const { neededSentencesCount } = this.getStartBufferStatus();
+            const dynamicWindow = Math.max(baseWindowSize, (neededSentencesCount || 0) + 3);
+            return Math.min(startIndex + dynamicWindow, this.sentences.length);
+        };
+
         const hasUnloadedInWindow = () => {
             const startIndex = this.currentSentenceIndex;
-            const endIndex = Math.min(startIndex + windowSize, this.sentences.length);
+            const endIndex = getEffectiveWindowEnd();
             for (let i = startIndex; i < endIndex; i++) {
                 if (!this.audioBuffers[i] && !this.currentlyLoading.has(i)) {
                     return true;
@@ -806,7 +890,7 @@ class VoiceCore {
                     }
 
                     const startIndex = this.currentSentenceIndex;
-                    const endIndex = Math.min(startIndex + windowSize, this.sentences.length);
+                    const endIndex = getEffectiveWindowEnd();
 
                     let targetIndex = -1;
                     for (let i = startIndex; i < endIndex; i++) {
@@ -846,6 +930,8 @@ class VoiceCore {
             this.log(`seek() called to index ${index}`);
             this.currentSentenceIndex = index;
             this._playingSentenceIndex = -1;
+            this._initialBufferCompleted = false;
+            this._forceBypassBuffer = false;
             this.isPrebuffering = false;
             this._rebufferTargetIndex = -1;
             if (this.audioBuffers[index] === "ERROR") {
@@ -869,26 +955,41 @@ class VoiceCore {
         }
     }
 
-    async play(shouldBroadcast = true) {
-        this.log('play() called, sentences=' + this.sentences.length);
+    forcePlay(shouldBroadcast = true) {
+        this.log('forcePlay() called — bypassing start buffer wait');
         if (this.sentences.length === 0) {
-            this.stop(shouldBroadcast); 
             return;
         }
-        
+        this._forceBypassBuffer = true;
+        this._initialBufferCompleted = true;
         this.isPlaying = true;
         this.isPaused = false;
         this.isPrebuffering = false;
         this._rebufferTargetIndex = -1;
         this.notifyState();
-        
-        if (window.__TAURI__) {
-            window.__TAURI__.event.emit('tts-playing-started');
-        }
-        
         if (shouldBroadcast) {
-            this.broadcastState('play');
+            this.broadcastState('play', { isPrebuffering: false });
         }
+        this.playCurrentSentence();
+    }
+
+    async play(shouldBroadcast = true) {
+        this.log('play() called, sentences=' + this.sentences.length + ', isPlaying=' + this.isPlaying + ', isPrebuffering=' + this.isPrebuffering);
+        if (this.sentences.length === 0) {
+            this.stop(shouldBroadcast); 
+            return;
+        }
+
+        // Если уже находимся в состоянии накопления стартового буфера (кнопка Play мигает) и пользователь нажал Play вручную —
+        // принудительно запускаем озвучку сразу, не дожидаясь полного буфера!
+        if (this.isPlaying && this.isPrebuffering) {
+            this.forcePlay(shouldBroadcast);
+            return;
+        }
+        
+        this.isPlaying = true;
+        this.isPaused = false;
+        this._rebufferTargetIndex = -1;
 
         const hasSrc = this.audioElement.hasAttribute('src');
         const ended = this.audioElement.ended;
@@ -896,6 +997,15 @@ class VoiceCore {
         this.log('play() state: hasSrc=' + hasSrc + ' ended=' + ended + ' paused=' + paused);
 
         if (hasSrc && !ended && paused && this._playingSentenceIndex === this.currentSentenceIndex) {
+            this.isPrebuffering = false;
+            this._initialBufferCompleted = true;
+            this.notifyState();
+            if (window.__TAURI__) {
+                window.__TAURI__.event.emit('tts-playing-started');
+            }
+            if (shouldBroadcast) {
+                this.broadcastState('play', { isPrebuffering: false });
+            }
             this.log('play() -> resuming audio');
             this.ensureAudioBoostGraph();
             this.applyEffectiveVolume(this.settings.volume !== undefined ? this.settings.volume : 1.0);
@@ -907,6 +1017,19 @@ class VoiceCore {
                 }
             });
         } else {
+            const bufStatus = this.getStartBufferStatus();
+            this.isPrebuffering = !bufStatus.isReady;
+            this.notifyState();
+            if (window.__TAURI__) {
+                window.__TAURI__.event.emit('tts-playing-started');
+            }
+            if (shouldBroadcast) {
+                this.broadcastState('play', {
+                    isPrebuffering: this.isPrebuffering,
+                    bufferedChars: bufStatus.loadedChars,
+                    targetBufferChars: bufStatus.targetChars
+                });
+            }
             this.log('play() -> playCurrentSentence()');
             this.playCurrentSentence();
         }
@@ -915,6 +1038,7 @@ class VoiceCore {
     pause(shouldBroadcast = true) {
         this.isPlaying = false;
         this.isPaused = true;
+        this.isPrebuffering = false;
         this.audioElement.pause();
         this.notifyState();
         if (shouldBroadcast) {
@@ -926,6 +1050,8 @@ class VoiceCore {
         this.isPlaying = false;
         this.isPaused = false;
         this.isPrebuffering = false;
+        this._initialBufferCompleted = false;
+        this._forceBypassBuffer = false;
         this._rebufferTargetIndex = -1;
         this._prebufferCompleted = true;
         this._playingSentenceIndex = -1;
@@ -982,9 +1108,42 @@ class VoiceCore {
             }
         }
 
+        // Если мы догнали загрузку в середине текста и следующего предложения ещё нет в памяти,
+        // снова включаем накопление буфера (если пользователь не нажал принудительный Play)
+        if (!currentBuf || !currentBuf.startsWith("data:")) {
+            if (!this._forceBypassBuffer) {
+                this._initialBufferCompleted = false;
+            }
+        }
+
+        const bufStatus = this.getStartBufferStatus();
+        if (!bufStatus.isReady) {
+            const wasPrebuffering = this.isPrebuffering;
+            this.isPrebuffering = true;
+            this.notifyState();
+            if (!wasPrebuffering) {
+                this.broadcastState('prebuffering', {
+                    isPrebuffering: true,
+                    bufferedChars: bufStatus.loadedChars,
+                    targetBufferChars: bufStatus.targetChars
+                });
+            }
+            this.log(`playCurrentSentence() - waiting for start buffer (${bufStatus.loadedChars}/${bufStatus.targetChars} chars, allLoaded=${bufStatus.allLoaded})`);
+            this.startPrefetchQueue();
+            this.updateProgress();
+            return;
+        }
+
         if (currentBuf && currentBuf.startsWith("data:")) {
+            const wasPrebuffering = this.isPrebuffering;
             this.isPrebuffering = false;
+            this._initialBufferCompleted = true;
+            this._forceBypassBuffer = false;
             this._rebufferTargetIndex = -1;
+            this.notifyState();
+            if (wasPrebuffering) {
+                this.broadcastState('play', { isPrebuffering: false });
+            }
 
             // Защита от повторного перезапуска уже играющего предложения
             if (this._playingSentenceIndex === this.currentSentenceIndex && this.audioElement.hasAttribute('src') && !this.audioElement.ended) {
@@ -1045,7 +1204,13 @@ class VoiceCore {
                 const p = event.payload;
                 if (p.sender === this.instanceId) return;
                 if (p.action === 'play') {
-                    if (!this.isPlaying) this.play(false);
+                    if (!this.isPlaying) {
+                        this.play(false);
+                    } else if (this.isPrebuffering && p.isPrebuffering === false) {
+                        this.forcePlay(false);
+                    }
+                } else if (p.action === 'force_play') {
+                    this.forcePlay(false);
                 } else if (p.action === 'pause') {
                     if (this.isPlaying) this.pause(false);
                 } else if (p.action === 'stop') {
@@ -1067,9 +1232,21 @@ class VoiceCore {
                         if (p.voice !== undefined) this.settings.voice = p.voice;
                         if (p.translate !== undefined) this.settings.translate = p.translate;
                         if (p.expressive !== undefined) this.settings.expressive = !!p.expressive;
+                        if (p.startBufferChars !== undefined) {
+                            const parsedBuf = parseInt(p.startBufferChars, 10);
+                            this.settings.startBufferChars = isNaN(parsedBuf) ? 300 : Math.max(0, Math.min(5000, parsedBuf));
+                        }
                         if (p.tts_engine !== undefined) this.settings.tts_engine = p.tts_engine;
                         if (p.tts_local_voice !== undefined) this.settings.tts_local_voice = p.tts_local_voice;
                         if (p.installedVoices !== undefined) this.settings.installedVoices = p.installedVoices;
+                    }
+                    if (src.startBufferChars !== undefined) {
+                        const parsedBuf = parseInt(src.startBufferChars, 10);
+                        this.settings.startBufferChars = isNaN(parsedBuf) ? 300 : Math.max(0, Math.min(5000, parsedBuf));
+                        if (this.isPlaying && this.isPrebuffering) {
+                            this.startPrefetchQueue();
+                            this.playCurrentSentence();
+                        }
                     }
                     if (src.speed !== undefined) {
                         this.audioElement.playbackRate = this.settings.speed;
@@ -1084,8 +1261,11 @@ class VoiceCore {
                         this.isPrefetching = false;
                         this.currentQueueId = null;
                         this._playingSentenceIndex = -1;
-                        this.isPrebuffering = false;
-                        this._prebufferCompleted = true;
+                        this._initialBufferCompleted = false;
+                        this._forceBypassBuffer = false;
+                        const bufStatus = this.getStartBufferStatus();
+                        this.isPrebuffering = this.isPlaying && !bufStatus.isReady;
+                        this._prebufferCompleted = !this.isPrebuffering;
                         if (this.isPlaying) {
                             this.playCurrentSentence();
                         }
@@ -1101,6 +1281,7 @@ class VoiceCore {
                             tts_volume: this.settings.volume,
                             tts_translate: this.settings.translate,
                             tts_expressive_intonation: this.settings.expressive,
+                            tts_start_buffer_chars: this.settings.startBufferChars,
                             tts_engine: this.settings.tts_engine,
                             tts_local_voice: this.settings.tts_local_voice
                         }}).catch(()=>{});
@@ -1120,7 +1301,8 @@ class VoiceCore {
 
     notifyState() {
         if (this.onStateChange) {
-            this.onStateChange(this.isPlaying, this.isPaused);
+            const bufStatus = this.getStartBufferStatus();
+            this.onStateChange(this.isPlaying, this.isPaused, this.isPrebuffering, bufStatus.loadedChars, bufStatus.targetChars);
         }
     }
 
@@ -1132,22 +1314,24 @@ class VoiceCore {
     updateProgress() {
         if (this.sentences.length === 0) return;
         
-        let totalChars = this.currentText.length;
-        if (totalChars === 0) return;
-
+        let totalChars = 0;
         let bufferedChars = 0;
         let playedCharsBeforeCurrent = 0;
 
         for (let i = 0; i < this.sentences.length; i++) {
+            const sLen = (this.sentences[i] || '').length;
+            totalChars += sLen;
             if (this.audioBuffers[i] && this.audioBuffers[i] !== "ERROR") {
-                bufferedChars += this.sentences[i].length;
+                bufferedChars += sLen;
             }
             if (i < this.currentSentenceIndex) {
-                playedCharsBeforeCurrent += this.sentences[i].length;
+                playedCharsBeforeCurrent += sLen;
             }
         }
 
-        const percentBuffered = (bufferedChars / totalChars) * 100;
+        if (totalChars === 0) return;
+
+        const percentBuffered = Math.min(100, (bufferedChars / totalChars) * 100);
         
         let currentSentenceChars = this.sentences[this.currentSentenceIndex] ? this.sentences[this.currentSentenceIndex].length : 0;
         let currentAudioProgress = 0;
@@ -1157,25 +1341,32 @@ class VoiceCore {
         }
 
         const playedChars = playedCharsBeforeCurrent + (currentSentenceChars * currentAudioProgress);
-        const percentPlayed = (playedChars / totalChars) * 100;
+        const percentPlayed = Math.min(100, (playedChars / totalChars) * 100);
+        const bufStatus = this.getStartBufferStatus();
 
         if (this.onProgress) {
-            this.onProgress(percentBuffered, percentPlayed);
+            this.onProgress(percentBuffered, percentPlayed, this.isPrebuffering, bufStatus.loadedChars, bufStatus.targetChars);
         }
 
         if (window.__TAURI__) {
             const now = Date.now();
             const playedDiff = Math.abs(percentPlayed - this._lastBroadcastPlayedPct);
             const bufDiff = Math.abs(percentBuffered - this._lastBroadcastBufferedPct);
+            const prebufChanged = this.isPrebuffering !== this._lastBroadcastPrebuffering;
             const isBoundary = percentPlayed <= 0.1 || percentPlayed >= 99.5 || percentBuffered >= 99.9;
-            if (isBoundary || (now - this._lastProgressBroadcastTime >= 180 && (playedDiff >= 0.4 || bufDiff >= 0.4))) {
+            // При изменении буфера (скачано новое предложение) или смене режима буферизации отправляем мгновенно (0 мс)
+            if (isBoundary || prebufChanged || bufDiff >= 0.1 || (now - this._lastProgressBroadcastTime >= 150 && playedDiff >= 0.4)) {
                 this._lastProgressBroadcastTime = now;
                 this._lastBroadcastPlayedPct = percentPlayed;
                 this._lastBroadcastBufferedPct = percentBuffered;
+                this._lastBroadcastPrebuffering = this.isPrebuffering;
                 window.__TAURI__.event.emit('tts-state-sync', {
                     action: 'progress',
                     percentBuffered,
-                    percentPlayed
+                    percentPlayed,
+                    isPrebuffering: this.isPrebuffering,
+                    bufferedChars: bufStatus.loadedChars,
+                    targetBufferChars: bufStatus.targetChars
                 });
             }
         }

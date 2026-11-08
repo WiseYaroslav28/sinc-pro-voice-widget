@@ -47,6 +47,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                     engine.play();
                 }
+            } else if (action === 'force_play') {
+                engine.forcePlay();
             } else if (action === 'pause') {
                 engine.pause();
             } else if (action === 'stop') {
@@ -156,9 +158,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Обратные вызовы от движка для обновления UI
-    engine.onStateChange = (isPlaying, isPaused) => {
+    engine.onStateChange = (isPlaying, isPaused, isPrebuffering, bufferedChars, targetBufferChars) => {
         if (root && root.updateState) {
-            root.updateState({ isPlaying, isPaused });
+            root.updateState({ isPlaying, isPaused, isPrebuffering, bufferedChars, targetBufferChars });
         }
         
         if (contentEditable) {
@@ -181,7 +183,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     engine.onSentenceActive = (index) => {
         if (root && root.updateState) {
-            root.updateState({ isPlaying: engine.isPlaying, isPaused: engine.isPaused });
+            root.updateState({ isPlaying: engine.isPlaying, isPaused: engine.isPaused, isPrebuffering: engine.isPrebuffering });
         }
         if (engine.sentences.length > 0) {
             updateActiveSentenceHighlight(index);
@@ -191,7 +193,10 @@ document.addEventListener('DOMContentLoaded', () => {
     let progressSegmentsRef = null;
     let progressSegmentEls = [];
 
-    engine.onProgress = (percentBuffered, percentPlayed) => {
+    engine.onProgress = (percentBuffered, percentPlayed, isPrebuffering, bufferedChars, targetBufferChars) => {
+        if (root && root.updateState) {
+            root.updateState({ percentBuffered, percentPlayed, isPrebuffering, bufferedChars, targetBufferChars });
+        }
         if (!progressContainer) return;
         if (engine.sentences.length === 0) {
             if (timeCurrent) {
@@ -201,7 +206,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (timeCurrent) {
-            if (engine.isPlaying || engine.isPaused) {
+            if (engine.isPlaying && engine.isPrebuffering) {
+                const targetStr = targetBufferChars > 0 ? `${bufferedChars || 0} / ${targetBufferChars} симв.` : 'загрузка...';
+                timeCurrent.textContent = `Накопление буфера: ${targetStr} (нажмите Play для старта)`;
+            } else if (engine.isPlaying || engine.isPaused) {
                 timeCurrent.textContent = `Чтение: ${engine.currentSentenceIndex + 1} из ${engine.sentences.length}`;
             } else {
                 timeCurrent.textContent = 'Готово';
@@ -214,8 +222,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 progressSegmentsRef = 'continuous';
                 progressSegmentEls = [];
                 progressContainer.innerHTML = `
-                    <div id="tts-cont-buf" class="absolute top-0 left-0 h-full transition-all" style="background-color: rgba(142, 82, 255, 0.25); width: 0%;"></div>
-                    <div id="tts-cont-play" class="absolute top-0 left-0 h-full bg-[#8e52ff] transition-all" style="width: 0%;"></div>
+                    <div id="tts-cont-buf" class="absolute top-0 left-0 h-full transition-all" style="background-color: rgba(37, 99, 235, 0.55); width: 0%;"></div>
+                    <div id="tts-cont-play" class="absolute top-0 left-0 h-full bg-[#7bd6d1] transition-all" style="width: 0%;"></div>
                 `;
             }
             const bufEl = document.getElementById('tts-cont-buf');
@@ -240,7 +248,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     engine.seek(i);
                 });
                 const fillEl = document.createElement('div');
-                fillEl.className = 'absolute top-0 left-0 h-full bg-[#8e52ff] transition-all';
+                fillEl.className = 'absolute top-0 left-0 h-full bg-[#7bd6d1] transition-all';
                 fillEl.style.width = '0%';
                 segment.appendChild(fillEl);
                 progressContainer.appendChild(segment);
@@ -251,7 +259,7 @@ document.addEventListener('DOMContentLoaded', () => {
         for (let i = 0; i < progressSegmentEls.length; i++) {
             const { segment, fillEl } = progressSegmentEls[i];
             const isDownloaded = !!(engine.audioBuffers[i] && engine.audioBuffers[i] !== "ERROR");
-            segment.style.backgroundColor = isDownloaded ? 'rgba(142, 82, 255, 0.2)' : '';
+            segment.style.backgroundColor = isDownloaded ? 'rgba(37, 99, 235, 0.45)' : '';
             let fillPercent = 0;
             if (i < engine.currentSentenceIndex) fillPercent = 100;
             else if (i === engine.currentSentenceIndex) {
@@ -287,7 +295,12 @@ document.addEventListener('DOMContentLoaded', () => {
         // По просьбе пользователя всегда стираем старый текст и начинаем заново
         if (contentEditable) contentEditable.innerText = cleanVisible;
         engine.loadText(text, true);
-        engine.broadcastState('play');
+        const bufStatus = engine.getStartBufferStatus();
+        engine.broadcastState('play', {
+            isPrebuffering: engine.isPrebuffering,
+            bufferedChars: bufStatus.loadedChars,
+            targetBufferChars: bufStatus.targetChars
+        });
         console.log('[TTS] handleNewText: loadText(autoPlay=true) done, sentences=' + engine.sentences.length);
     }
 

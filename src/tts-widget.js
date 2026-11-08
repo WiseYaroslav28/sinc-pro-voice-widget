@@ -82,6 +82,24 @@ window.renderTtsWidget = function(container, isMain = false) {
         0%, 100% { transform: scale(1); }
         50%       { transform: scale(1.06); }
       }
+      .prebuffer-pulse {
+        will-change: transform, opacity;
+        animation: prebuffer-blink-glow 0.9s ease-in-out infinite !important;
+      }
+      @keyframes prebuffer-blink-glow {
+        0%, 100% {
+          background-color: #8e52ff;
+          box-shadow: 0 0 16px rgba(37, 99, 235, 0.95), 0 0 6px rgba(123, 214, 209, 0.7);
+          transform: scale(1);
+          opacity: 1;
+        }
+        50% {
+          background-color: #1d4ed8;
+          box-shadow: 0 0 6px rgba(37, 99, 235, 0.4);
+          transform: scale(0.92);
+          opacity: 0.55;
+        }
+      }
       #tts-widget-pause-badge.badge-pulse {
         box-shadow: 0 0 8px rgba(255,209,102,0.9);
         will-change: transform;
@@ -109,13 +127,21 @@ window.renderTtsWidget = function(container, isMain = false) {
                   id="tts-widget-play" title="Озвучить / Пауза">
             <span class="material-symbols-outlined text-[20px]" id="tts-widget-play-icon" style="font-variation-settings:'FILL' 1;">play_arrow</span>
           </button>
-          <!-- SVG Прогресс-бар вокруг кнопки -->
-          <svg class="absolute top-0 left-0 w-9 h-9 pointer-events-none -rotate-90 z-10" viewBox="0 0 36 36">
-            <circle cx="18" cy="18" r="17" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="2"/>
-            <circle id="tts-widget-progress-buffered" cx="18" cy="18" r="17" fill="none" stroke="rgba(123, 214, 209, 0.25)" stroke-width="2" 
-                    stroke-dasharray="106.81" stroke-dashoffset="106.81" stroke-linecap="round"/>
-            <circle id="tts-widget-progress-played" cx="18" cy="18" r="17" fill="none" stroke="#7bd6d1" stroke-width="2" 
-                    stroke-dasharray="106.81" stroke-dashoffset="106.81" stroke-linecap="round"/>
+          <!-- SVG Двойной прогресс-бар вокруг кнопки (внутренний бирюзовый — озвучено, внешний тёмно-синий — предзагружено в буфер) -->
+          <svg class="pointer-events-none -rotate-90 z-10" style="position: absolute; top: -3px; left: -3px; width: 42px; height: 42px;" viewBox="0 0 42 42">
+            <!-- Внешнее кольцо (буфер предзагрузки — тёмно-синий) -->
+            <circle cx="21" cy="21" r="19.5" fill="none" stroke="rgba(30, 58, 138, 0.32)" stroke-width="2.4"/>
+            <circle id="tts-widget-progress-buffered" cx="21" cy="21" r="19.5" fill="none" stroke="#2563eb" stroke-width="2.6" 
+                    stroke-dasharray="122.52" stroke-dashoffset="122.52" stroke-linecap="round"
+                    style="transition: stroke-dashoffset 0.22s ease-out; filter: drop-shadow(0 0 3px rgba(37, 99, 235, 0.85));"/>
+            <!-- Внутреннее кольцо (проигранная часть — бирюзовый + подложка буфера) -->
+            <circle cx="21" cy="21" r="16.8" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="2.2"/>
+            <circle id="tts-widget-progress-buffered-inner" cx="21" cy="21" r="16.8" fill="none" stroke="rgba(29, 78, 216, 0.65)" stroke-width="2.2" 
+                    stroke-dasharray="105.56" stroke-dashoffset="105.56" stroke-linecap="round"
+                    style="transition: stroke-dashoffset 0.22s ease-out;"/>
+            <circle id="tts-widget-progress-played" cx="21" cy="21" r="16.8" fill="none" stroke="#7bd6d1" stroke-width="2.4" 
+                    stroke-dasharray="105.56" stroke-dashoffset="105.56" stroke-linecap="round"
+                    style="transition: stroke-dashoffset 0.15s linear;"/>
           </svg>
         </div>
 
@@ -257,6 +283,9 @@ function initTtsWidgetLogic(container, isMain) {
   let currentVolume = 1.0;
   let isPlaying = false;
   let isPaused = false;
+  let isPrebuffering = false;
+  let bufferedChars = 0;
+  let targetBufferChars = 0;
   let currentTranslate = false;
 
   let currentInstalledVoices = [];
@@ -514,7 +543,12 @@ function initTtsWidgetLogic(container, isMain) {
   // Buttons
   btnPlay.addEventListener('click', (e) => {
     e.stopPropagation();
-    notifyChange(isPlaying ? 'pause' : 'play', {});
+    if (isPlaying && isPrebuffering) {
+      // Принудительный запуск озвучки при клике по мигающей кнопке Play во время накопления стартового буфера
+      notifyChange('force_play', {});
+    } else {
+      notifyChange(isPlaying ? 'pause' : 'play', {});
+    }
   });
 
   btnStop.addEventListener('click', (e) => {
@@ -533,36 +567,61 @@ function initTtsWidgetLogic(container, isMain) {
     if (state.installedVoices !== undefined) {
       rebuildVoicesMenu(state.installedVoices);
     }
+    if (state.isPrebuffering !== undefined) {
+      isPrebuffering = !!state.isPrebuffering;
+    }
+    if (state.bufferedChars !== undefined) {
+      bufferedChars = state.bufferedChars;
+    }
+    if (state.targetBufferChars !== undefined) {
+      targetBufferChars = state.targetBufferChars;
+    }
     if (state.isPlaying !== undefined) {
       isPlaying = state.isPlaying;
       if (isPlaying) isPaused = false;
-      playIcon.textContent = isPlaying ? 'pause' : 'play_arrow';
+      if (!isPlaying) isPrebuffering = false;
     }
     if (state.isPaused !== undefined) {
       isPaused = state.isPaused;
+      if (isPaused) isPrebuffering = false;
     }
+    // Пока идёт накопление стартового буфера (isPrebuffering), показываем иконку play_arrow (ожидание старта / клик для принудительного старта)
+    playIcon.textContent = (isPlaying && !isPrebuffering) ? 'pause' : 'play_arrow';
 
-    // Управление прогресс-баром
+    // Управление двойным кольцевым прогресс-баром
     const progressBufferedCircle = container.querySelector('#tts-widget-progress-buffered');
+    const progressBufferedInnerCircle = container.querySelector('#tts-widget-progress-buffered-inner');
     const progressPlayedCircle = container.querySelector('#tts-widget-progress-played');
+    const OUTER_CIRC = 122.52;
+    const INNER_CIRC = 105.56;
 
     if (isPlaying === false && isPaused === false) {
-      if (progressBufferedCircle) progressBufferedCircle.style.strokeDashoffset = 106.81;
-      if (progressPlayedCircle) progressPlayedCircle.style.strokeDashoffset = 106.81;
+      if (progressBufferedCircle) progressBufferedCircle.style.strokeDashoffset = OUTER_CIRC;
+      if (progressBufferedInnerCircle) progressBufferedInnerCircle.style.strokeDashoffset = INNER_CIRC;
+      if (progressPlayedCircle) progressPlayedCircle.style.strokeDashoffset = INNER_CIRC;
     }
 
-    if (state.percentBuffered !== undefined && progressBufferedCircle) {
-      const offset = 106.81 - (state.percentBuffered / 100) * 106.81;
-      progressBufferedCircle.style.strokeDashoffset = offset;
+    if (state.percentBuffered !== undefined) {
+      const clampedBuf = Math.min(100, Math.max(0, state.percentBuffered || 0));
+      if (progressBufferedCircle) {
+        progressBufferedCircle.style.strokeDashoffset = OUTER_CIRC - (clampedBuf / 100) * OUTER_CIRC;
+      }
+      if (progressBufferedInnerCircle) {
+        progressBufferedInnerCircle.style.strokeDashoffset = INNER_CIRC - (clampedBuf / 100) * INNER_CIRC;
+      }
     }
     if (state.percentPlayed !== undefined && progressPlayedCircle) {
-      const offset = 106.81 - (state.percentPlayed / 100) * 106.81;
-      progressPlayedCircle.style.strokeDashoffset = offset;
+      const clampedPlay = Math.min(100, Math.max(0, state.percentPlayed || 0));
+      progressPlayedCircle.style.strokeDashoffset = INNER_CIRC - (clampedPlay / 100) * INNER_CIRC;
     }
 
-    // Управляем пульсацией кнопки Play
-    btnPlay.classList.remove('play-pulse', 'pause-pulse');
-    if (isPlaying) {
+    // Управляем пульсацией/миганием кнопки Play
+    btnPlay.classList.remove('play-pulse', 'pause-pulse', 'prebuffer-pulse');
+    if (isPlaying && isPrebuffering) {
+      btnPlay.classList.add('prebuffer-pulse');
+      const progressHint = targetBufferChars > 0 ? ` (${bufferedChars}/${targetBufferChars} симв.)` : '';
+      btnPlay.title = `Накопление буфера${progressHint} — нажмите Play для немедленного старта`;
+    } else if (isPlaying) {
       btnPlay.classList.add('play-pulse');
       btnPlay.title = 'Пауза';
     } else if (isPaused) {

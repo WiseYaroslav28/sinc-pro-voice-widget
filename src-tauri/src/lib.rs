@@ -3067,6 +3067,8 @@ pub struct AppConfig {
     pub tts_translate: bool,
     #[serde(default = "default_true")]
     pub tts_expressive_intonation: bool,
+    #[serde(default = "default_tts_start_buffer_chars")]
+    pub tts_start_buffer_chars: usize,
 
     // Движки для STT и TTS
     #[serde(default = "default_stt_engine")]
@@ -3137,6 +3139,7 @@ impl Default for AppConfig {
             tts_voice: "ru-RU-SvetlanaNeural".to_string(),
             tts_translate: false,
             tts_expressive_intonation: true,
+            tts_start_buffer_chars: 300,
             stt_engine: "gemini".to_string(),
             tts_engine: "edge".to_string(),
             stt_local_model: "ggml-base.bin".to_string(),
@@ -3165,6 +3168,10 @@ fn default_widget_scale() -> f32 {
 
 fn default_tts_volume() -> f32 {
     1.0
+}
+
+fn default_tts_start_buffer_chars() -> usize {
+    300
 }
 
 fn default_layout_excluded_words() -> Vec<String> {
@@ -3557,6 +3564,10 @@ async fn update_config_fields(app_handle: tauri::AppHandle, fields: serde_json::
         }
         if let Some(val) = obj.get("tts_expressive_intonation") {
             if let Some(b) = val.as_bool() { config.tts_expressive_intonation = b; }
+        }
+        if let Some(val) = obj.get("tts_start_buffer_chars") {
+            if let Some(n) = val.as_u64() { config.tts_start_buffer_chars = (n as usize).min(5000); }
+            else if let Some(f) = val.as_f64() { config.tts_start_buffer_chars = (f.round().max(0.0) as usize).min(5000); }
         }
         if let Some(val) = obj.get("stt_engine") {
             if let Some(s) = val.as_str() { config.stt_engine = s.to_string(); }
