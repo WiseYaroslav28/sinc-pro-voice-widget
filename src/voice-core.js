@@ -330,8 +330,11 @@ class VoiceCore {
         str = str.replace(/^(#{1,6})\s+/gm, '');
         
         // 6. Убираем жирный и курсив (**текст**, *текст*, __текст__, _текст_)
-        str = str.replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, '$2');
-        str = str.replace(/(\*|_)(?=\S)([\s\S]*?\S)\1/g, '$2');
+        // Для _ и __ проверяем границы слов, чтобы не повреждать snake_case токены (PERSON_1, fallback_on_AuthenticationError)
+        str = str.replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, '$1');
+        str = str.replace(/(?<![\p{L}\p{N}_])__(?=\S)([^\n]*?\S)__(?![\p{L}\p{N}_])/gu, '$1');
+        str = str.replace(/\*(?=\S)([^\n*]*?\S)\*/g, '$1');
+        str = str.replace(/(?<![\p{L}\p{N}_])_(?=\S)([^\n_]*?\S)_(?![\p{L}\p{N}_])/gu, '$1');
         
         // 7. Убираем горизонтальные линии ---, ***, ___
         str = str.replace(/^\s*([-*_])\1{2,}\s*$/gm, '');
@@ -348,6 +351,14 @@ class VoiceCore {
     cleanFormulasForSpeech(text) {
         if (!text) return "";
         let str = text;
+
+        // 0. Очищаем HTML/псевдо-теги (<img onerror=alert...>, <PERSON_1>, <PHONE_1>) и технические идентификаторы,
+        // чтобы они читались как обычные слова и не вызывали сбой SSML/DOM
+        str = str.replace(/<([A-Za-zА-Яа-яЁё0-9_.\s=\-/:]+?)>/g, ' $1 ');
+        str = str.replace(/([A-Za-zА-Яа-яЁё0-9])[_=]+([A-Za-zА-Яа-яЁё0-9])/g, '$1 $2');
+        str = str.replace(/([A-Za-zА-Яа-яЁё0-9])[_=]+([A-Za-zА-Яа-яЁё0-9])/g, '$1 $2');
+        str = str.replace(/([a-z])([A-Z])/g, '$1 $2');
+        str = str.replace(/([A-Za-zА-Яа-яЁё]{2,})\/([A-Za-zА-Яа-яЁё]{2,})/g, '$1, $2');
 
         // 1. Склеиваем задвоенные при копировании из KaTeX / MathML формулы и выражения:
         // Например: "O(1)O(1)" -> "O(1)", "E = mc^2E = mc^2" -> "E = mc^2", "x_1 + y_1\nx_1 + y_1" -> "x_1 + y_1"
@@ -397,6 +408,7 @@ class VoiceCore {
             return match;
         });
 
+        str = str.replace(/[ \t]{2,}/g, ' ');
         return str;
     }
 
@@ -423,6 +435,14 @@ class VoiceCore {
         // Нормализуем переносы строк (убираем \r)
         let processed = text.replace(/\r\n/g, "\n");
 
+        // Разделяем склеенные при копировании из HTML/мессенджеров заголовки и предложения без пробелов:
+        // ("идеальноБазовые" -> "идеально. Базовые", "скриншотам)Ложная" -> "скриншотам). Ложная",
+        //  "стоп-слов.Запретить" -> "стоп-слов. Запретить", "доработку:Отличная" -> "доработку: Отличная")
+        processed = processed.replace(/([а-яё])([А-ЯЁ])/g, "$1. $2");
+        processed = processed.replace(/([)»\]"])([А-ЯЁA-Z])/g, "$1. $2");
+        processed = processed.replace(/([.!?])([А-ЯЁA-Z])/g, "$1 $2");
+        processed = processed.replace(/([:;])([А-ЯЁA-Z])/g, "$1 $2");
+
         // Защищаем числа (3.3)
         processed = processed.replace(/(\d)\.(\d)/g, "$1<DOT>$2");
         // Защищаем нумерацию списков (1., 2.)
@@ -442,22 +462,25 @@ class VoiceCore {
         // Разбиваем по концам предложений (. ! ?), по точке с запятой (;), И по всем переносам строк (\n+)
         let rawSentences = processed.split(/(?<=[.!?])\s+|(?<=;)\s+|\n+/u);
 
-        const splitLongSentence = (sentence, maxLen = 160) => {
+        const splitLongSentence = (sentence, maxLen = 135) => {
             if (sentence.length <= maxLen) return [sentence];
             const parts = [];
             let remaining = sentence.trim();
             while (remaining.length > maxLen) {
-                const slice = remaining.slice(0, maxLen);
+                // Не оставляем крошечный «хвост» (< 30 символов) в конце при разрезании
+                const limit = Math.min(maxLen, Math.max(50, remaining.length - 30));
+                const slice = remaining.slice(0, limit);
                 const dashIdx = Math.max(slice.lastIndexOf(' — '), slice.lastIndexOf(' - '));
                 const colonIdx = slice.lastIndexOf(': ');
                 const commaIdx = slice.lastIndexOf(', ');
-                const punctMatch = Math.max(dashIdx, colonIdx, commaIdx);
+                const closeParenIdx = slice.lastIndexOf(') ');
+                const punctMatch = Math.max(dashIdx, colonIdx, commaIdx, closeParenIdx);
                 let splitIdx = -1;
-                if (punctMatch >= 45) {
+                if (punctMatch >= 35) {
                     splitIdx = punctMatch + (slice[punctMatch] === ' ' ? 3 : 1);
                 } else {
                     const spaceIdx = slice.lastIndexOf(' ');
-                    splitIdx = spaceIdx >= 45 ? spaceIdx : maxLen;
+                    splitIdx = spaceIdx >= 35 ? spaceIdx : limit;
                 }
                 const chunk = remaining.slice(0, splitIdx).trim();
                 if (chunk.length > 0 && /[\p{L}\p{N}]/u.test(chunk)) {
@@ -477,19 +500,21 @@ class VoiceCore {
             s = s.replace(/<ELLIPSIS>/g, "...");
             const trimmed = s.trim();
             if (trimmed.length === 0 || !/[\p{L}\p{N}]/u.test(trimmed)) continue;
-            for (const sub of splitLongSentence(trimmed, 160)) {
+            // Первую фразу делаем более компактной (до 85 символов), чтобы речь стартовала менее чем за 1 секунду!
+            const maxChunkLen = rawClean.length === 0 ? 85 : 135;
+            for (const sub of splitLongSentence(trimmed, maxChunkLen)) {
                 rawClean.push(sub);
             }
         }
 
-        // Приклеиваем только совсем крошечные осколки (< 15 символов, например "1)" или "Да.") к соседнему предложению,
-        // сохраняя все обычные предложения компактными (<= 160 символов) для моментального старта озвучки
+        // Приклеиваем только крошечные осколки (< 22 символов, например "1)" или "Да.") к соседнему предложению,
+        // сохраняя 0-е предложение коротким для моментального старта озвучки
         const finalSentences = [];
         for (let i = 0; i < rawClean.length; i++) {
             const cur = rawClean[i];
-            if (cur.length < 15 && i + 1 < rawClean.length && (cur.length + 1 + rawClean[i + 1].length) <= 160) {
+            if (cur.length < 22 && i + 1 < rawClean.length && (cur.length + 1 + rawClean[i + 1].length) <= 135) {
                 rawClean[i + 1] = cur + " " + rawClean[i + 1];
-            } else if (cur.length < 15 && finalSentences.length > 0 && (finalSentences[finalSentences.length - 1].length + 1 + cur.length) <= 160) {
+            } else if (cur.length < 22 && finalSentences.length > 0 && (finalSentences.length > 1 || finalSentences[0].length < 45) && (finalSentences[finalSentences.length - 1].length + 1 + cur.length) <= 135) {
                 finalSentences[finalSentences.length - 1] += " " + cur;
             } else {
                 finalSentences.push(cur);
@@ -780,41 +805,65 @@ class VoiceCore {
         this.isPrefetching = true;
 
         const currentBuffersRef = this.audioBuffers;
-        const windowSize = 7; // текущее предложение + 6 предложений наперёд (строго последовательно)
-        this.log('Sequential prefetch queue started with ID ' + queueId);
+        const isLocalEngine = this.settings.tts_engine === 'local';
+        const CONCURRENCY = isLocalEngine ? 1 : 2;
+        const windowSize = 8; // текущее предложение + 7 предложений наперёд
+        this.log(`Prefetch queue started with ID ${queueId} (workers=${CONCURRENCY}, window=${windowSize})`);
 
         try {
-            // СТРОГО ПОСЛЕДОВАТЕЛЬНЫЙ загрузчик (1 воркер):
-            // загружает предложения строго по очереди (0 -> 1 -> 2 -> ... до 7 предложений вперёд) с паузой 250 мс.
-            while (true) {
-                if (this.currentQueueId !== queueId || this.audioBuffers !== currentBuffersRef) {
-                    return;
+            const runWorker = async (workerIdx) => {
+                // Сдвиг старта 2-го воркера на 150 мс: 0-е предложение первым занимает Слот 0 и моментально идёт в эфир,
+                // а 2-й воркер на постоянном Слоте 1 сразу следом готовит 1-е предложение, исключая паузу на скорости 1.75x–2.0x.
+                if (workerIdx > 0) {
+                    await new Promise(r => setTimeout(r, 150 * workerIdx));
                 }
-
-                const startIndex = this.currentSentenceIndex;
-                const endIndex = Math.min(startIndex + windowSize, this.sentences.length);
-
-                let targetIndex = -1;
-                for (let i = startIndex; i < endIndex; i++) {
-                    if (!this.audioBuffers[i] && !this.currentlyLoading.has(i)) {
-                        targetIndex = i;
-                        break;
+                while (true) {
+                    if (this.currentQueueId !== queueId || this.audioBuffers !== currentBuffersRef) {
+                        return;
                     }
-                }
 
-                if (targetIndex === -1) {
-                    return;
-                }
+                    const startIndex = this.currentSentenceIndex;
+                    const endIndex = Math.min(startIndex + windowSize, this.sentences.length);
 
-                this.currentlyLoading.add(targetIndex);
-                await this.fetchSentence(targetIndex, queueId, currentBuffersRef);
+                    let targetIndex = -1;
+                    for (let i = startIndex; i < endIndex; i++) {
+                        if (!this.audioBuffers[i] && !this.currentlyLoading.has(i)) {
+                            targetIndex = i;
+                            break;
+                        }
+                    }
+
+                    if (targetIndex === -1) {
+                        return;
+                    }
+
+                    this.currentlyLoading.add(targetIndex);
+                    await this.fetchSentence(targetIndex, queueId, currentBuffersRef);
+                }
+            };
+
+            const workers = [];
+            for (let w = 0; w < CONCURRENCY; w++) {
+                workers.push(runWorker(w));
             }
+            await Promise.all(workers);
         } catch (err) {
             this.log('Error in prefetch queue loop: ' + err);
         } finally {
             if (this.currentQueueId === queueId) {
                 this.isPrefetching = false;
                 this.log('Prefetch queue ' + queueId + ' stopped');
+                // Если за время завершения последнего воркера чтение продвинулось вперёд — догружаем открывшееся окно
+                if (this.audioBuffers === currentBuffersRef) {
+                    const startIdx = this.currentSentenceIndex;
+                    const endIdx = Math.min(startIdx + windowSize, this.sentences.length);
+                    for (let i = startIdx; i < endIdx; i++) {
+                        if (!this.audioBuffers[i] && !this.currentlyLoading.has(i)) {
+                            this.startPrefetchQueue();
+                            break;
+                        }
+                    }
+                }
             }
         }
     }

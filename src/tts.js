@@ -121,6 +121,13 @@ document.addEventListener('DOMContentLoaded', () => {
     let renderedSentencesRef = null;
     let lastActiveSentenceIdx = -1;
 
+    function escapeHtml(str) {
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
     function updateActiveSentenceHighlight(newIdx) {
         if (!contentEditable || document.activeElement === contentEditable) return;
         if (renderedSentencesRef !== engine.sentences) {
@@ -128,10 +135,10 @@ document.addEventListener('DOMContentLoaded', () => {
             lastActiveSentenceIdx = -1;
             const wordsCount = engine.sentences.join(" ").split(/\s+/).length;
             if (statsLabel) statsLabel.textContent = `${engine.sentences.length} предложений, ~${wordsCount} слов`;
-            // Рендерим span-обертки один раз при смене массива предложений
+            // Рендерим span-обертки один раз при смене массива предложений (с экранированием HTML-тегов вроде <img...>, <PERSON_1>)
             contentEditable.innerHTML = engine.sentences.map((s, i) => {
                 const isActive = (i === newIdx);
-                return `<span class="transition-colors ${isActive ? 'bg-[#7bd6d1]/20 text-[#7bd6d1] font-semibold' : ''}" id="sentence-${i}">${s}</span>`;
+                return `<span class="transition-colors ${isActive ? 'bg-[#7bd6d1]/20 text-[#7bd6d1] font-semibold' : ''}" id="sentence-${i}">${escapeHtml(s)}</span>`;
             }).join(' ');
             lastActiveSentenceIdx = newIdx;
             return;
@@ -160,7 +167,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Если пользователь редактирует текст (фокус на поле), очищаем span-теги для нормального ввода
                 if (document.activeElement === contentEditable) {
                     if (contentEditable.querySelector('span')) {
-                        contentEditable.innerHTML = contentEditable.innerText;
+                        contentEditable.textContent = contentEditable.innerText;
                         renderedSentencesRef = null;
                     }
                 } else if (engine.sentences.length > 0) {
