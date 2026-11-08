@@ -1269,10 +1269,20 @@
               syncMagnetToggleUI(magnetVal);
             }
             const intonationToggle = document.getElementById('setting-tts-intonation');
+            const intonationVal = config.tts_expressive_intonation !== undefined ? !!config.tts_expressive_intonation : true;
             if (intonationToggle) {
-              const intonationVal = config.tts_expressive_intonation !== undefined ? config.tts_expressive_intonation : true;
               intonationToggle.checked = intonationVal;
               syncIntonationToggleUI(intonationVal);
+            }
+            if (window.ttsEngine) {
+              window.ttsEngine.settings.expressive = intonationVal;
+              localStorage.setItem('tts-settings', JSON.stringify(window.ttsEngine.settings));
+            }
+            if (window.__TAURI__) {
+              window.__TAURI__.event.emit('tts-state-sync', {
+                action: 'settings',
+                settings: { expressive: intonationVal }
+              }).catch(() => {});
             }
 
             const scalePercent = Math.round(Math.max(0.7, Math.min(1.5, parseFloat(config.widget_scale) || 1.0)) * 100);
@@ -3155,12 +3165,17 @@
           syncIntonationToggleUI(isChecked);
           if (window.ttsEngine) {
             window.ttsEngine.settings.expressive = isChecked;
+            localStorage.setItem('tts-settings', JSON.stringify(window.ttsEngine.settings));
             if (window.ttsEngine.sentences && window.ttsEngine.sentences.length > 0) {
-              window.ttsEngine.audioBuffers = new Array(window.ttsEngine.sentences.length).fill(null);
+              const nextCacheKey = window.ttsEngine.getCacheVoiceKey();
+              window.ttsEngine.audioBuffers = window.ttsEngine.sentences.map(s => window.ttsEngine.cache.getSync(nextCacheKey, s) || null);
               window.ttsEngine.currentlyLoading.clear();
               window.ttsEngine.isPrefetching = false;
               window.ttsEngine.currentQueueId = null;
               window.ttsEngine._playingSentenceIndex = -1;
+              if (window.ttsEngine.isPlaying) {
+                window.ttsEngine.playCurrentSentence();
+              }
               window.ttsEngine.startPrefetchQueue();
               window.ttsEngine.loadCachedSentences(0);
             }

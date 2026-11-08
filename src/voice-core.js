@@ -462,13 +462,13 @@ class VoiceCore {
         // Разбиваем по концам предложений (. ! ?), по точке с запятой (;), И по всем переносам строк (\n+)
         let rawSentences = processed.split(/(?<=[.!?])\s+|(?<=;)\s+|\n+/u);
 
-        const splitLongSentence = (sentence, maxLen = 135) => {
+        const splitLongSentence = (sentence, maxLen = 115) => {
             if (sentence.length <= maxLen) return [sentence];
             const parts = [];
             let remaining = sentence.trim();
             while (remaining.length > maxLen) {
-                // Не оставляем крошечный «хвост» (< 30 символов) в конце при разрезании
-                const limit = Math.min(maxLen, Math.max(50, remaining.length - 30));
+                // Не оставляем крошечный «хвост» (< 25 символов) в конце при разрезании
+                const limit = Math.min(maxLen, Math.max(45, remaining.length - 25));
                 const slice = remaining.slice(0, limit);
                 const dashIdx = Math.max(slice.lastIndexOf(' — '), slice.lastIndexOf(' - '));
                 const colonIdx = slice.lastIndexOf(': ');
@@ -476,11 +476,11 @@ class VoiceCore {
                 const closeParenIdx = slice.lastIndexOf(') ');
                 const punctMatch = Math.max(dashIdx, colonIdx, commaIdx, closeParenIdx);
                 let splitIdx = -1;
-                if (punctMatch >= 35) {
+                if (punctMatch >= 30) {
                     splitIdx = punctMatch + (slice[punctMatch] === ' ' ? 3 : 1);
                 } else {
                     const spaceIdx = slice.lastIndexOf(' ');
-                    splitIdx = spaceIdx >= 35 ? spaceIdx : limit;
+                    splitIdx = spaceIdx >= 30 ? spaceIdx : limit;
                 }
                 const chunk = remaining.slice(0, splitIdx).trim();
                 if (chunk.length > 0 && /[\p{L}\p{N}]/u.test(chunk)) {
@@ -500,8 +500,9 @@ class VoiceCore {
             s = s.replace(/<ELLIPSIS>/g, "...");
             const trimmed = s.trim();
             if (trimmed.length === 0 || !/[\p{L}\p{N}]/u.test(trimmed)) continue;
-            // Первую фразу делаем более компактной (до 85 символов), чтобы речь стартовала менее чем за 1 секунду!
-            const maxChunkLen = rawClean.length === 0 ? 85 : 135;
+            // Первую фразу делаем компактной (до 75 символов) для быстрого первого старта,
+            // а последующие предложения — до 115 символов для безошибочного последовательного синтеза и кэширования в БД
+            const maxChunkLen = rawClean.length === 0 ? 75 : 115;
             for (const sub of splitLongSentence(trimmed, maxChunkLen)) {
                 rawClean.push(sub);
             }
@@ -512,9 +513,9 @@ class VoiceCore {
         const finalSentences = [];
         for (let i = 0; i < rawClean.length; i++) {
             const cur = rawClean[i];
-            if (cur.length < 22 && i + 1 < rawClean.length && (cur.length + 1 + rawClean[i + 1].length) <= 135) {
+            if (cur.length < 22 && i + 1 < rawClean.length && (cur.length + 1 + rawClean[i + 1].length) <= 115) {
                 rawClean[i + 1] = cur + " " + rawClean[i + 1];
-            } else if (cur.length < 22 && finalSentences.length > 0 && (finalSentences.length > 1 || finalSentences[0].length < 45) && (finalSentences[finalSentences.length - 1].length + 1 + cur.length) <= 135) {
+            } else if (cur.length < 22 && finalSentences.length > 0 && (finalSentences.length > 1 || finalSentences[0].length < 45) && (finalSentences[finalSentences.length - 1].length + 1 + cur.length) <= 115) {
                 finalSentences[finalSentences.length - 1] += " " + cur;
             } else {
                 finalSentences.push(cur);
@@ -710,16 +711,16 @@ class VoiceCore {
                     this.log(`Cache HIT for sentence ${i}`);
                     this.audioBuffers[i] = cachedAudio;
                     this.updateProgress();
-                    if (this.isPlaying && this.currentSentenceIndex === i && this._playingSentenceIndex !== i) {
-                        this.log(`cache -> triggering playCurrentSentence() for index ${i}`);
+                    if (this.isPlaying && this._playingSentenceIndex !== this.currentSentenceIndex && i >= this.currentSentenceIndex) {
+                        this.log(`cache -> triggering playCurrentSentence() after index ${i}`);
                         this.playCurrentSentence();
                     }
                 }
                 return;
             }
 
-            // 2. Пауза 300 мс между сетевыми запросами выдерживается нативно в Rust (speak_edge_tts через tokio::time::sleep),
-            // что защищает очередь от троттлинга JS-таймеров WebView2 в свёрнутом состоянии и исключает двойное ожидание.
+            // 2. Пауза 250 мс между сетевыми запросами выдерживается нативно в Rust (speak_edge_tts через tokio::time::sleep),
+            // что защищает очередь от троттлинга JS-таймеров WebView2 в свёрнутом состоянии и исключает параллельный спам.
             if (this.currentQueueId !== queueId || this.audioBuffers !== currentBuffersRef) {
                 return;
             }
@@ -751,9 +752,9 @@ class VoiceCore {
                             this.cache.set(cacheVoiceKey, this.sentences[i], dataUrl).catch(() => {});
                             this.updateProgress();
                             
-                            // Как только готово текущее (первое или ожидаемое) предложение — моментально начинаем озвучку!
-                            if (this.isPlaying && this.currentSentenceIndex === i && this._playingSentenceIndex !== i) {
-                                this.log(`prefetch -> triggering immediate playCurrentSentence() for index ${i}`);
+                            // Проверяем готовность к старту или возобновлению после накопления буфера
+                            if (this.isPlaying && this._playingSentenceIndex !== this.currentSentenceIndex && i >= this.currentSentenceIndex) {
+                                this.log(`prefetch -> checking playCurrentSentence() after index ${i}`);
                                 this.playCurrentSentence();
                             }
                         }
@@ -786,6 +787,8 @@ class VoiceCore {
                     this.currentSentenceIndex++;
                     this._playingSentenceIndex = -1;
                     this.playCurrentSentence();
+                } else if (this.isPlaying && this._playingSentenceIndex !== this.currentSentenceIndex) {
+                    this.playCurrentSentence();
                 }
             }
         } finally {
@@ -805,18 +808,14 @@ class VoiceCore {
         this.isPrefetching = true;
 
         const currentBuffersRef = this.audioBuffers;
-        const isLocalEngine = this.settings.tts_engine === 'local';
-        const CONCURRENCY = isLocalEngine ? 1 : 2;
-        const windowSize = 8; // текущее предложение + 7 предложений наперёд
+        // СТРОГО ПОСЛЕДОВАТЕЛЬНАЯ подгрузка по 1 предложению за раз (CONCURRENCY = 1) с паузой 250 мс в Rust!
+        // Параллельные запросы (CONCURRENCY >= 2) приводят к сбросу соединения и троттлингу анти-спам фильтром Microsoft.
+        const CONCURRENCY = 1;
+        const windowSize = 7; // текущее предложение + 6 предложений наперёд
         this.log(`Prefetch queue started with ID ${queueId} (workers=${CONCURRENCY}, window=${windowSize})`);
 
         try {
-            const runWorker = async (workerIdx) => {
-                // Сдвиг старта 2-го воркера на 150 мс: 0-е предложение первым занимает Слот 0 и моментально идёт в эфир,
-                // а 2-й воркер на постоянном Слоте 1 сразу следом готовит 1-е предложение, исключая паузу на скорости 1.75x–2.0x.
-                if (workerIdx > 0) {
-                    await new Promise(r => setTimeout(r, 150 * workerIdx));
-                }
+            const runWorker = async () => {
                 while (true) {
                     if (this.currentQueueId !== queueId || this.audioBuffers !== currentBuffersRef) {
                         return;
@@ -842,18 +841,14 @@ class VoiceCore {
                 }
             };
 
-            const workers = [];
-            for (let w = 0; w < CONCURRENCY; w++) {
-                workers.push(runWorker(w));
-            }
-            await Promise.all(workers);
+            await runWorker();
         } catch (err) {
             this.log('Error in prefetch queue loop: ' + err);
         } finally {
             if (this.currentQueueId === queueId) {
                 this.isPrefetching = false;
                 this.log('Prefetch queue ' + queueId + ' stopped');
-                // Если за время завершения последнего воркера чтение продвинулось вперёд — догружаем открывшееся окно
+                // Если за время завершения воркера чтение продвинулось вперёд — догружаем открывшееся окно
                 if (this.audioBuffers === currentBuffersRef) {
                     const startIdx = this.currentSentenceIndex;
                     const endIdx = Math.min(startIdx + windowSize, this.sentences.length);
@@ -873,6 +868,8 @@ class VoiceCore {
             this.log(`seek() called to index ${index}`);
             this.currentSentenceIndex = index;
             this._playingSentenceIndex = -1;
+            this.isPrebuffering = false;
+            this._rebufferTargetIndex = -1;
             if (this.audioBuffers[index] === "ERROR") {
                 this.audioBuffers[index] = null;
             }
@@ -902,6 +899,8 @@ class VoiceCore {
         
         this.isPlaying = true;
         this.isPaused = false;
+        this.isPrebuffering = false;
+        this._rebufferTargetIndex = -1;
         this.notifyState();
         
         if (window.__TAURI__) {
@@ -948,6 +947,7 @@ class VoiceCore {
         this.isPlaying = false;
         this.isPaused = false;
         this.isPrebuffering = false;
+        this._rebufferTargetIndex = -1;
         this._prebufferCompleted = true;
         this._playingSentenceIndex = -1;
         this.isPrefetching = false;
@@ -1005,6 +1005,29 @@ class VoiceCore {
         }
 
         if (currentBuf && currentBuf.startsWith("data:")) {
+            // Если на высокой скорости (1.25x–2.0x) плеер догнал загрузчик (isPrebuffering = true),
+            // ждём накопления запаса из 3 предложений подряд перед возобновлением речи, чтобы дальше читать без единой запинки!
+            if (this.isPrebuffering && this._rebufferTargetIndex > this.currentSentenceIndex) {
+                const targetIdx = Math.min(this._rebufferTargetIndex, this.sentences.length - 1);
+                let allCushionReady = true;
+                for (let k = this.currentSentenceIndex; k <= targetIdx; k++) {
+                    if (!this.audioBuffers[k]) {
+                        allCushionReady = false;
+                        break;
+                    }
+                }
+                if (!allCushionReady) {
+                    this.log(`playCurrentSentence() - waiting for buffer cushion (${this.currentSentenceIndex}..${targetIdx})...`);
+                    if (!this.isPrefetching) {
+                        this.startPrefetchQueue();
+                    }
+                    this.updateProgress();
+                    return;
+                }
+            }
+            this.isPrebuffering = false;
+            this._rebufferTargetIndex = -1;
+
             // Защита от повторного перезапуска уже играющего предложения
             if (this._playingSentenceIndex === this.currentSentenceIndex && this.audioElement.hasAttribute('src') && !this.audioElement.ended) {
                 if (this.audioElement.paused) {
@@ -1030,6 +1053,12 @@ class VoiceCore {
                 this.startPrefetchQueue();
             }
         } else {
+            // Если это НЕ 0-е предложение (0-е стартует моментально!), а чтение в процессе догнало загрузчик —
+            // включаем накопление запаса из 3 предложений (или до конца текста), чтобы исключить рваное чтение
+            if (this.currentSentenceIndex > 0 && (this.settings.speed || 1.0) >= 1.15) {
+                this.isPrebuffering = true;
+                this._rebufferTargetIndex = Math.min(this.currentSentenceIndex + 2, this.sentences.length - 1);
+            }
             this.log('playCurrentSentence() - buffer not ready, ensuring prefetch queue is active and waiting...');
             if (!this.isPrefetching) {
                 this.startPrefetchQueue();
