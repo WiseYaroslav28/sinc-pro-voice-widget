@@ -4,8 +4,9 @@
 
 class TtsCacheDB {
     constructor() {
-        this.dbName = "SincProTtsCache_v2";
+        this.dbName = "SincProTtsCache_v3";
         this.legacyDbName = "SincProTtsCache";
+        this.legacyDbNameV2 = "SincProTtsCache_v2";
         this.storeName = "audio_cache";
         this.maxEntries = 1000;
         this.ttlMs = 3 * 24 * 3600 * 1000; // 3 дня (72 часа)
@@ -15,9 +16,10 @@ class TtsCacheDB {
     }
 
     init() {
-        // Удаляем старую базу v1, в которой могли закэшироваться фрагменты с резервным голосом Google TTS
+        // Удаляем старые базы v1 и v2, в которых могли сохраниться обрезанные фрагменты или мультиязычные голоса v3.5.32
         try {
             indexedDB.deleteDatabase(this.legacyDbName);
+            indexedDB.deleteDatabase(this.legacyDbNameV2);
         } catch (e) {}
 
         return new Promise((resolve, reject) => {
@@ -777,8 +779,16 @@ class VoiceCore {
                 return;
             }
             this.log(`Prefetch error at index ${i} after all retries: ${err}`);
-            if (window.showToast) window.showToast("Ошибка TTS: " + err, true);
             if (this.audioBuffers === currentBuffersRef) {
+                // Если это фоновая предзагрузка будущего предложения (i > currentSentenceIndex),
+                // НЕ помечаем его как "ERROR" (иначе плеер перепрыгнет через него!), а оставляем null
+                // и делаем паузу 500 мс, чтобы последовательный воркер повторил попытку без пропуска предложения.
+                if (i > this.currentSentenceIndex) {
+                    this.audioBuffers[i] = null;
+                    await new Promise(r => setTimeout(r, 500));
+                    return;
+                }
+                if (window.showToast) window.showToast("Ошибка TTS: " + err, true);
                 this.audioBuffers[i] = "ERROR";
                 this._lastFailedSentenceIndex = i;
                 this.updateProgress();
@@ -1069,13 +1079,19 @@ class VoiceCore {
 
     setupAudioEvents() {
         this.audioElement.addEventListener('ended', () => {
-            this.log('audioElement ended event for index ' + this.currentSentenceIndex);
-            if (this.isPlaying) {
-                this.currentSentenceIndex++;
-                this._playingSentenceIndex = -1;
-                this.playCurrentSentence();
-                this.startPrefetchQueue(); // Сдвигаем окно буферизации и догружаем следующее предложение
+            if (!this.isPlaying) return;
+            // Защита от ложного/повторного срабатывания ended от предыдущего предложения,
+            // которое могло бы перескочить через текущее предложение (currentSentenceIndex++)
+            if (this._playingSentenceIndex !== this.currentSentenceIndex) {
+                this.log(`Ignoring stale ended event (playing=${this._playingSentenceIndex}, current=${this.currentSentenceIndex})`);
+                return;
             }
+            this.log('audioElement ended event for index ' + this.currentSentenceIndex);
+            this._playingSentenceIndex = -1;
+            this.audioElement.removeAttribute('src');
+            this.currentSentenceIndex++;
+            this.playCurrentSentence();
+            this.startPrefetchQueue(); // Сдвигаем окно буферизации и догружаем следующее предложение
         });
 
         this.audioElement.addEventListener('timeupdate', () => {

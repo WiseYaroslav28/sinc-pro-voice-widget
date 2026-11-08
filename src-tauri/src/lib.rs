@@ -745,7 +745,7 @@ fn build_expressive_ssml_params(raw_text: &str, base_rate: f32, expressive: bool
     (escaped, rate_str, pitch_str.to_string())
 }
 
-fn resolve_effective_edge_voice(requested_voice: &str, _use_alt_voice: bool) -> (String, String) {
+fn resolve_effective_edge_voice(requested_voice: &str, use_alt_voice: bool) -> (String, String) {
     let voice_lang: String = requested_voice.split('-').take(2).collect::<Vec<&str>>().join("-");
     let xml_lang = if voice_lang.len() >= 5 {
         voice_lang
@@ -753,8 +753,13 @@ fn resolve_effective_edge_voice(requested_voice: &str, _use_alt_voice: bool) -> 
         "ru-RU".to_string()
     };
 
-    // Всегда используем строго выбранный пользователем голос (например, ru-RU-DmitryNeural или ru-RU-SvetlanaNeural)
-    // без подмены на иностранные мультиязычные голоса (de-DE / fr-FR), чтобы исключить иностранный акцент.
+    // Всегда используем чистый русский голос (ru-RU) без подмены на иностранные голоса (de-DE / fr-FR).
+    // Если кластер ru-RU-DmitryNeural после 5 попыток подряд сбрасывает соединение, на 6-й (финальной) попытке
+    // страхуем чистым русским голосом ru-RU-SvetlanaNeural, чтобы ни одно предложение никогда не пропускалось.
+    if use_alt_voice && requested_voice == "ru-RU-DmitryNeural" {
+        return ("ru-RU-SvetlanaNeural".to_string(), "ru-RU".to_string());
+    }
+
     (requested_voice.to_string(), xml_lang)
 }
 
@@ -784,9 +789,10 @@ async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: Strin
     }
 
     let mut last_err = String::new();
-    for attempt in 1..=4 {
+    for attempt in 1..=6 {
         let force_reconnect = attempt > 1;
-        let use_expressive = if attempt <= 3 { expressive } else { false };
+        let use_expressive = if attempt <= 4 { expressive } else { false };
+        let use_alt_voice = attempt == 6;
         match speak_edge_tts_internal(
             &mut slot_guard.session,
             text.clone(),
@@ -794,7 +800,7 @@ async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: Strin
             rate,
             force_reconnect,
             use_expressive,
-            false,
+            use_alt_voice,
         )
         .await
         {
@@ -811,18 +817,18 @@ async fn speak_edge_tts(app_handle: tauri::AppHandle, text: String, voice: Strin
             Err(err) => {
                 last_err = err.clone();
                 println!(
-                    "SincPro TTS Auto-Heal: Попытка {}/4 не удалась ({}), переподключение...",
+                    "SincPro TTS Auto-Heal: Попытка {}/6 не удалась ({}), переподключение...",
                     attempt, err
                 );
                 let is_auth_err = err.contains("403") || err.contains("401") || err.contains("400");
-                if is_auth_err || attempt == 2 {
+                if is_auth_err || attempt == 3 {
                     let _ = get_clock_skew(true).await;
                     if is_auth_err {
                         refresh_edge_drm_constants().await;
                     }
                 }
-                if attempt < 4 {
-                    tokio::time::sleep(Duration::from_millis(200)).await;
+                if attempt < 6 {
+                    tokio::time::sleep(Duration::from_millis(180)).await;
                 }
             }
         }
@@ -939,20 +945,12 @@ async fn run_edge_ws_turn(
                 let _ = ws.send(Message::Pong(payload)).await;
             }
             Ok(Some(Ok(Message::Close(_)))) | Ok(None) => {
-                if !audio_bytes.is_empty() {
-                    return Ok((ws, 999, audio_bytes));
-                }
-                return Err(("WebSocket closed by server before audio".to_string(), audio_bytes));
+                // ВАЖНО: Никогда не возвращаем обрезанный (partial) аудиопоток до получения Path:turn.end!
+                // Иначе предложение обрывается на полуслове, перескакивает на следующее и сохраняет огрызок в кэш.
+                return Err(("WebSocket closed by server before Path:turn.end".to_string(), Vec::new()));
             }
             Ok(Some(Err(e))) => {
-                let err_str = e.to_string();
-                if !audio_bytes.is_empty()
-                    && (err_str.contains("Connection reset without closing handshake")
-                        || err_str.contains("ResetWithoutClosingHandshake"))
-                {
-                    return Ok((ws, 999, audio_bytes));
-                }
-                return Err((format!("WebSocket error: {}", e), audio_bytes));
+                return Err((format!("WebSocket error: {}", e), Vec::new()));
             }
             Ok(_) => {}
             Err(_) => {
@@ -961,7 +959,7 @@ async fn run_edge_ws_turn(
                         "Timeout waiting for Edge TTS audio stream ({}ms)",
                         wait_dur.as_millis()
                     ),
-                    audio_bytes,
+                    Vec::new(),
                 ));
             }
         }
@@ -989,6 +987,7 @@ async fn speak_edge_tts_internal(
     let ts_str = adjusted_now.format("%Y-%m-%dT%H:%M:%S.000Z").to_string();
 
     let (effective_voice, xml_lang) = resolve_effective_edge_voice(&voice, use_alt_voice);
+    let max_turns_per_socket: usize = if effective_voice.contains("Dmitry") { 2 } else { 5 };
 
     let request_id = Uuid::new_v4().to_string().replace("-", "").to_uppercase();
     let ssml_msg = format!(
@@ -1005,12 +1004,12 @@ async fn speak_edge_tts_internal(
         text = ssml_text,
     );
 
-    // Забираем существующую постоянную WebSocket-сессию слота, если она свежая (< 25 сек простоя) и обработала < 6 запросов
+    // Забираем существующую постоянную WebSocket-сессию слота, если она свежая (< 25 сек простоя) и обработала < max_turns_per_socket запросов
     let existing_session = if force_reconnect {
         *slot_session = None;
         None
     } else if let Some(sess) = slot_session.take() {
-        if sess.turns_count < 6 && sess.last_used.elapsed() < Duration::from_secs(25) {
+        if sess.turns_count < max_turns_per_socket && sess.last_used.elapsed() < Duration::from_secs(25) {
             Some(sess)
         } else {
             None
@@ -1031,7 +1030,7 @@ async fn speak_edge_tts_internal(
 
     let audio_bytes = match turn_res {
         Ok((ws_back, new_turns, bytes)) if !bytes.is_empty() => {
-            if new_turns < 6 {
+            if new_turns < max_turns_per_socket {
                 *slot_session = Some(PersistentEdgeWs {
                     ws: ws_back,
                     last_used: Instant::now(),
@@ -1049,7 +1048,7 @@ async fn speak_edge_tts_internal(
             let fresh_ssml = ssml_msg.replacen(&request_id, &fresh_req_id, 1);
             match run_edge_ws_turn(fresh_ws, 0, &fresh_ssml).await {
                 Ok((ws_back, new_turns, bytes)) if !bytes.is_empty() => {
-                    if new_turns < 6 {
+                    if new_turns < max_turns_per_socket {
                         *slot_session = Some(PersistentEdgeWs {
                             ws: ws_back,
                             last_used: Instant::now(),
@@ -1059,23 +1058,11 @@ async fn speak_edge_tts_internal(
                     bytes
                 }
                 Ok(_) => return Err("Edge TTS вернул пустой аудио-ответ".into()),
-                Err((err_msg, partial)) => {
-                    if !partial.is_empty() {
-                        partial
-                    } else {
-                        return Err(err_msg);
-                    }
-                }
+                Err((err_msg, _)) => return Err(err_msg),
             }
         }
         Ok(_) => return Err("Edge TTS вернул пустой аудио-ответ".into()),
-        Err((err_msg, partial)) => {
-            if !partial.is_empty() {
-                partial
-            } else {
-                return Err(err_msg);
-            }
-        }
+        Err((err_msg, _)) => return Err(err_msg),
     };
 
     Ok(STANDARD.encode(&audio_bytes))
