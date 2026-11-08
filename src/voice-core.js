@@ -437,25 +437,29 @@ class VoiceCore {
         // Разбиваем по концам предложений (. ! ?), по точке с запятой (;), И по всем переносам строк (\n+)
         let rawSentences = processed.split(/(?<=[.!?])\s+|(?<=;)\s+|\n+/u);
 
-        const splitLongSentence = (sentence, maxLen = 115) => {
+        const splitLongSentence = (sentence, maxLen = 200) => {
             if (sentence.length <= maxLen) return [sentence];
             const parts = [];
             let remaining = sentence.trim();
             while (remaining.length > maxLen) {
-                // Не оставляем крошечный «хвост» (< 25 символов) в конце при разрезании
-                const limit = Math.min(maxLen, Math.max(45, remaining.length - 25));
-                const slice = remaining.slice(0, limit);
-                const dashIdx = Math.max(slice.lastIndexOf(' — '), slice.lastIndexOf(' - '));
-                const colonIdx = slice.lastIndexOf(': ');
-                const commaIdx = slice.lastIndexOf(', ');
-                const closeParenIdx = slice.lastIndexOf(') ');
-                const punctMatch = Math.max(dashIdx, colonIdx, commaIdx, closeParenIdx);
+                // Ищем естественную пунктуационную границу клаузы (тире, двоеточие, запятая, скобка, слэш) в окне до maxLen + 35,
+                // чтобы никогда не разрывать предложение посреди словосочетания ("за частые | стуки")
+                const punctLimit = Math.min(maxLen + 35, Math.max(55, remaining.length - 30));
+                const punctSlice = remaining.slice(0, punctLimit);
+                const dashIdx = Math.max(punctSlice.lastIndexOf(' — '), punctSlice.lastIndexOf(' - '));
+                const colonIdx = punctSlice.lastIndexOf(': ');
+                const commaIdx = punctSlice.lastIndexOf(', ');
+                const closeParenIdx = punctSlice.lastIndexOf(') ');
+                const slashIdx = punctSlice.lastIndexOf(' / ');
+                const punctMatch = Math.max(dashIdx, colonIdx, commaIdx, closeParenIdx, slashIdx);
                 let splitIdx = -1;
-                if (punctMatch >= 30) {
-                    splitIdx = punctMatch + (slice[punctMatch] === ' ' ? 3 : 1);
+                if (punctMatch >= 40) {
+                    splitIdx = punctMatch + (punctSlice[punctMatch] === ' ' ? 3 : 1);
                 } else {
-                    const spaceIdx = slice.lastIndexOf(' ');
-                    splitIdx = spaceIdx >= 30 ? spaceIdx : limit;
+                    const spaceLimit = Math.min(maxLen, Math.max(55, remaining.length - 30));
+                    const spaceSlice = remaining.slice(0, spaceLimit);
+                    const spaceIdx = spaceSlice.lastIndexOf(' ');
+                    splitIdx = spaceIdx >= 40 ? spaceIdx : spaceLimit;
                 }
                 const chunk = remaining.slice(0, splitIdx).trim();
                 if (chunk.length > 0 && /[\p{L}\p{N}]/u.test(chunk)) {
@@ -475,26 +479,29 @@ class VoiceCore {
             s = s.replace(/<ELLIPSIS>/g, "...");
             const trimmed = s.trim();
             if (trimmed.length === 0 || !/[\p{L}\p{N}]/u.test(trimmed)) continue;
-            // Первую фразу делаем компактной (до 95 символов) для быстрого старта и запаса времени воспроизведения,
-            // а последующие предложения — до 110 символов (оптимум скорости генерации <4.5с без таймаутов и кэширования в БД)
-            const maxChunkLen = rawClean.length === 0 ? 95 : 110;
+            // Сохраняем естественные границы предложений (до 150 симв. для первого и до 200 симв. для последующих),
+            // не дробя нормальные предложения на мелкие обрывки и не утраивая число сетевых запросов к Microsoft.
+            const maxChunkLen = rawClean.length === 0 ? 150 : 200;
             for (const sub of splitLongSentence(trimmed, maxChunkLen)) {
                 rawClean.push(sub);
             }
         }
 
-        // Приклеиваем короткие фразы (< 35 символов) к соседнему предложению (до 110 символов),
-        // чтобы на скорости 1.75x каждое предложение звучало достаточно долго для бесшовной подгрузки следующих
+        // Сохраняем первое предложение компактным для быстрого отклика на шкале, а последующие короткие предложения (< 115 симв.)
+        // объединяем с соседним (до 210 симв.), чтобы один сетевой запрос давал 7-10 сек речи на скорости 1.75x без пауз.
         const finalSentences = [];
         for (let i = 0; i < rawClean.length; i++) {
-            const cur = rawClean[i];
-            if (cur.length < 35 && i + 1 < rawClean.length && (cur.length + 1 + rawClean[i + 1].length) <= 110) {
-                rawClean[i + 1] = cur + " " + rawClean[i + 1];
-            } else if (cur.length < 35 && finalSentences.length > 0 && (finalSentences[finalSentences.length - 1].length + 1 + cur.length) <= 110) {
-                finalSentences[finalSentences.length - 1] += " " + cur;
-            } else {
-                finalSentences.push(cur);
+            let cur = rawClean[i];
+            if (finalSentences.length > 0) {
+                while (cur.length < 115 && i + 1 < rawClean.length && (cur.length + 1 + rawClean[i + 1].length) <= 210) {
+                    i++;
+                    cur += " " + rawClean[i];
+                }
+            } else if (cur.length < 40 && i + 1 < rawClean.length && (cur.length + 1 + rawClean[i + 1].length) <= 160) {
+                i++;
+                cur += " " + rawClean[i];
             }
+            finalSentences.push(cur);
         }
 
         return finalSentences;
@@ -693,6 +700,7 @@ class VoiceCore {
             return prevBuffersBySentence.get(trimmed) || this.cache.getSync(cacheVoiceKey, trimmed) || null;
         });
         this.audioDurations = new Array(this.sentences.length).fill(0);
+        this._retryCountByIndex = {};
         this.currentSentenceIndex = 0;
         this.isPlaying = autoPlay;
         this.isPaused = false;
@@ -771,7 +779,7 @@ class VoiceCore {
                 let lastErr = null;
 
                 for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-                    if (this.currentQueueId !== queueId || this.audioBuffers !== currentBuffersRef) {
+                    if (this.currentQueueId !== queueId || this.audioBuffers !== currentBuffersRef || i < this.currentSentenceIndex) {
                         return;
                     }
 
@@ -804,8 +812,8 @@ class VoiceCore {
                         this.lastNetworkRequestTime = Date.now();
                         lastErr = err;
                         this.log(`Attempt ${attempt}/${maxAttempts} failed for sentence ${i}: ${err}`);
-                        if (attempt < maxAttempts) {
-                            await new Promise(r => setTimeout(r, 250));
+                        if (attempt < maxAttempts && i >= this.currentSentenceIndex) {
+                            await new Promise(r => setTimeout(r, 150));
                         }
                     }
                 }
@@ -814,17 +822,19 @@ class VoiceCore {
                 throw lastErr || new Error("Не удалось синтезировать предложение после нескольких попыток");
             }
         } catch (err) {
-            if (this.currentQueueId !== queueId || this.audioBuffers !== currentBuffersRef) {
+            if (this.currentQueueId !== queueId || this.audioBuffers !== currentBuffersRef || i < this.currentSentenceIndex) {
                 return;
             }
             this.log(`Prefetch error at index ${i} after all retries: ${err}`);
             if (this.audioBuffers === currentBuffersRef) {
-                // Если это фоновая предзагрузка будущего предложения (i > currentSentenceIndex),
-                // НЕ помечаем его как "ERROR" (иначе плеер перепрыгнет через него!), а оставляем null
-                // и делаем паузу 500 мс, чтобы последовательный воркер повторил попытку без пропуска предложения.
-                if (i > this.currentSentenceIndex) {
+                if (!this._retryCountByIndex) this._retryCountByIndex = {};
+                this._retryCountByIndex[i] = (this._retryCountByIndex[i] || 0) + 1;
+                // Если это фоновая предзагрузка и число полных циклов повтора <= 2,
+                // НЕ помечаем предложение как "ERROR" и не перепрыгиваем через него,
+                // чтобы строго последовательный воркер докачал именно его без образования «дырок» на шкале.
+                if (i > this.currentSentenceIndex && this._retryCountByIndex[i] <= 2) {
                     this.audioBuffers[i] = null;
-                    await new Promise(r => setTimeout(r, 500));
+                    await new Promise(r => setTimeout(r, 300));
                     return;
                 }
                 if (window.showToast) window.showToast("Ошибка TTS: " + err, true);
@@ -848,7 +858,9 @@ class VoiceCore {
     }
 
     async startPrefetchQueue() {
-        const CONCURRENCY = 2;
+        // Строго 1 последовательный воркер (CONCURRENCY = 1): предложения качаются строго по порядку (0 -> 1 -> 2 -> 3...)
+        // без перепрыгивания через загружаемое предложение и без образования «дырок» (разрывов) на шкале буфера!
+        const CONCURRENCY = 1;
         const baseWindowSize = 8; // минимум 8 предложений наперёд
 
         if (!this.currentQueueId) {
