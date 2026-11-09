@@ -2,6 +2,17 @@
 
 Все заметные изменения в этом проекте документируются в этом файле по стандарту [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/).
 
+## [3.5.42] - 2026-11-09
+
+### Fixed
+- **Сохранение тумблера «Запуск при старте Windows», позиции/пресета Капсулы и размеров главного окна при ручной переустановке `.exe` (`src-tauri/src/lib.rs`, `src-tauri/windows/hooks.nsh`, `src/index.html`, `src/capsule.html`)**:
+  - **Автоматическое восстановление автозапуска Windows после ручной переустановки (`src-tauri/src/lib.rs`, `src-tauri/windows/hooks.nsh`)**:
+    - В структуру `AppConfig` (`config.json`) добавлено поле `autostart_enabled: Option<bool>`. Теперь состояние тумблера «Запуск при старте Windows» сохраняется не только в реестре `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\SincPro`, но и в файле конфигурации `%APPDATA%\com.sincpro.app\config.json`.
+    - При запуске приложения (`.setup()` и `is_autostart_enabled`), если пользователь устанавливал новую версию вручную поверх старой через пункт «Удалить перед установкой» и `uninstall.exe` удалил запись из реестра Windows, SincPro автоматически восстанавливает ключ автозапуска в реестре из `config.json`.
+    - Дополнительно в NSIS-хук установщика (`src-tauri/windows/hooks.nsh`: `SincProGuiInit` + `NSIS_HOOK_POSTINSTALL`) добавлено чтение ключа автозапуска до запуска деинсталлятора предыдущей версии и автоматическое восстановление записи в реестре сразу по завершении установки.
+  - **Дублирование координат и пресета Капсулы, а также геометрии главного окна в `config.json` (`src-tauri/src/lib.rs`, `src/capsule.html`, `src/index.html`)**:
+    - В `AppConfig` (`config.json`) добавлены поля `capsule_x`, `capsule_y`, `capsule_preset`, `main_x`, `main_y`, `main_width`, `main_height` и `dashboard_view_mode`, чтобы позиция Капсулы, выбранный пресет и размеры главного окна не зависели только от `localStorage` WebView2.
+
 ## [3.5.41] - 2026-11-09
 
 ### Fixed

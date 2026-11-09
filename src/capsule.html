@@ -802,6 +802,7 @@
               currentPreset = preset;
             }
             localStorage.setItem('capsulePreset', currentPreset);
+            if (invoke) invoke('update_config_fields', { fields: { capsule_preset: currentPreset } }).catch(() => {});
             syncPresetUI(currentPreset);
             if (onSelect) onSelect(currentPreset);
           }
@@ -1903,8 +1904,29 @@
       if (window.__TAURI__) {
         const { invoke } = window.__TAURI__.core;
         
+        function syncPersistentCapsuleState(config) {
+          if (config.capsule_preset) {
+            currentPreset = config.capsule_preset;
+            localStorage.setItem('capsulePreset', currentPreset);
+            syncPresetUI(currentPreset);
+          }
+          if (typeof config.capsule_x === 'number' && typeof config.capsule_y === 'number') {
+            localStorage.setItem('capsule_pos', JSON.stringify({ x: config.capsule_x, y: config.capsule_y }));
+          } else {
+            const savedPos = localStorage.getItem('capsule_pos');
+            if (savedPos) {
+              try {
+                const p = JSON.parse(savedPos);
+                if (p && typeof p.x === 'number' && typeof p.y === 'number') {
+                  invoke('update_config_fields', { fields: { capsule_x: Math.round(p.x), capsule_y: Math.round(p.y) } }).catch(() => {});
+                }
+              } catch (_) {}
+            }
+          }
+        }
         invoke('is_minimized_startup').then((isMinimized) => {
           invoke('load_config').then((config) => {
+            syncPersistentCapsuleState(config);
             capsuleMode = config.capsule_mode !== undefined ? config.capsule_mode : 2;
             isCapsuleEnabled = (capsuleMode > 0);
             isMagnetEnabled = config.capsule_magnet !== undefined ? config.capsule_magnet : true;
@@ -1940,6 +1962,7 @@
         }).catch(() => {
           // Fallback if is_minimized_startup fails
           invoke('load_config').then((config) => {
+            syncPersistentCapsuleState(config);
             capsuleMode = config.capsule_mode !== undefined ? config.capsule_mode : 2;
             isCapsuleEnabled = (capsuleMode > 0);
             isMagnetEnabled = config.capsule_magnet !== undefined ? config.capsule_magnet : true;
@@ -1989,6 +2012,7 @@
               lastBottomY_phys       = pos.y + size.height;
               if (!isMagnetEnabled) {
                 localStorage.setItem('capsule_pos', JSON.stringify({ x: pos.x, y: pos.y }));
+                invoke('update_config_fields', { fields: { capsule_x: Math.round(pos.x), capsule_y: Math.round(pos.y) } }).catch(() => {});
               }
             } catch (_) {}
           }
@@ -2006,6 +2030,7 @@
               
               if (!isMagnetEnabled) {
                 localStorage.setItem('capsule_pos', JSON.stringify({ x, y }));
+                invoke('update_config_fields', { fields: { capsule_x: Math.round(x), capsule_y: Math.round(y) } }).catch(() => {});
               }
             } catch (_) {}
           });

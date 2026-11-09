@@ -4026,8 +4026,7 @@ fn is_minimized_startup() -> bool {
     MINIMIZED_STARTUP.load(std::sync::atomic::Ordering::SeqCst)
 }
 
-#[tauri::command]
-fn set_autostart_enabled(enabled: bool) -> Result<(), String> {
+fn apply_autostart_registry(enabled: bool) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let current_exe = std::env::current_exe()
@@ -4066,8 +4065,7 @@ fn set_autostart_enabled(enabled: bool) -> Result<(), String> {
     }
 }
 
-#[tauri::command]
-fn is_autostart_enabled() -> Result<bool, String> {
+fn check_autostart_registry() -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
         let run_key_path = r#"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"#;
@@ -4087,6 +4085,44 @@ fn is_autostart_enabled() -> Result<bool, String> {
     {
         Ok(false)
     }
+}
+
+#[tauri::command]
+fn set_autostart_enabled(app_handle: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    apply_autostart_registry(enabled)?;
+    let mut config = load_config_internal(&app_handle).unwrap_or_default();
+    config.autostart_enabled = Some(enabled);
+    if let Ok(config_dir) = app_handle.path().app_config_dir() {
+        let _ = std::fs::create_dir_all(&config_dir);
+        if let Ok(json_str) = serde_json::to_string_pretty(&config) {
+            let _ = std::fs::write(config_dir.join("config.json"), json_str);
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn is_autostart_enabled(app_handle: tauri::AppHandle) -> Result<bool, String> {
+    let reg_enabled = check_autostart_registry()?;
+    if let Ok(mut config) = load_config_internal(&app_handle) {
+        if config.autostart_enabled == Some(true) && !reg_enabled {
+            let _ = apply_autostart_registry(true);
+            return Ok(true);
+        }
+        if config.autostart_enabled.is_none() && reg_enabled {
+            config.autostart_enabled = Some(true);
+            if let Ok(config_dir) = app_handle.path().app_config_dir() {
+                if let Ok(json_str) = serde_json::to_string_pretty(&config) {
+                    let _ = std::fs::write(config_dir.join("config.json"), json_str);
+                }
+            }
+            return Ok(true);
+        }
+        if let Some(cfg_val) = config.autostart_enabled {
+            return Ok(cfg_val);
+        }
+    }
+    Ok(reg_enabled)
 }
 
 #[tauri::command]
@@ -4281,7 +4317,9 @@ pub struct AppConfig {
     #[serde(default = "default_layout_converter_mode")]
     pub layout_converter_mode: u8,
     
-    // Настройки капсулы и масштаба виджетов
+    // Настройки капсулы, главного окна и масштаба виджетов
+    #[serde(default)]
+    pub autostart_enabled: Option<bool>,
     #[serde(default = "default_true")]
     pub capsule_magnet: bool,
     #[serde(default = "default_widget_scale")]
@@ -4290,6 +4328,22 @@ pub struct AppConfig {
     pub widget_x: Option<i32>,
     #[serde(default)]
     pub widget_y: Option<i32>,
+    #[serde(default)]
+    pub capsule_x: Option<i32>,
+    #[serde(default)]
+    pub capsule_y: Option<i32>,
+    #[serde(default = "default_capsule_preset")]
+    pub capsule_preset: String,
+    #[serde(default)]
+    pub main_x: Option<i32>,
+    #[serde(default)]
+    pub main_y: Option<i32>,
+    #[serde(default)]
+    pub main_width: Option<u32>,
+    #[serde(default)]
+    pub main_height: Option<u32>,
+    #[serde(default)]
+    pub dashboard_view_mode: Option<String>,
     
     // Настройки TTS
     #[serde(default = "default_tts_speed")]
@@ -4369,10 +4423,19 @@ impl Default for AppConfig {
             widget_mode: 2,
             ocr_mode_switch: 0,
             layout_converter_mode: 2,
+            autostart_enabled: None,
             capsule_magnet: true,
             widget_scale: 1.0,
             widget_x: None,
             widget_y: None,
+            capsule_x: None,
+            capsule_y: None,
+            capsule_preset: default_capsule_preset(),
+            main_x: None,
+            main_y: None,
+            main_width: None,
+            main_height: None,
+            dashboard_view_mode: None,
             tts_speed: 1.0,
             tts_volume: 1.0,
             tts_voice: "ru-RU-SvetlanaNeural".to_string(),
@@ -4405,6 +4468,10 @@ impl Default for AppConfig {
 
 fn default_widget_scale() -> f32 {
     1.0
+}
+
+fn default_capsule_preset() -> String {
+    "summary".to_string()
 }
 
 fn default_tts_volume() -> f32 {
@@ -4785,6 +4852,9 @@ async fn update_config_fields(app_handle: tauri::AppHandle, fields: serde_json::
         if let Some(val) = obj.get("ocr_mode_switch") {
             if let Some(n) = val.as_u64() { config.ocr_mode_switch = n as u8; }
         }
+        if let Some(val) = obj.get("autostart_enabled") {
+            if let Some(b) = val.as_bool() { config.autostart_enabled = Some(b); }
+        }
         if let Some(val) = obj.get("capsule_magnet") {
             if let Some(b) = val.as_bool() { config.capsule_magnet = b; }
         }
@@ -4799,6 +4869,36 @@ async fn update_config_fields(app_handle: tauri::AppHandle, fields: serde_json::
         if let Some(val) = obj.get("widget_y") {
             if let Some(n) = val.as_i64() { config.widget_y = Some(n as i32); }
             else if let Some(f) = val.as_f64() { config.widget_y = Some(f.round() as i32); }
+        }
+        if let Some(val) = obj.get("capsule_x") {
+            if let Some(n) = val.as_i64() { config.capsule_x = Some(n as i32); }
+            else if let Some(f) = val.as_f64() { config.capsule_x = Some(f.round() as i32); }
+        }
+        if let Some(val) = obj.get("capsule_y") {
+            if let Some(n) = val.as_i64() { config.capsule_y = Some(n as i32); }
+            else if let Some(f) = val.as_f64() { config.capsule_y = Some(f.round() as i32); }
+        }
+        if let Some(val) = obj.get("capsule_preset") {
+            if let Some(s) = val.as_str() { config.capsule_preset = s.to_string(); }
+        }
+        if let Some(val) = obj.get("main_x") {
+            if let Some(n) = val.as_i64() { config.main_x = Some(n as i32); }
+            else if let Some(f) = val.as_f64() { config.main_x = Some(f.round() as i32); }
+        }
+        if let Some(val) = obj.get("main_y") {
+            if let Some(n) = val.as_i64() { config.main_y = Some(n as i32); }
+            else if let Some(f) = val.as_f64() { config.main_y = Some(f.round() as i32); }
+        }
+        if let Some(val) = obj.get("main_width") {
+            if let Some(n) = val.as_u64() { config.main_width = Some(n as u32); }
+            else if let Some(f) = val.as_f64() { config.main_width = Some(f.round().max(100.0) as u32); }
+        }
+        if let Some(val) = obj.get("main_height") {
+            if let Some(n) = val.as_u64() { config.main_height = Some(n as u32); }
+            else if let Some(f) = val.as_f64() { config.main_height = Some(f.round().max(100.0) as u32); }
+        }
+        if let Some(val) = obj.get("dashboard_view_mode") {
+            if let Some(s) = val.as_str() { config.dashboard_view_mode = Some(s.to_string()); }
         }
         if let Some(val) = obj.get("tts_speed") {
             if let Some(f) = val.as_f64() { config.tts_speed = f as f32; }
@@ -11249,9 +11349,30 @@ pub fn run() {
             OCR_ENABLED.store(config.ocr_mode_switch, std::sync::atomic::Ordering::SeqCst);
             sync_layout_config(&config);
 
-            // Автозапуск: если автозапуск включен в реестре, обновляем его путь на текущий запускаемый файл
-            if is_autostart_enabled() == Ok(true) {
-                let _ = set_autostart_enabled(true);
+            // Автозапуск: синхронизируем между config.json и реестром Windows
+            // (если при ручной переустановке деинсталлятор стёр ключ в реестре, восстанавливаем его из config.json)
+            let reg_autostart = check_autostart_registry().unwrap_or(false);
+            match config.autostart_enabled {
+                Some(true) => {
+                    let _ = apply_autostart_registry(true);
+                }
+                Some(false) => {
+                    if reg_autostart {
+                        let _ = apply_autostart_registry(false);
+                    }
+                }
+                None => {
+                    if reg_autostart {
+                        let _ = apply_autostart_registry(true);
+                        let mut updated_cfg = config.clone();
+                        updated_cfg.autostart_enabled = Some(true);
+                        if let Ok(config_dir) = app.handle().path().app_config_dir() {
+                            if let Ok(json_str) = serde_json::to_string_pretty(&updated_cfg) {
+                                let _ = std::fs::write(config_dir.join("config.json"), json_str);
+                            }
+                        }
+                    }
+                }
             }
 
             // Устанавливаем Win32 subclass и безрамочный POPUP-стиль ДО показа окон

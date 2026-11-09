@@ -1352,6 +1352,22 @@
             if (scaleSlider) scaleSlider.value = String(scalePercent);
             if (scaleLabel) scaleLabel.textContent = `${scalePercent}%`;
 
+            // Синхронизируем статус автозапуска (и восстанавливаем в реестре, если был включён в config.json)
+            try {
+              const autoEnabled = await invoke('is_autostart_enabled');
+              const autoToggle = document.getElementById('setting-autostart');
+              if (autoToggle) {
+                autoToggle.checked = !!autoEnabled;
+                if (typeof syncAutostartToggleUI === 'function') {
+                  syncAutostartToggleUI(!!autoEnabled);
+                }
+              }
+            } catch (_) {}
+
+            if (config.dashboard_view_mode && !localStorage.getItem('dashboardViewMode')) {
+              localStorage.setItem('dashboardViewMode', config.dashboard_view_mode);
+            }
+
             localAiServers = config.ai_servers || [];
             renderAiServersList();
 
@@ -2941,6 +2957,9 @@
         if (!combo) return;
         dashboardViewMode = combo.value;
         localStorage.setItem('dashboardViewMode', dashboardViewMode);
+        if (invoke) {
+          invoke('update_config_fields', { fields: { dashboard_view_mode: dashboardViewMode } }).catch(() => {});
+        }
         if (!currentActiveEntry) return;
         const summaryText = document.getElementById('summary-text');
         const displayText = getDisplayText(currentActiveEntry, dashboardViewMode);
@@ -3966,13 +3985,13 @@
             console.error("Failed to load app version:", err);
             const versionDisplay = document.getElementById('app-version-display');
             if (versionDisplay) {
-              versionDisplay.textContent = `Текущая версия: 3.5.40`;
+              versionDisplay.textContent = `Текущая версия: 3.5.42`;
             }
           });
         } else {
           const versionDisplay = document.getElementById('app-version-display');
           if (versionDisplay) {
-            versionDisplay.textContent = `Текущая версия: 3.5.40 (Mock)`;
+            versionDisplay.textContent = `Текущая версия: 3.5.42 (Mock)`;
           }
         }
 
@@ -4096,7 +4115,22 @@
             const minPhysH = Math.round(560 * dpr);
             await appWindow.setMinSize(new LogicalSize(980, 560)).catch(() => {});
 
-            const savedState = localStorage.getItem('main_window_state');
+            let savedState = localStorage.getItem('main_window_state');
+            if (!savedState && invoke) {
+              try {
+                const cfg = await invoke('load_config');
+                if (cfg && typeof cfg.main_x === 'number' && typeof cfg.main_y === 'number') {
+                  const fromCfg = {
+                    x: cfg.main_x,
+                    y: cfg.main_y,
+                    width: typeof cfg.main_width === 'number' ? cfg.main_width : undefined,
+                    height: typeof cfg.main_height === 'number' ? cfg.main_height : undefined
+                  };
+                  savedState = JSON.stringify(fromCfg);
+                  localStorage.setItem('main_window_state', savedState);
+                }
+              } catch (_) {}
+            }
             if (savedState) {
               const state = JSON.parse(savedState);
               if (state && typeof state.x === 'number' && typeof state.y === 'number') {
@@ -4159,6 +4193,16 @@
               width: size.width,
               height: size.height
             }));
+            if (invoke) {
+              invoke('update_config_fields', {
+                fields: {
+                  main_x: pos.x,
+                  main_y: pos.y,
+                  main_width: size.width,
+                  main_height: size.height
+                }
+              }).catch(() => {});
+            }
           } catch (err) {
             console.error('Ошибка сохранения геометрии главного окна:', err);
           }
