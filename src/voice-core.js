@@ -354,8 +354,8 @@ class VoiceCore {
         str = str.replace(/(?<![\p{L}\p{N}*])\*(?=\S)([^\n*]*?\S)\*(?![\p{L}\p{N}*])/gu, '$1');
         str = str.replace(/(?<![\p{L}\p{N}_])_(?=\S)([^\n_]*?\S)_(?![\p{L}\p{N}_])/gu, '$1');
         
-        // 7. Убираем горизонтальные линии ---, ***, ___
-        str = str.replace(/^\s*([-*_])\1{2,}\s*$/gm, '');
+        // 7. Убираем горизонтальные линии ---, ***, ___, ===
+        str = str.replace(/^\s*([-*_=])\1{2,}\s*$/gm, '');
 
         // 8. Убираем маркеры списков с чекбоксами (например: "- [ ] Задача" -> "Задача")
         str = str.replace(/^\s*([-*+])\s+\[[ xX]\]\s+/gm, '');
@@ -430,9 +430,10 @@ class VoiceCore {
 
         // Защищаем числа (3.3)
         processed = processed.replace(/(\d)\.(\d)/g, "$1<DOT>$2");
-        // Защищаем нумерацию списков (1., 2.)
+        // Защищаем нумерацию списков (1., 2., Приём А., Пункт Б.)
         processed = processed.replace(/(^\s*\d+)\./gm, "$1<DOT>");
         processed = processed.replace(/(\s\d+)\./g, "$1<DOT>");
+        processed = processed.replace(/(\b[А-ЯЁA-Z])\.\s+/g, "$1<DOT> ");
         // Защищаем аббревиатуры
         processed = processed.replace(/т\.к\./gi, "т<DOT>к<DOT>");
         processed = processed.replace(/т\.д\./gi, "т<DOT>д<DOT>");
@@ -515,7 +516,7 @@ class VoiceCore {
         const baseVoiceKey = isLocal 
             ? (this.settings.tts_local_voice || 'ru_RU-dmitri-medium.onnx')
             : isGemini
-                ? `${this.settings.voice || 'gemini:Aoede'}_${this.settings.tts_gemini_model || 'gemini-2.5-flash-native-audio-latest'}_${this.settings.tts_gemini_thinking || 'off'}`
+                ? `${this.settings.voice || 'gemini:Aoede'}_${this.settings.tts_gemini_model || 'gemini-2.5-flash-native-audio-latest'}_${this.settings.tts_gemini_thinking || 'off'}_pad1`
                 : (this.settings.voice || 'ru-RU-SvetlanaNeural');
         return `${baseVoiceKey}${this.settings.expressive !== false ? '' : '_flat'}`;
     }
@@ -1219,12 +1220,20 @@ class VoiceCore {
                 this.log(`Ignoring stale ended event (playing=${this._playingSentenceIndex}, current=${this.currentSentenceIndex})`);
                 return;
             }
-            this.log('audioElement ended event for index ' + this.currentSentenceIndex);
-            this._playingSentenceIndex = -1;
-            this.audioElement.removeAttribute('src');
-            this.currentSentenceIndex++;
-            this.playCurrentSentence();
-            this.startPrefetchQueue(); // Сдвигаем окно буферизации и догружаем следующее предложение
+            const finishedIdx = this.currentSentenceIndex;
+            this.log('audioElement ended event for index ' + finishedIdx);
+            // Даём 85 мс на полное опустошение буфера WebAudio компрессора и ресемплера (особенно на скорости 1.5x–2.0x),
+            // чтобы гарантированно не проглатывалось последнее слово перед сменой src
+            setTimeout(() => {
+                if (!this.isPlaying || this._playingSentenceIndex !== finishedIdx || this.currentSentenceIndex !== finishedIdx) {
+                    return;
+                }
+                this._playingSentenceIndex = -1;
+                this.audioElement.removeAttribute('src');
+                this.currentSentenceIndex++;
+                this.playCurrentSentence();
+                this.startPrefetchQueue(); // Сдвигаем окно буферизации и догружаем следующее предложение
+            }, 85);
         });
 
         this.audioElement.addEventListener('timeupdate', () => {
