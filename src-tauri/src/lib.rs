@@ -70,12 +70,20 @@ struct TypedKey {
     is_english_layout: bool,
 }
 
+#[derive(Clone)]
+struct PendingShortWord {
+    word_current: String,
+    word_alternate: String,
+    is_english_layout: bool,
+}
+
 static MOUSE_CLICKED_SINCE_KEY: AtomicBool = AtomicBool::new(false);
 static LAST_TYPED_HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 static LAST_TYPED_HKL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 lazy_static::lazy_static! {
     static ref TYPED_BUFFER: std::sync::Mutex<Vec<TypedKey>> = std::sync::Mutex::new(Vec::new());
+    static ref PENDING_SHORT_WORDS: std::sync::Mutex<Vec<PendingShortWord>> = std::sync::Mutex::new(Vec::new());
     static ref LAST_AUTOCORRECT: std::sync::Mutex<Option<(String, String, bool, usize)>> = std::sync::Mutex::new(None);
     static ref LAST_KEY_TIME: std::sync::Mutex<Instant> = std::sync::Mutex::new(Instant::now());
     static ref EXCLUDED_WORDS: std::sync::Mutex<HashSet<String>> = std::sync::Mutex::new(HashSet::new());
@@ -2382,9 +2390,9 @@ fn map_vk_to_chars(vk: u32) -> Option<(char, char)> {
     }
 }
 
-fn has_normal_word_casing(word: &str) -> bool {
+fn has_normal_word_casing_min(word: &str, min_len: usize) -> bool {
     let chars: Vec<char> = word.chars().collect();
-    if chars.len() < 3 {
+    if chars.len() < min_len {
         return false;
     }
     // Запрещаем заглавные буквы после первой позиции (исключает аббревиатуры RGB/КПИ, camelCase и склейки вроде ",Он" -> "бОн")
@@ -2392,6 +2400,10 @@ fn has_normal_word_casing(word: &str) -> bool {
         return false;
     }
     true
+}
+
+fn has_normal_word_casing(word: &str) -> bool {
+    has_normal_word_casing_min(word, 3)
 }
 
 fn is_recognized_english_word(word_lower: &str) -> bool {
@@ -2403,7 +2415,7 @@ fn is_recognized_english_word(word_lower: &str) -> bool {
         // Служебные и высокочастотные английские слова
         "the", "and", "for", "are", "but", "not", "you", "all", "any", "can", "had", "her", "was", "one",
         "our", "out", "day", "get", "has", "him", "his", "how", "man", "new", "now", "old", "see", "two",
-        "way", "who", "boy", "did", "its", "let", "put", "say", "she", "too", "use", " yes", "yes", "yet",
+        "way", "who", "boy", "did", "its", "let", "put", "say", "she", "too", "use", "yes", "yet", "may",
         "that", "with", "have", "this", "will", "your", "from", "they", "know", "want", "been", "good",
         "much", "some", "time", "very", "when", "come", "here", "just", "like", "long", "make", "many",
         "more", "only", "over", "such", "take", "than", "them", "well", "were", "what", "where", "which",
@@ -2436,22 +2448,273 @@ fn is_recognized_english_word(word_lower: &str) -> bool {
         "admin", "login", "logout", "signup", "token", "secret", "branch", "commit", "merge", "rebase",
         "push", "pull", "fetch", "clone", "status", "stash", "reset", "revert", "build", "check", "test",
         "tests", "debug", "trace", "cargo", "npm", "pnpm", "yarn", "vite", "webpack", "babel", "eslint",
+        // Расширенный словарь частых английских слов
+        "able", "above", "accept", "access", "across", "action", "actual", "actually", "add", "added",
+        "addition", "address", "advance", "advice", "affect", "afraid", "age", "agency", "agent", "ago",
+        "agree", "ahead", "air", "allow", "almost", "alone", "along", "already", "also", "although",
+        "among", "amount", "analysis", "animal", "annual", "apart", "appear", "apply", "approach", "area",
+        "argue", "argument", "arm", "army", "arrive", "art", "article", "artist", "ask", "assume",
+        "attack", "attempt", "attention", "attitude", "audience", "author", "auto", "available", "average",
+        "avoid", "awake", "award", "aware", "away", "baby", "back", "background", "bad", "bag", "balance",
+        "ball", "band", "bank", "bar", "base", "based", "basic", "basis", "batch", "bear", "Str", "beat",
+        "beautiful", "became", "become", "bed", "began", "begin", "behavior", "behind", "believe", "benefit",
+        "best", "beyond", "big", "bill", "billion", "binary", "bind", "bird", "bit", "black", "block",
+        "blood", "blue", "board", "boat", "body", "book", "boolean", "border", "born", "both", "Stick",
+        "bottom", "box", "brain", "bread", "bridge", "brief", "bright", "bring", "broad", "broken",
+        "brother", "brought", "brown", "brush", "budget", "built", "burn", "bus", "business", "busy",
+        "buy", "cache", "call", "calm", "came", "camera", "camp", "campaign", "cancer", "candidate",
+        "canvas", "capable", "capacity", "capital", "captain", "capture", "car", "card", "care", "career",
+        "careful", "carry", "case", "cases", "cash", "cast", "cat", "catch", "category", "cause", "cell",
+        "center", "central", "century", "certain", "certainly", "chain", "chair", "challenge", "chance",
+        "character", "charge", "chart", "chat", "cheap", "choice", "choose", "church", "circle", "citizen",
+        "city", "civil", "claim", "clean", "clear", "clearly", "click", "clock", "close", "closed",
+        "closely", "cloud", "club", "coach", "coast", "coat", "code", "codes", "coffee", "cold", "collect",
+        "collection", "college", "color", "column", "combine", "comfort", "command", "comment", "commercial",
+        "common", "community", "compare", "complete", "completely", "complex", "component", "computer",
+        "concept", "concern", "condition", "conference", "conflict", "connection", "consider", "consist",
+        "constant", "consumer", "contact", "contain", "container", "content", "context", "contract",
+        "contrast", "contribute", "conversation", "convert", "cook", "cool", "copy", "core", "corner",
+        "correct", "cost", "count", "counter", "country", "county", "couple", "courage", "course", "court",
+        "cover", "coverage", "crash", "crazy", "cream", "creative", "credit", "Ste", "crew", "crime",
+        "crisis", "cross", "crowd", "crucial", "cry", "culture", "cup", "current", "currently", "curve",
+        "customer", "cut", "cycle", "daily", "damage", "dance", "danger", "dangerous", "dark", "data",
+        "database", "date", "dates", "daughter", "dead", "deal", "dear", "death", "debate", "debt",
+        "decade", "decide", "decision", "declare", "deep", "defense", "define", "defined", "degree",
+        "delay", "deliver", "delivery", "demand", "department", "depend", "depth", "describe", "desert",
+        "design", "desire", "desk", "despite", "destroy", "detail", "details", "detect", "determine",
+        "develop", "developer", "development", "device", "devices", "different", "difficult", "digital",
+        "dinner", "direct", "direction", "directly", "director", "dirty", "discover", "discuss", "discussion",
+        "disease", "disk", "distance", "distribute", "district", "divide", "doctor", "document", "dog",
+        "dollar", "domain", "domestic", "done", "door", "double", "doubt", "down", "draft", "drag",
+        "drama", "draw", "dream", "dress", "drink", "drive", "driver", "drop", "drug", "dry", "due",
+        "during", "dust", "duty", "each", "early", "earn", "earth", "easily", "east", "easy", "eat",
+        "economic", "economy", "edge", "edit", "edition", "editor", "education", "effect", "effective",
+        "effort", "eight", "either", "election", "electric", "element", "else", "email", "empty", "encourage",
+        "end", "ended", "enemy", "energy", "engine", "engineer", "English", "english", "enjoy", "enough",
+        "ensure", "enter", "entire", "entry", "environment", "equal", "equipment", "escape", "especially",
+        "essential", "establish", "estate", "estimate", "even", "event", "events", "eventually", "ever",
+        "evidence", "exact", "exactly", "exam", "examine", "excellent", "except", "exchange", "excited",
+        "exciting", "execute", "exercise", "exist", "existing", "exit", "expand", "expect", "expected",
+        "expense", "expensive", "experience", "experiment", "expert", "explain", "explore", "express",
+        "expression", "extend", "extended", "extra", "extreme", "eye", "eyes", "face", "facility", "fact",
+        "factor", "factory", "fail", "fair", "faith", "fall", "familiar", "family", "famous", "fan",
+        "far", "farm", "fashion", "fast", "fat", "fault", "favor", "favorite", "fear", "featured",
+        "features", "federal", "fee", "feed", "feel", "feeling", "fell", "fellow", "felt", "female",
+        "few", "field", "fields", "fifteen", "fifth", "fifty", "fight", "figure", "fill", "film", "final",
+        "finally", "finance", "financial", "find", "fine", "finger", "finish", "finished", "fire", "firm",
+        "fish", "fit", "five", "fix", "fixed", "flag", "flash", "flat", "flight", "float", "floor",
+        "flow", "flower", "flush", "fly", "focus", "folk", "food", "foot", "football", "force", "foreign",
+        "forest", "forever", "forget", "form", "formal", "former", "forms", "forth", "fortune", "forty",
+        "forward", "foundation", "four", "fourth", "frame", "framework", "free", "freedom", "freely",
+        "frequency", "frequent", "fresh", "front", "fruit", "fuel", "full", "fully", "fun", "funding",
+        "funny", "future", "gain", "game", "games", "gap", "garage", "garden", "gas", "gate", "gather",
+        "gave", "gear", "gender", "general", "generally", "generate", "generation", "gentle", "gift",
+        "girl", "give", "given", "glad", "glass", "goal", "gold", "golden", "golf", "gone", "goods",
+        "government", "grab", "grade", "gradually", "grain", "grand", "grant", "grass", "gray", "green",
+        "grew", "grid", "ground", "group", "groups", "grow", "growth", "guarantee", "guard", "guess",
+        "guest", "guide", "guilty", "gun", "guy", "habit", "hair", "half", "hall", "hand", "hands",
+        "hang", "happen", "happened", "happy", "hard", "hardly", "hat", "hate", "head", "health", "healthy",
+        "hear", "heard", "heart", "heat", "heavy", "height", "held", "help", "helpful", "hence", "hero",
+        "hide", "high", "higher", "highly", "hill", "hire", "hit", "hold", "hole", "holiday", "holy",
+        "home", "honest", "honor", "hook", "hope", "horse", "hospital", "host", "hot", "hotel", "hour",
+        "hours", "however", "huge", "human", "humor", "hundred", "hung", "hungry", "hunt", "hurry",
+        "hurt", "husband", "ice", "icon", "icons", "idea", "ideal", "ideas", "identify", "identity",
+        "ignore", "ill", "illegal", "imagine", "immediate", "immediately", "impact", "implement", "importance",
+        "important", "impossible", "impress", "improve", "include", "included", "including", "income",
+        "increase", "indeed", "independent", "index", "indicate", "individual", "industry", "influence",
+        "info", "information", "initial", "initially", "injury", "inner", "innocent", "inquiry", "inside",
+        "insight", "insist", "inspire", "instance", "instead", "institution", "instruction", "instrument",
+        "insurance", "intellectual", "intelligence", "intend", "intense", "interest", "interested",
+        "interesting", "internal", "international", "internet", "interview", "into", "introduce", "invest",
+        "investigate", "investment", "invite", "involve", "involved", "iron", "island", "issue", "issues",
+        "item", "items", "itself", "jacket", "job", "jobs", "join", "joint", "joke", "journal", "journey",
+        "joy", "judge", "judgment", "juice", "jump", "junior", "jury", "keep", "kept", "key", "keyboard",
+        "keys", "kick", "kid", "kill", "kind", "king", "kiss", "kitchen", "knee", "knew", "knife",
+        "knock", "known", "label", "labor", "lack", "lady", "lake", "land", "landscape", "language",
+        "laptop", "largely", "last", "late", "later", "latest", "latter", "laugh", "launch", "law",
+        "lawyer", "lay", "layer", "lead", "leader", "leadership", "leading", "leaf", "league", "lean",
+        "least", "leather", "leave", "left", "leg", "legal", "legend", "lemon", "length", "less", "lesson",
+        "letter", "letters", "level", "levels", "library", "license", "lie", "life", "lift", "light",
+        "likely", "limit", "limited", "link", "links", "lip", "liquid", "list", "listen", "lists",
+        "literally", "literature", "live", "lives", "living", "load", "loan", "location", "lock", "log",
+        "logic", "logical", "lonely", "look", "looking", "loose", "lord", "lose", "loss", "lost", "lot",
+        "lots", "loud", "love", "lovely", "lover", "low", "lower", "luck", "lucky", "lunch", "machine",
+        "mad", "made", "magazine", "magic", "mail", "main", "mainly", "maintain", "major", "majority",
+        "maker", "male", "mall", "manage", "management", "manager", "manner", "manual", "map", "margin",
+        "mark", "market", "marketing", "marriage", "married", "marry", "mask", "mass", "massive", "master",
+        "material", "math", "matter", "maximum", "maybe", "mayor", "meal", "mean", "meaning", "meanwhile",
+        "measure", "meat", "media", "medical", "medium", "meet", "meeting", "member", "members", "mental",
+        "mention", "menu", "mere", "merely", "mess", "metal", "meter", "method", "methods", "middle",
+        "might", "military", "milk", "million", "mind", "mine", "minimum", "minister", "minor", "minority",
+        "minute", "minutes", "miracle", "mirror", "miss", "missile", "mission", "mistake", "mix", "mixture",
+        "mobile", "mode", "modes", "modern", "modify", "moment", "money", "month", "months", "mood",
+        "moon", "moral", "moreover", "mostly", "motion", "motor", "mount", "mountain", "mouse", "mouth",
+        "move", "movement", "movie", "multiple", "murder", "muscle", "museum", "musical", "must", "mutual",
+        "myself", "mystery", "naked", "name", "named", "names", "narrow", "nation", "national", "native",
+        "natural", "naturally", "nature", "near", "nearby", "nearly", "necessarily", "necessary", "neck",
+        "need", "needed", "needs", "negative", "neighbor", "neither", "nerve", "nervous", "net", "neutral",
+        "nevertheless", "newly", "news", "newspaper", "next", "nice", "night", "nine", "nobody", "nod",
+        "node", "nodes", "noise", "normal", "normally", "north", "nose", "note", "noted", "notes",
+        "notice", "notion", "novel", "nowhere", "nuclear", "nurse", "objective", "obligation", "observation",
+        "observe", "observer", "obtain", "obvious", "obviously", "occasion", "occasionally", "occupy",
+        "occur", "ocean", "odd", "odds", "off", "offense", "offer", "office", "officer", "official",
+        "often", "oil", "okay", "once", "ongoing", "onto", "open", "opened", "opening", "operate",
+        "operating", "operation", "operator", "opinion", "opponent", "opportunity", "oppose", "opposite",
+        "options", "orange", "order", "ordinary", "organic", "organization", "organize", "origin", "original",
+        "originally", "others", "otherwise", "ought", "ourselves", "outcome", "outside", "overall", "overcome",
+        "overlook", "owe", "own", "owner", "pace", "pack", "package", "page", "pages", "pain", "paint",
+        "painting", "pair", "pale", "palm", "pan", "panel", "pant", "paper", "parent", "parents", "park",
+        "parking", "part", "participate", "particle", "particular", "particularly", "partly", "partner",
+        "partnership", "parts", "party", "pass", "passage", "passenger", "passion", "past", "patch",
+        "path", "paths", "patient", "pattern", "pause", "pay", "payment", "peace", "peak", "peer", "pen",
+        "penalty", "pending", "pepper", "per", "perceive", "percentage", "perception", "perfect", "perfectly",
+        "perform", "performance", "perhaps", "period", "permanent", "permission", "permit", "personal",
+        "personality", "personally", "personnel", "perspective", "persuade", "pet", "phase", "phenomenon",
+        "philosophy", "phone", "phrase", "physical", "physically", "physician", "piano", "pick", "picture",
+        "pie", "piece", "pig", "pile", "pilot", "pin", "pink", "pipe", "pitch", "plain", "plan", "plane",
+        "planet", "planning", "plans", "plastic", "plate", "platform", "play", "player", "players", "playing",
+        "pleasant", "pleasure", "plenty", "plot", "plus", "pocket", "poem", "poet", "poetry", "points",
+        "pole", "police", "policy", "political", "politically", "politician", "politics", "poll", "pollution",
+        "pool", "poor", "pop", "popular", "population", "porch", "port", "portion", "portrait", "portray",
+        "pose", "position", "positive", "possess", "possibility", "possible", "possibly", "post", "pot",
+        "potato", "potential", "potentially", "pound", "pour", "poverty", "powder", "power", "powerful",
+        "practical", "practice", "pray", "prayer", "precisely", "predict", "prefer", "preference", "prepare",
+        "prepared", "presence", "present", "presentation", "preserve", "president", "press", "pressure",
+        "pretend", "pretty", "prevent", "previous", "previously", "price", "pride", "priest", "primarily",
+        "primary", "prime", "principal", "principle", "print", "prior", "priority", "prison", "prisoner",
+        "privacy", "probably", "procedure", "proceed", "processes", "produce", "producer", "production",
+        "products", "profession", "professional", "professor", "profit", "programs", "progress", "projects",
+        "promise", "promote", "proof", "proper", "properly", "property", "proportion", "proposal", "propose",
+        "proposed", "prosecutor", "prospect", "protect", "protection", "protein", "protest", "proud",
+        "prove", "provide", "provided", "provider", "province", "provision", "psychological", "publish",
+        "publisher", "purchase", "pure", "purpose", "pursue", "qualify", "quality", "quarter", "queen",
+        "questions", "quick", "quickly", "quiet", "quietly", "quit", "quite", "quote", "race", "racial",
+        "radical", "radio", "rail", "rain", "raise", "range", "rank", "rapid", "rapidly", "rare", "rarely",
+        "rate", "rates", "rather", "rating", "ratio", "raw", "reach", "reaction", "read", "reader",
+        "reading", "ready", "real", "reality", "realize", "really", "reason", "reasonable", "recall",
+        "receive", "recent", "recently", "recipe", "recognition", "recognize", "recommend", "recommendation",
+        "recording", "recover", "recovery", "red", "reduce", "reduction", "refer", "reference", "reflect",
+        "reflection", "reform", "refuse", "regard", "regarding", "regardless", "regime", "region", "regional",
+        "register", "regular", "regularly", "regulate", "regulation", "reinforce", "reject", "relate",
+        "related", "relation", "relationship", "relative", "relatively", "relax", "relevant", "relief",
+        "religion", "religious", "rely", "remain", "remaining", "remarkable", "remember", "remind", "remote",
+        "render", "repeat", "repeatedly", "replace", "reply", "report", "reporter", "represent", "representation",
+        "representative", "republican", "reputation", "request", "require", "required", "requirement",
+        "research", "researcher", "resemble", "reservation", "resident", "resist", "resistance", "resolution",
+        "resolve", "resort", "resource", "resources", "respect", "respond", "respondent", "response",
+        "responsibility", "responsible", "rest", "restaurant", "restore", "restriction", "results", "retain",
+        "retire", "retirement", "reveal", "revenue", "review", "revolution", "rhythm", "rice", "rich",
+        "rid", "ride", "rifle", "ring", "rise", "risk", "river", "road", "rock", "role", "roles", "roll",
+        "romantic", "roof", "room", "root", "rope", "rose", "rough", "roughly", "round", "route", "routine",
+        "row", "royal", "rub", "rule", "rules", "run", "running", "rural", "rush", "sacred", "sad",
+        "safe", "safety", "sake", "salad", "salary", "sale", "sales", "salt", "same", "sample", "sanction",
+        "sand", "satellite", "satisfaction", "satisfy", "sauce", "save", "saved", "saving", "saw", "scale",
+        "scandal", "scared", "scenario", "scene", "schedule", "scheme", "scholar", "scholarship", "science",
+        "scientific", "scientist", "scope", "score", "scream", "sea", "search", "season", "seat", "second",
+        "secondary", "section", "sector", "secure", "security", "seed", "seek", "seem", "segment", "seize",
+        "selection", "sell", "senate", "senator", "send", "senior", "sense", "sensitive", "sentence",
+        "separate", "sequence", "series", "serious", "seriously", "serve", "services", "session", "set",
+        "settle", "settlement", "seven", "several", "severe", "sex", "sexual", "shade", "shadow", "shake",
+        "shall", "shape", "share", "shared", "sharp", "sheet", "shelf", "shell", "shelter", "shift",
+        "shine", "ship", "shirt", "shit", "shock", "shoe", "shoot", "shooting", "shop", "shopping",
+        "shore", "short", "shortly", "shot", "shoulder", "shout", "show", "shower", "shown", "shrug",
+        "shut", "sick", "side", "sigh", "sight", "sign", "signal", "significance", "significant", "significantly",
+        "silence", "silent", "silver", "similar", "similarly", "simple", "simply", "sin", "since", "sing",
+        "singer", "single", "sink", "sir", "sister", "sit", "site", "sites", "situation", "six", "size",
+        "ski", "skill", "skills", "skin", "sky", "slave", "sleep", "slice", "slide", "slight", "slightly",
+        "slip", "slow", "slowly", "smart", "smell", "smile", "smoke", "smooth", "snap", "snow", "so-called",
+        "soccer", "social", "society", "soft", "software", "soil", "solar", "soldier", "solid", "solution",
+        "solve", "somebody", "somehow", "sometimes", "somewhat", "somewhere", "son", "song", "soon",
+        "sophisticated", "sorry", "sort", "soul", "soup", "south", "southern", "soviet", "space", "spanish",
+        "speak", "special", "specialist", "species", "specific", "specifically", "speed", "spend", "spending",
+        "spin", "spirit", "spiritual", "split", "spokesman", "sport", "spot", "spread", "spring", "square",
+        "squeeze", "Lists", "stable", "staff", "stage", "stair", "stake", "stand", "standard", "standing",
+        "star", "stare", "start", "started", "state", "statement", "states", "station", "statistics",
+        "stay", "steady", "steal", "steel", "step", "steps", "stick", "stock", "stomach", "stone", "stood",
+        "stop", "stopped", "storage", "store", "storm", "story", "straight", "strange", "stranger",
+        "strategic", "strategy", "street", "strength", "strengthen", "stress", "stretch", "strict",
+        "strike", "strip", "stroke", "strong", "strongly", "structure", "struggle", "student", "students",
+        "studio", "stuff", "stupid", "style", "subject", "submit", "subsequent", "substance", "substantial",
+        "succeed", "successful", "successfully", "sudden", "suddenly", "sue", "suffer", "sufficient",
+        "sugar", "suggest", "suggestion", "suicide", "suit", "summer", "summit", "sun", "super", "supply",
+        "suppose", "supposed", "supreme", "sure", "surely", "surface", "surgery", "surprise", "surprised",
+        "surprising", "surround", "survey", "survival", "survive", "survivor", "suspect", "sustain",
+        "swear", "sweep", "sweet", "swim", "swing", "symbol", "symptom", "systems", "tables", "tactic",
+        "tail", "tale", "talent", "talk", "talking", "tall", "tank", "tap", "tape", "task", "tasks",
+        "taste", "tax", "taxpayer", "tea", "teach", "teacher", "teaching", "team", "teams", "tear",
+        "technical", "technique", "technology", "teen", "teenager", "telephone", "telescope", "television",
+        "tell", "temperature", "temporary", "ten", "tend", "tendency", "tennis", "tension", "tent",
+        "term", "terms", "terrible", "territory", "terror", "terrorism", "terrorist", "testify", "testimony",
+        "testing", "text", "theater", "theme", "themselves", "then", "theory", "therapy", "therefore",
+        "thick", "thin", "things", "thinking", "third", "thirty", "those", "thought", "thousand", "threat",
+        "threaten", "throat", "throughout", "throw", "thus", "ticket", "tie", "tight", "till", "time",
+        "times", "tiny", "tip", "tire", "tired", "tissue", "title", "tobacco", "toe", "together", "tomato",
+        "tone", "tongue", "tool", "tools", "tooth", "top", "topic", "toss", "total", "totally", "touch",
+        "tough", "tour", "tourist", "tournament", "toward", "towards", "tower", "town", "toy", "track",
+        "trade", "tradition", "traditional", "traffic", "tragedy", "trail", "train", "training", "transfer",
+        "transform", "transformation", "transition", "translate", "translation", "transport", "transportation",
+        "trap", "trash", "travel", "treat", "treatment", "treaty", "tree", "tremendous", "trend", "trial",
+        "tribe", "trick", "trip", "troop", "trouble", "truck", "truly", "trust", "truth", "try", "trying",
+        "tube", "tunnel", "turn", "turned", "twelve", "twenty", "twice", "twin", "types", "typical",
+        "typically", "ugly", "ultimate", "ultimately", "unable", "uncle", "under", "undergo", "understand",
+        "understanding", "unfortunately", "uniform", "union", "unique", "unit", "united", "universal",
+        "universe", "university", "unknown", "unless", "unlike", "unlikely", "until", "unusual", "upon",
+        "upper", "urban", "urge", "used", "useful", "user", "users", "usual", "usually", "utility",
+        "vacation", "valid", "valley", "valuable", "variable", "variation", "variety", "various", "vary",
+        "vast", "vegetable", "vehicle", "venture", "version", "versus", "vessel", "veteran", "via",
+        "victim", "victory", "view", "viewer", "views", "village", "violate", "violation", "violence",
+        "violent", "virtual", "virtually", "virtue", "virus", "vision", "visit", "visitor", "visual",
+        "vital", "volume", "volunteer", "vote", "voter", "vulnerable", "wage", "wait", "waiting", "wake",
+        "walk", "walking", "wall", "wander", "warm", "warn", "wash", "waste", "watch", "watching", "wave",
+        "weak", "wealth", "wealthy", "weapon", "wear", "weather", "web", "website", "wedding", "week",
+        "weekend", "weekly", "weeks", "weigh", "weight", "welfare", "west", "western", "wet", "whatever",
+        "wheel", "whenever", "whereas", "whether", "whisper", "white", "whole", "whom", "whose", "wide",
+        "widely", "wife", "wild", "willing", "win", "wind", "wine", "wing", "winner", "winter", "wipe",
+        "wire", "wisdom", "wise", "wish", "withdraw", "within", "witness", "woman", "women", "wonder",
+        "wonderful", "wood", "wooden", "work", "worker", "working", "works", "workshop", "worn", "worry",
+        "worse", "worth", "wound", "wrap", "writer", "writing", "wrong", "yard", "yeah", "year", "yell",
+        "yellow", "yield", "young", "yours", "yourself", "youth", "zone",
     ];
 
     if EN_DICTIONARY.contains(&word_lower) {
         return true;
     }
 
-    // Проверяем стандартные английские словоформы (-s, -es, -ed, -ing, -ly, -er) от словарных основ
+    // Проверяем стандартные английские словоформы только без генерации несуществующих слов (никаких stem_e для -s!)
     for suffix in &["ing", "ed", "es", "er", "ly", "s"] {
         if let Some(stem) = word_lower.strip_suffix(suffix) {
-            if stem.len() >= 3 && EN_DICTIONARY.contains(&stem) {
+            if stem.len() >= 4
+                && EN_DICTIONARY.contains(&stem)
+                && !matches!(
+                    stem,
+                    "the" | "and" | "for" | "are" | "but" | "not" | "you" | "all" | "any" | "can"
+                        | "had" | "her" | "was" | "our" | "out" | "him" | "his" | "how" | "who"
+                        | "did" | "its" | "she" | "too" | "yes" | "yet" | "that" | "with" | "this"
+                        | "your" | "from" | "they" | "been" | "very" | "when" | "here" | "just"
+                        | "many" | "more" | "only" | "over" | "such" | "than" | "them" | "were"
+                        | "what" | "where" | "which" | "while" | "about" | "after" | "again"
+                        | "below" | "could" | "every" | "never" | "their" | "there" | "these"
+                        | "three" | "would" | "always" | "around" | "before" | "better" | "should"
+                        | "though" | "please"
+                )
+            {
                 return true;
             }
-            // Учет немой 'e' (make -> making, update -> updated)
-            let stem_e = format!("{}e", stem);
-            if stem_e.len() >= 4 && EN_DICTIONARY.contains(&stem_e.as_str()) {
-                return true;
+            // Учет немой 'e' ТОЛЬКО для -ing и -ed (make -> making, update -> updated), и только для регулярных глагольных основ
+            if matches!(*suffix, "ing" | "ed") {
+                let stem_e = format!("{}e", stem);
+                if stem_e.len() >= 4
+                    && EN_DICTIONARY.contains(&stem_e.as_str())
+                    && !matches!(
+                        stem_e.as_str(),
+                        "there" | "where" | "here" | "these" | "those" | "three" | "before"
+                            | "people" | "write" | "take" | "make" | "come" | "came" | "gave"
+                            | "give" | "have" | "were" | "more" | "some" | "same" | "none"
+                            | "once" | "else" | "true" | "false"
+                    )
+                {
+                    return true;
+                }
             }
         }
     }
@@ -2476,33 +2739,24 @@ fn is_valid_english_word(word_lower: &str) -> bool {
         "avg", "cnt", "req", "res", "ctx", "app", "dev", "prod", "test", "spec", "mock", "init",
         "sync", "lynx", "myth", "hymn", "rhythm", "crypt", "nymph", "gym", "dry", "fly", "sky", "try",
         "cry", "shy", "why", "spy", "fry", "ply", "pry", "wry", "nth", "mrs", "ms", "mr", "dr", "st",
-        "park", "dark", "mark", "bark", "spark", "shark", "start", "smart", "part", "cart", "chart",
-        "art", "card", "hard", "yard", "ward", "guard", "board", "word", "work", "world", "worm",
-        "form", "norm", "storm", "warm", "harm", "farm", "charm", "alarm", "arm", "term", "firm",
-        "confirm", "affirm", "germ", "chasm", "spasm", "prism", "organism", "mechanism", "algorithm",
-        "film", "palm", "calm", "balm", "psalm", "helm", "realm", "elm", "him", "dim", "rim", "trim",
-        "grim", "brim", "slim", "swim", "skim", "whim", "victim", "claim", "aim", "from", "whom",
-        "atom", "bottom", "custom", "symptom", "phantom", "random", "kingdom", "freedom", "wisdom",
-        "seldom", "venom", "blossom", "idiom", "axiom", "mom", "prom", "com", "tom", "room", "boom",
-        "zoom", "doom", "loom", "bloom", "gloom", "groom", "broom", "mushroom", "year", "years",
-        "yeast", "yearn", "yield", "yell", "yellow", "young", "your", "yours", "yourself", "youth",
-        "yarn", "yawn", "yacht", "url", "uri", "urn", "dns", "vpn", "nat", "lan", "wan", "mac", "ip",
-        "id", "ok", "no", "on", "in", "it", "if", "is", "as", "at", "by", "to", "of", "or", "so", "up",
-        "go", "do", "be", "we", "he", "me", "my", "us", "am", "an", "vs", "qa", "hr", "pr", "js", "ts",
-        "py", "rs", "db", "os", "pc", "tv", "vr", "ar", "fps", "dpi", "ppi", "hz", "khz", "mhz", "ghz",
+        "url", "uri", "urn", "dns", "vpn", "nat", "lan", "wan", "mac", "ip", "id", "ok", "no", "on",
+        "in", "it", "if", "is", "as", "at", "by", "to", "of", "or", "so", "up", "go", "do", "be",
+        "we", "he", "me", "my", "us", "am", "an", "vs", "qa", "hr", "pr", "js", "ts", "py", "rs",
+        "db", "os", "pc", "tv", "vr", "ar", "fps", "dpi", "ppi", "hz", "khz", "mhz", "ghz", "buf",
+        "prev", "css", "obj", "ffmpeg", "cpp", "mpeg", "ffi", "gdi", "cmp", "rev", "lru", "sqrt",
+        "div", "nav", "wss", "pcm", "dsp", "ssml", "gzip", "zstd", "rpm", "hwnd", "btn", "btns",
+        "href", "xmlns", "gpt",
     ];
 
     if TECH_AND_SHORT_EN.contains(&word_lower) {
         return true;
     }
 
-    // Если слово состоит только из английских букв, содержит гласные и не имеет признаков русской раскладки,
-    // проверим типичные английские суффиксы и сочетания, чтобы не трогать нормальные английские слова
+    // Только длинные однозначно английские суффиксы (без "ck"="сл", "th"="ер", "ch"="ср", "sh"="ыр", "ph"="зр", "ea"="уф"!)
     if word_lower.chars().all(|c| c.is_ascii_lowercase()) {
         for en_pattern in &[
-            "tion", "sion", "ment", "ness", "able", "ible", "ture", "ance", "ence", "ship", "hood",
-            "less", "full", "ward", "wise", "ious", "eous", "ight", "ough", "ould", "ck", "sh", "ch",
-            "th", "wh", "ph", "qu", "ee", "oo", "ea",
+            "tion", "sion", "ment", "ness", "able", "ible", "ture", "ance", "ence", "ious", "eous",
+            "ight", "ough", "ould",
         ] {
             if word_lower.contains(en_pattern) {
                 return true;
@@ -2552,25 +2806,149 @@ fn has_valid_russian_phonotactics(ru_lower: &str) -> bool {
         }
     }
 
-    // Невозможные в русском языке биграммы (без ложных срабатываний на ьн/ьк/ьт/ьш/ьз/ьи/ыр/удд!)
+    // Не более 2 одинаковых букв подряд
+    if chars.windows(3).any(|w| w[0] == w[1] && w[1] == w[2]) {
+        return false;
+    }
+
+    // Невозможные в русском языке биграммы и триграммы (отсекают ложные срабатывания от английских слов)
     const IMPOSSIBLE_RU_PAIRS: &[&str] = &[
         "ьь", "ъъ", "ьъ", "ъь", "ыь", "ьы", "ъы", "ыъ", "йь", "йъ", "йы",
         "жы", "шы", "чы", "щы", "щэ", "шэ", "жэ", "чэ", "цэ",
-        "уы", "аы", "оы", "еы", "иы", "яы", "юы", "эы", "ыы",
+        "уы", "аы", "оы", "еы", "иы", "яы", "юы", "эы", "ыы", "уу", "аа",
+        "эа", "эо", "эу", "эе", "эи", "эя", "эю", "эё",
         "уь", "аь", "оь", "еь", "иь", "яь", "юь", "эь", "гь", "кь", "хь", "ць",
-        "чщ", "щч", "жш", "шж", "цщ", "щц", "цч", "чц", "шщ", "щщ",
-        "щг", "щц", "щз", "щд", "щл", "щв", "щп", "щф", "щм",
-        "цр", "цш", "цг", "цн", "цд", "цк", "цт",
-        "фд", "фз", "фп", "фщ", "фц", "фч", "фй", "фн",
-        "штп", "шпре",
+        "йа", "йу", "йэ", "йя", "йю", "йё", "йи",
+        "чщ", "щч", "жш", "шж", "цщ", "щц", "цч", "чц", "шщ", "щщ", "чз", "шз", "жз", "жц", "шц",
+        "щг", "щц", "щз", "щд", "щл", "щв", "щп", "щф", "щм", "щк", "щт", "щс", "щр", "щш", "щж", "щх", "щй", "щя", "щю",
+        "цр", "цш", "цг", "цн", "цд", "цт", "цф", "цщ", "цй", "цч", "цб", "цж", "цз", "цл", "цм", "цп", "цх",
+        "фд", "фз", "фп", "фщ", "фц", "фч", "фй", "фш", "фж", "фх", "фв", "фм", "фь", "фг",
+        "ьу", "ьщ", "ьд", "ьп", "ьв", "ьи", "феу", "шиг", "геу", "еуч", "зуф", "куй",
+        "штп", "шпре", "ешщт", "ышщт", "ьуте", "туыы", "фиду", "шиду", "егку", "фтсу", "утсу",
     ];
     for pair in IMPOSSIBLE_RU_PAIRS {
         if ru_lower.contains(pair) {
             return false;
         }
     }
+    if ru_lower.contains("ьф") && !ru_lower.contains("льф") {
+        return false;
+    }
+    if ru_lower.contains("ьш") && !ru_lower.contains("льш") && !ru_lower.contains("ньш") {
+        return false;
+    }
+    if ru_lower.contains("ьз") && !ru_lower.contains("льз") {
+        return false;
+    }
+    if ru_lower.contains("ьк") && !ru_lower.contains("льк") && !ru_lower.contains("ньк") {
+        return false;
+    }
+    if ru_lower.ends_with("фн") {
+        return false;
+    }
 
     true
+}
+
+fn is_impossible_english_word(en_lower: &str) -> bool {
+    let chars: Vec<char> = en_lower.chars().collect();
+    if chars.len() < 3 {
+        return false;
+    }
+    // Наличие спецсимволов внутри слова, которые в RU раскладке являются буквами х, ъ, ж, э, б, ю, ё
+    if chars.iter().any(|&c| matches!(c, '[' | ']' | '{' | '}' | ';' | ':' | '\'' | '"' | ',' | '<' | '.' | '>' | '`' | '~')) {
+        return true;
+    }
+    let is_en_vowel = |c: char| matches!(c, 'a' | 'e' | 'i' | 'o' | 'u' | 'y');
+    if !chars.iter().any(|&c| is_en_vowel(c)) {
+        return true;
+    }
+    // В английском 'q' всегда идет перед 'u'
+    for i in 0..chars.len() {
+        if chars[i] == 'q' && chars.get(i + 1) != Some(&'u') {
+            return true;
+        }
+    }
+    // Обычные английские слова не заканчиваются на j, v, q
+    if matches!(chars.last(), Some(&'j') | Some(&'v') | Some(&'q')) {
+        return true;
+    }
+    // В английском 'j' не идет перед согласной и после большинства согласных
+    for w in chars.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        if a == 'j' && !matches!(b, 'a' | 'e' | 'i' | 'o' | 'u') {
+            return true;
+        }
+        if b == 'j' && !matches!(a, 'a' | 'e' | 'i' | 'o' | 'u' | 'd' | 'b' | 'n' | 'r') {
+            return true;
+        }
+    }
+    // В начале английского слова 'y' всегда согласная и требует гласной a/e/i/o/u после себя
+    let (c0, c1) = (chars[0], chars[1]);
+    if c0 == 'y' && !matches!(c1, 'a' | 'e' | 'i' | 'o' | 'u') {
+        return true;
+    }
+    if !is_en_vowel(c0) && !is_en_vowel(c1) {
+        if matches!(c0, 'h' | 'l' | 'n' | 'v' | 'x' | 'z' | 'm' | 'j' | 'q') {
+            return true;
+        }
+        if c0 == 'r' && c1 != 'h' {
+            return true;
+        }
+        if matches!(c0, 'b' | 'f') && !matches!(c1, 'l' | 'r') {
+            return true;
+        }
+        if c0 == 'd' && !matches!(c1, 'r' | 'w') {
+            return true;
+        }
+        if c0 == 'c' && !matches!(c1, 'h' | 'l' | 'r' | 'z') {
+            return true;
+        }
+        if c0 == 'g' && !matches!(c1, 'h' | 'l' | 'n' | 'r') {
+            return true;
+        }
+        if c0 == 'k' && !matches!(c1, 'n' | 'r' | 'l' | 'w') {
+            return true;
+        }
+        if c0 == 'p' && !matches!(c1, 'h' | 'l' | 'n' | 'r' | 's' | 't') {
+            return true;
+        }
+        if c0 == 't' && !matches!(c1, 'h' | 'r' | 'w' | 's') {
+            return true;
+        }
+    }
+    if en_lower.starts_with("uh") {
+        return true;
+    }
+    // Типичные русские окончания в EN-раскладке, невозможные в обычных английских словах
+    for end2 in &[
+        "nm", "cz", "tn", "bn", "fn", "zn", "fz", "zz", "jt", "jd", "td", "tq",
+        "sq", "bq", "jq", "bz", "jr", "tr", "br", "yf", "df", "pf", "nf",
+        "hf", "kf", "gf", "cf", "wf", "xf", "yj", "rj", "nj", "dj",
+        "lj", "hj", "vj", "cj", "wj", "uf", "bk", "fk", "tk", "zk", "vf",
+        "vb", "bb", "bt", "rb",
+    ] {
+        if en_lower.ends_with(end2) {
+            return true;
+        }
+    }
+    for end3 in &["tys", "bys", "yst", "ytt", "btt"] {
+        if en_lower.ends_with(end3) {
+            return true;
+        }
+    }
+    let mut cons_run = 0;
+    for &c in &chars {
+        if !is_en_vowel(c) {
+            cons_run += 1;
+            if cons_run >= 5 {
+                return true;
+            }
+        } else {
+            cons_run = 0;
+        }
+    }
+    false
 }
 
 fn is_recognized_russian_word(ru_lower: &str, en_source_lower: &str) -> bool {
@@ -2579,121 +2957,178 @@ fn is_recognized_russian_word(ru_lower: &str, en_source_lower: &str) -> bool {
     }
 
     const RU_DICTIONARY: &[&str] = &[
-        // Местоимения, союзы, предлоги, частицы, наречия (3+ букв)
+        // Местоимения, союзы, предлоги, частицы, наречия и числительные (3+ букв)
         "это", "как", "так", "все", "всё", "она", "они", "оно", "мне", "мои", "мой", "моя", "моё",
-        "его", "ему", "них", "ним", " ими", "ими", "нам", "вам", "нас", "вас", "кто", "что", "где",
+        "его", "ему", "них", "ним", "ими", "нам", "вам", "нас", "вас", "кто", "что", "где",
         "тут", "там", "вот", "уже", "еще", "ещё", "нет", "для", "без", "под", "над", "при", "про",
         "или", "если", "чтобы", "чтоб", "хотя", "зато", "либо", "тоже", "также", "даже", "лишь",
         "только", "просто", "очень", "сейчас", "сегодня", "завтра", "вчера", "потом", "тогда",
         "когда", "всегда", "никогда", "иногда", "совсем", "вообще", "конечно", "наверное", "может",
         "можно", "нужно", "надо", "нельзя", "хорошо", "плохо", "лучше", "хуже", "больше", "меньше",
         "раньше", "позже", "быстро", "долго", "сразу", "вместе", "рядом", "около", "вокруг", "внутри",
+        "внутрь", "внизу", "вверху", "слева", "справа", "спереди", "сзади", "сверху", "снизу",
         "после", "перед", "между", "через", "снова", "опять", "почему", "потому", "зачем", "откуда",
         "куда", "сюда", "туда", "оттуда", "отсюда", "столько", "сколько", "несколько", "каждый",
-        "любой", "другой", "такой", "какой", "какие", "какая", "какое", "такие", "такая", "такое",
-        "этот", "эта", "эти", "этого", "этом", "этой", "этих", "этим", "весь", "вся", "всех", "всем",
+        "любой", "другой", "другая", "другое", "другие", "других", "другим", "друзья", "друзей",
+        "такой", "какой", "какие", "какая", "какое", "такие", "такая", "такое",
+        "этот", "эта", "эти", "эту", "этого", "этом", "этой", "этих", "этим", "весь", "вся", "всю", "всех", "всем",
         "самый", "самая", "самое", "самые", "свой", "своя", "своё", "свои", "своих", "твой", "твоя",
         "наш", "наша", "наше", "наши", "ваш", "ваша", "ваше", "ваши", "себя", "себе", "собой",
         "меня", "тебя", "тебе", "мной", "тобой", "него", "неё", "них", "ничего", "никого", "никто",
+        "один", "одна", "одно", "одни", "одну", "одного", "одной", "одним", "однажды",
+        "два", "две", "двух", "три", "трех", "трёх", "четыре", "пять", "шесть", "семь", "восемь", "девять", "десять",
+        "много", "мало", "чуть", "почти", "пусть", "будто", "иначе", "именно", "особенно", "обязательно",
+        "кем", "чем", "тем", "тех", "той", "том", "сам", "сама", "само", "сами", "оба", "обе", "обо",
         // Приветствия и частые разговорные слова
         "привет", "здравствуйте", "спасибо", "пожалуйста", "извините", "простите", "пока", "ладно",
         "понятно", "отлично", "супер", "класс", "нормально", "точно", "верно", "правда", "кстати",
         "например", "короче", "смотри", "слушай", "давай", "давайте", "скажи", "скажите", "помоги",
+        "интересно", "приятно", "вероятно", "бесплатно", "обратно", "смешно", "страшно", "скучно",
+        "грустно", "честно", "известно", "легко", "далеко", "глубоко", "высоко", "широко", "близко",
+        "низко", "редко", "громко", "тихо", "сухо", "тепло", "светло", "темно", "сложно", "срочно",
         // Частые глаголы и их формы
-        "быть", "есть", "был", "была", "было", "были", "будет", "будут", "буду", "будем", "будешь",
+        "быть", "есть", "был", "была", "было", "были", "будет", "будут", "буду", "будем", "будешь", "будь",
         "делать", "сделать", "делаю", "делает", "делаем", "сделал", "сделала", "сделали", "сделаем",
         "сказать", "говорить", "говорю", "говорит", "сказал", "сказала", "сказали", "скажет",
         "знать", "знаю", "знает", "знаем", "знают", "знал", "знала", "узнать", "понимать", "понять",
-        "понимаю", "понял", "поняла", "думать", "думаю", "думает", "думал", "подумать", "решить",
+        "понимаю", "понял", "поняла", "думать", "думаю", "думает", "думал", "подумать", "решить", "решил", "решили",
         "работать", "работает", "работаю", "работал", "смотреть", "смотрю", "смотрит", "посмотреть",
-        "видеть", "вижу", "видит", "увидеть", "хотеть", "хочу", "хочет", "хотим", "хотят", "хотел",
-        "мочь", "могу", "может", "можем", "могут", "смог", "смогла", "идти", "иду", "идет", "идём",
-        "пойти", "пошел", "пошёл", "пошла", "ехать", "приехать", "стоять", "стоит", "сидеть", "сидит",
-        "лежать", "лежит", "жить", "живет", "живёт", "ждать", "жду", "ждет", "ждёт", "писать", "пишу",
-        "пишет", "написать", "написал", "читать", "читаю", "читает", "прочитать", "дать", "давать",
-        "брать", "взять", "взял", "взяла", "получить", "получил", "найти", "нашел", "нашёл", "нашла",
+        "видеть", "вижу", "видит", "увидеть", "увидел", "хотеть", "хочу", "хочет", "хотим", "хотят", "хотел",
+        "мочь", "могу", "может", "можем", "могут", "смог", "смогла", "идти", "иду", "идет", "идём", "идут", "шла",
+        "пойти", "пошел", "пошёл", "пошла", "ехать", "приехать", "стоять", "стоит", "стою", "сидеть", "сидит", "сижу",
+        "лежать", "лежит", "жить", "живет", "живёт", "живу", "ждать", "жду", "ждет", "ждёт", "писать", "пишу",
+        "пишет", "написать", "написал", "читать", "читаю", "читает", "прочитать", "дать", "давать", "даю",
+        "брать", "взять", "взял", "взяла", "беру", "получить", "получил", "найти", "нашел", "нашёл", "нашла",
         "поставить", "поставил", "поставила", "открыть", "открыл", "открывает", "закрыть", "закрыл",
         "удалить", "удалил", "добавить", "добавил", "изменить", "проверить", "запустить", "скачать",
-        // Частые существительные и прилагательные
+        "купить", "купил", "люблю", "учу", "слышать", "услышал", "слушать", "держать", "вернуться",
+        "кажется", "нравится", "случилось", "осталось", "сравнить",
+        // Частые существительные и прилагательные (включая короткие и коллизионные формы: рук, руку, руки, уму, внук и др.)
         "человек", "люди", "людей", "время", "времени", "жизнь", "жизни", "день", "дня", "дней",
-        "ночь", "утро", "вечер", "год", "года", "лет", "месяц", "неделя", "недели", "час", "часа",
-        "минута", "минут", "работа", "работы", "работу", "дело", "дела", "место", "места", "слово",
-        "слова", "слов", "вопрос", "ответ", "сторона", "страна", "город", "дом", "дома", "рука",
-        "руки", "голова", "глаза", "друг", "друзья", "семья", "деньги", "денег", "проблема", "ошибка",
-        "ошибки", "система", "системы", "программа", "приложение", "компьютер", "телефон", "интернет",
-        "сайт", "сервер", "модель", "модели", "текст", "текста", "голос", "голоса", "запись", "записи",
-        "перевод", "экран", "экрана", "кнопка", "кнопки", "папка", "папки", "файл", "файлы", "окно",
-        "окна", "меню", "список", "списке", "настройки", "раскладка", "озвучка", "капсула", "виджет",
+        "ночь", "утро", "утра", "утру", "утром", "вечер", "год", "года", "лет", "месяц", "неделя", "недели",
+        "час", "часа", "минута", "минут", "сек", "мин", "работа", "работы", "работу", "дело", "дела",
+        "место", "места", "слово", "слова", "слов", "вопрос", "ответ", "сторона", "страна", "город",
+        "дом", "дома", "рука", "руки", "рук", "руку", "руке", "нога", "ноги", "ног", "ногу", "голова",
+        "глаза", "глаз", "друг", "друга", "другу", "семья", "деньги", "денег", "проблема", "ошибка",
+        "ошибки", "система", "системы", "программа", "приложение", "компьютер", "телефон", "смартфон",
+        "интернет", "сайт", "сервер", "модель", "модели", "текст", "текста", "голос", "голоса", "запись",
+        "записи", "перевод", "экран", "экрана", "кнопка", "кнопки", "папка", "папки", "файл", "файлы",
+        "окно", "окна", "меню", "список", "списке", "настройки", "раскладка", "озвучка", "капсула", "виджет",
         "новый", "новая", "новое", "новые", "старый", "старая", "большой", "большая", "маленький",
         "хороший", "хорошая", "плохой", "первый", "первая", "второй", "последний", "главный", "нужный",
         "важный", "полный", "простой", "сложный", "русский", "английский", "сильный", "сильная",
         "любовь", "помощь", "правда", "смысл", "результат", "вариант", "пример", "порядок", "случай",
+        "мысль", "мысли", "дверь", "ветер", "дерево", "берег", "сердце", "смерть", "уверен", "размер",
+        "номер", "мастер", "среди", "среда", "средний", "средство", "срок", "чудо", "тело", "небо",
+        "лето", "вино", "кино", "пиво", "мясо", "лицо", "яйцо", "кольцо", "письмо", "число", "масло",
+        "стекло", "кресло", "книга", "книги", "книгу", "улица", "улице", "музыка", "группа", "группы",
+        "служба", "дружба", "машина", "комната", "картина", "причина", "половина", "середина", "вершина",
+        "глубина", "ширина", "ширины", "ширине", "ширину", "длина", "высота", "красота", "чистота",
+        "темнота", "простота", "газета", "планета", "монета", "ракета", "защита", "зарплата", "почта",
+        "мечта", "валюта", "тема", "схема", "реклама", "форма", "норма", "платформа", "фирма", "тюрьма",
+        "зима", "сумма", "стена", "цена", "сцена", "замена", "отмена", "перемена", "охрана", "война",
+        "тайна", "волна", "луна", "жена", "тишина", "шина", "шины", "шине", "шину", "весна", "дорога",
+        "тревога", "услуга", "услуги", "подруга", "бумага", "кожа", "лужа", "продажа", "крыша", "душа",
+        "каша", "пища", "роща", "удача", "задача", "передача", "встреча", "тысяча", "страница", "граница",
+        "больница", "столица", "птица", "таблица", "разница", "пятница", "лестница", "гостиница",
+        "уму", "внук", "знак", "знака", "знаки", "фраза", "фразы", "фразу", "фраз", "пункт", "пункты",
+        "пуск", "флаг", "флаги", "шапка", "шапки", "шапку", "шапке", "шкала", "шкалы", "шкале", "шкалу",
+        "анализ", "центр", "сдвиг", "сдвиги", "сдвиге", "путь", "пути", "суть", "круг", "звук", "брат",
+        "край", "рай", "май", "бой", "чай", "нож", "муж", "душ", "зал", "сад", "лес", "кот", "сон",
+        "мир", "код", "ход", "шаг", "лог", "бит", "тип", "мал", "шум", "дан", "вид", "хук", "кэш",
+        "имя", "бар", "тон", "пар", "тег", "пул", "баг", "мог", "игр", "йод", "йог", "указан", "сутки",
+        "пуст", "пустые", "нули", "курсив", "щит", "щите", "индекс", "индексу", "акцент", "акценты",
     ];
 
     if RU_DICTIONARY.contains(&ru_lower) {
         return true;
     }
 
-    // Проверяем, есть ли в английском исходнике ЯВНЫЕ маркеры ошибочной раскладки:
-    // 1) Спецсимволы [ ] ; ' , . ` внутри слова, которые в RU раскладке являются буквами х, ъ, ж, э, б, ю, ё
-    let has_ru_punct_in_en = en_source_lower
-        .chars()
-        .any(|c| matches!(c, '[' | ']' | '{' | '}' | ';' | ':' | '\'' | '"' | ',' | '<' | '.' | '>' | '`' | '~'));
-
-    // 2) Буква 'j' ('о' в RU) перед согласной, после согласной или на конце слова, либо отсутствие английских гласных
-    let en_chars: Vec<char> = en_source_lower.chars().collect();
-    let has_en_vowel = en_chars.iter().any(|&c| matches!(c, 'a' | 'e' | 'i' | 'o' | 'u' | 'y'));
-    let has_impossible_en_j = en_chars.last() == Some(&'j')
-        || en_chars.windows(2).any(|w| {
-            let (a, b) = (w[0], w[1]);
-            (a == 'j' && b.is_ascii_alphabetic() && !matches!(b, 'a' | 'e' | 'i' | 'o' | 'u'))
-                || (b == 'j' && a.is_ascii_alphabetic() && !matches!(a, 'a' | 'e' | 'i' | 'o' | 'u' | 'd' | 'b'))
-        });
-
-    if !has_ru_punct_in_en && !has_impossible_en_j && has_en_vowel {
-        // Если английская строка выглядит фонетически допустимо по-английски, требуем строгого совпадения
-        // с частыми русскими корнями И русскими морфологическими окончаниями длиной >= 4 символов
-        if ru_lower.chars().count() < 4 {
-            return false;
-        }
-    }
-
-    // Морфологическое распознавание русских слов (4+ букв): валидная основа + типичный русский суффикс/окончание
-    if ru_lower.chars().count() >= 4 {
+    // Морфологическое распознавание русских слов (4+ букв) только тогда, когда исходник фонетически невозможен в английском
+    if ru_lower.chars().count() >= 4 && is_impossible_english_word(en_source_lower) {
         const RU_MORPH_ENDINGS: &[&str] = &[
             "аться", "яться", "иться", "еться", "уться", "ться", "тся",
             "ать", "ять", "ить", "еть", "уть", "оть", "ыть",
             "ешь", "ишь", "ете", "ите", "ают", "яют", "уют", "юют",
             "ает", "яет", "ует", "юет", "аем", "яем", "уем", "юем",
             "ала", "яла", "ила", "ела", "али", "яли", "или", "ели", "ало", "яло", "ило", "ело",
+            "ал", "ял", "ил", "ел", "ыл", "ул",
             "ого", "его", "ому", "ему", "ыми", "ими", "ами", "ями",
-            "ый", "ий", "ой", "ая", "яя", "ое", "ее", "ые", "ие", "ую", "юю", "ых", "их", "ым", "им", "ом", "ем",
-            "ость", "ение", "ание", "тель", "очка", "ечка", "ник", "чик", "щик", "ств", "ски", "ско",
-            "ка", "ки", "ку", "ке", "кой", "ок", "ек", "ик", "ов", "ев", "ей", "ам", "ям", "ах", "ях",
+            "ый", "ий", "ой", "ая", "яя", "ое", "ее", "ые", "ие", "ую", "юю", "ых", "их", "ым", "им", "ом", "ем", "ём",
+            "ость", "ение", "ание", "тель", "очка", "ечка", "ник", "чик", "щик", "ств", "ски", "ско", "ция", "ции", "цию",
+            "ка", "ки", "ку", "ке", "кой", "ок", "ек", "ёк", "ик", "ов", "ев", "ёв", "ей", "ам", "ям", "ах", "ях",
+            "на", "ны", "не", "ну", "но", "ма", "мы", "ме", "му", "мо", "та", "ты", "те", "ту", "то",
+            "ра", "ры", "ре", "ру", "ро", "ла", "лы", "ле", "лу", "ло", "да", "ды", "де", "ду", "до",
+            "ба", "бы", "бе", "бу", "бо", "ва", "вы", "ве", "ву", "во", "га", "ги", "ге", "гу", "го",
+            "за", "зы", "зе", "зу", "зо", "па", "пы", "пе", "пу", "по", "са", "сы", "се", "су", "со",
+            "фа", "фы", "фе", "фу", "фо", "ха", "хи", "хе", "ху", "хо", "ца", "цы", "це", "цу", "цо",
+            "ча", "чи", "че", "чу", "чо", "ша", "ши", "ше", "шу", "шо", "ща", "щи", "ще", "щу",
+            "ия", "ии", "ию", "ья", "ьи", "ье", "ью", "мя", "ко",
+            "ор", "ер", "ар", "ир", "ур", "ан", "ен", "ин", "он", "ун", "ян", "ат", "ет", "ит", "от", "ут", "ят",
+            "ас", "ес", "ис", "ос", "ус", "аз", "ез", "из", "оз", "уз", "аж", "еж", "ож", "уж", "яж",
+            "ач", "еч", "ич", "оч", "уч", "яч", "ак", "ук", "юк", "як", "ль", "нь", "рь", "ть", "дь", "сь", "зь", "вь", "чь", "шь", "щь",
         ];
 
         for ending in RU_MORPH_ENDINGS {
-            if ru_lower.ends_with(ending) && (has_ru_punct_in_en || has_impossible_en_j || !has_en_vowel) {
+            if ru_lower.ends_with(ending) {
                 return true;
             }
-        }
-
-        // Если в слове есть известные русские приставки + корень
-        const RU_PREFIXES_AND_ROOTS: &[&str] = &[
-            "при", "про", "пре", "под", "над", "раз", "рас", "без", "бес", "воз", "вос", "вы", "за", "на",
-            "не", "ни", "об", "от", "пере", "по", "со", "у", "челов", "работ", "говор", "смотр", "сдел",
-            "поним", "дум", "зна", "хот", "мож", "нуж", "больш", "меньш", "лучш", "нов", "стар", "перв",
-            "втор", "послед", "главн", "русск", "англ", "програм", "систем", "прилож", "настро", "ошиб",
-            "вопрос", "ответ", "врем", "деньг", "город", "стран", "слов", "мест", "правд", "помощ",
-        ];
-        if RU_PREFIXES_AND_ROOTS.iter().any(|p| ru_lower.starts_with(p))
-            && RU_MORPH_ENDINGS.iter().any(|e| ru_lower.ends_with(e))
-        {
-            return true;
         }
     }
 
     false
+}
+
+fn is_valid_pending_short_word(word_current: &str, word_alternate: &str, first_layout_is_en: bool) -> bool {
+    let char_len = word_current.chars().count();
+    if !(1..=2).contains(&char_len) || word_alternate.chars().count() != char_len {
+        return false;
+    }
+    if !has_normal_word_casing_min(word_current, 1) || !has_normal_word_casing_min(word_alternate, 1) {
+        return false;
+    }
+    let alt_lower = word_alternate.to_lowercase();
+    if first_layout_is_en {
+        const VALID_RU_SHORT: &[&str] = &[
+            "а", "в", "и", "к", "о", "с", "у", "я",
+            "не", "на", "но", "по", "за", "из", "от", "до", "же", "бы", "ли", "то", "мы", "вы",
+            "он", "ты", "да", "ну", "во", "со", "ко", "об", "ни", "ее", "её", "им", "их", "ей",
+            "ем", "уж", "ту", "та", "те", "ах", "ох", "эх", "ух", "ой", "ай", "эй",
+        ];
+        VALID_RU_SHORT.contains(&alt_lower.as_str())
+    } else {
+        const VALID_EN_SHORT: &[&str] = &[
+            "a", "i",
+            "in", "on", "it", "is", "if", "to", "of", "or", "by", "my", "we", "he", "me", "be",
+            "do", "go", "so", "up", "at", "as", "an", "no", "us", "am", "ok", "hi",
+        ];
+        VALID_EN_SHORT.contains(&alt_lower.as_str())
+    }
+}
+
+fn should_autocorrect_short_word(word_current: &str, word_alternate: &str, first_layout_is_en: bool) -> bool {
+    if word_current.chars().count() != 2 || word_alternate.chars().count() != 2 {
+        return false;
+    }
+    if !has_normal_word_casing_min(word_current, 2) || !has_normal_word_casing_min(word_alternate, 2) {
+        return false;
+    }
+    let alt_lower = word_alternate.to_lowercase();
+    if first_layout_is_en {
+        // Однозначные 2-буквенные русские слова (исключая "мы"="vs" и "ем"="tv")
+        const UNAMBIGUOUS_RU_2LETTER: &[&str] = &[
+            "не", "на", "но", "по", "за", "из", "от", "до", "же", "бы", "ли", "то", "вы",
+            "он", "ты", "да", "ну", "во", "со", "ко", "об", "ни", "ее", "её", "им", "их",
+            "ей", "уж", "ту", "та", "те", "ах", "ох", "эх", "ух", "ой", "ай", "эй",
+        ];
+        UNAMBIGUOUS_RU_2LETTER.contains(&alt_lower.as_str())
+    } else {
+        // Однозначные 2-буквенные английские слова, дающие невозможные в русском биграммы (шы, ьн, ьу, ыщ, вщ, пщ, тщ, фь, щл, ща, щк, щт, гз, ин, цу)
+        const UNAMBIGUOUS_EN_2LETTER: &[&str] = &[
+            "is", "my", "me", "so", "do", "go", "no", "am", "ok", "of", "or", "on", "up", "by", "we",
+        ];
+        UNAMBIGUOUS_EN_2LETTER.contains(&alt_lower.as_str())
+    }
 }
 
 fn should_autocorrect_layout(word_current: &str, word_alternate: &str, first_layout_is_en: bool) -> bool {
@@ -2711,10 +3146,36 @@ fn should_autocorrect_layout(word_current: &str, word_alternate: &str, first_lay
 
     if first_layout_is_en {
         // Пользователь печатает в АНГЛИЙСКОЙ раскладке -> проверяем перевод EN -> RU
-        // Если на конце стоит запятая/точка/точка с запятой, а основа до неё — валидное английское слово (например "hello,", "yes."), не трогаем!
         let en_stem = curr_lower.trim_end_matches(|c| matches!(c, ',' | '.' | ';' | ':' | '\''));
-        if en_stem.len() != curr_lower.len() && (en_stem.len() < 2 || is_valid_english_word(en_stem)) {
-            return false;
+        if en_stem.len() != curr_lower.len() && (en_stem.len() < 2 || is_valid_english_word(en_stem) || !is_impossible_english_word(en_stem)) {
+            // Если на конце стоит знак препинания (точка/запятая), но до него валидное или фонетически английское слово ("date.", "name.", "hello,"),
+            // разрешаем перевод ТОЛЬКО если слово целиком (включая 'ю'/'б'/'ж'/'э' на конце) есть в словаре RU_DICTIONARY ("знаю", "думаю", "люблю", "говорю")
+            if !is_recognized_russian_word(&alt_lower, &curr_lower) || is_valid_english_word(en_stem) {
+                return false;
+            }
+            // Дополнительная защита: если основа до точки/запятой фонетически допустима в английском, требуем точного словарного совпадения
+            if !is_impossible_english_word(en_stem) {
+                let ru_stem_len = en_stem.chars().count();
+                let alt_chars: Vec<char> = alt_lower.chars().collect();
+                let alt_stem: String = alt_chars.iter().take(ru_stem_len).collect();
+                if !has_valid_russian_phonotactics(&alt_lower) || matches!(alt_stem.as_str(), "вфеу" | "тфьу" | "ышеу" | "зфпу" | "ьщву" | "тщву" | "сщву") {
+                    return false;
+                }
+                // Если на конце была точка ('.' -> 'ю') или запятая (',' -> 'б'), а основа до неё не имела русских маркеров,
+                // разрешаем только реальные русские глаголы 1-го лица на -аю/-яю/-ую/-юю/-лю/-рю/-чу/-щу/-шу/-жу/-гу/-ду
+                if !alt_lower.ends_with("аю")
+                    && !alt_lower.ends_with("яю")
+                    && !alt_lower.ends_with("лю")
+                    && !alt_lower.ends_with("рю")
+                    && !alt_lower.ends_with("чу")
+                    && !alt_lower.ends_with("щу")
+                    && !alt_lower.ends_with("шу")
+                    && !alt_lower.ends_with("жу")
+                    && !alt_lower.ends_with("ую")
+                {
+                    return false;
+                }
+            }
         }
 
         // Если текущее слово — валидное английское слово или тех-термин, не трогаем
@@ -2731,7 +3192,7 @@ fn should_autocorrect_layout(word_current: &str, word_alternate: &str, first_lay
             return false;
         }
 
-        // Если текущее русское слово уже в русском словаре — никогда его не трогаем
+        // Если текущее русское слово уже распознано как русское — никогда его не трогаем
         if is_recognized_russian_word(&curr_lower, &alt_lower) {
             return false;
         }
@@ -2979,13 +3440,15 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
     if is_undo_hotkey {
         let mut last_correct = LAST_AUTOCORRECT.lock().unwrap();
         if let Some((original, _corrected, to_english, backspace_count)) = last_correct.take() {
+            PENDING_SHORT_WORDS.lock().unwrap().clear();
             std::thread::spawn(move || {
                 LAYOUT_PROCESSING.store(true, Ordering::SeqCst);
-                std::thread::sleep(Duration::from_millis(30));
-                simulate_backspaces(backspace_count);
-                std::thread::sleep(Duration::from_millis(50));
-                simulate_unicode_input(&original);
                 switch_active_window_layout(!to_english);
+                std::thread::sleep(Duration::from_millis(10));
+                simulate_backspaces(backspace_count);
+                std::thread::sleep(Duration::from_millis(15));
+                simulate_unicode_input(&original);
+                LAST_TYPED_HKL.store(0, Ordering::SeqCst);
                 unsafe { let _ = winapi::um::utilapiset::Beep(350, 60); }
                 log_to_file(&format!("Autocorrect Undo: Restored '{}'", original));
                 LAYOUT_PROCESSING.store(false, Ordering::SeqCst);
@@ -3000,8 +3463,8 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
 
     // При комбинациях смены раскладки (Alt+Shift, Ctrl+Shift, Win+Space) немедленно очищаем буфер
     if is_modifier && (ctrl as u8 + alt as u8 + shift as u8 + win as u8) >= 2 {
-        let mut buf = TYPED_BUFFER.lock().unwrap();
-        buf.clear();
+        TYPED_BUFFER.lock().unwrap().clear();
+        PENDING_SHORT_WORDS.lock().unwrap().clear();
         return false;
     }
 
@@ -3012,45 +3475,57 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
         }
     }
 
-    // Проверяем клик мыши, смену активного окна, смену раскладки и паузу > 2 сек
+    // Проверяем клик мыши, смену активного окна/фокуса, смену раскладки и паузу > 3 сек
     let (current_hwnd, current_hkl, is_eng_layout) = unsafe {
-        use winapi::um::winuser::{GetForegroundWindow, GetWindowThreadProcessId, GetKeyboardLayout, GetAsyncKeyState};
-        let hwnd = GetForegroundWindow();
-        let thread_id = GetWindowThreadProcessId(hwnd, std::ptr::null_mut());
-        let hkl = GetKeyboardLayout(thread_id);
+        use winapi::um::winuser::{GetForegroundWindow, GetWindowThreadProcessId, GetGUIThreadInfo, GUITHREADINFO, GetKeyboardLayout, GetAsyncKeyState};
+        let fg_hwnd = GetForegroundWindow();
+        let fg_thread = GetWindowThreadProcessId(fg_hwnd, std::ptr::null_mut());
+        let mut gui_info: GUITHREADINFO = std::mem::zeroed();
+        gui_info.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+        let target_hwnd = if !fg_hwnd.is_null() && GetGUIThreadInfo(fg_thread, &mut gui_info) != 0 && !gui_info.hwndFocus.is_null() {
+            gui_info.hwndFocus
+        } else {
+            fg_hwnd
+        };
+        let target_thread = if !target_hwnd.is_null() {
+            GetWindowThreadProcessId(target_hwnd, std::ptr::null_mut())
+        } else {
+            0
+        };
+        let hkl = GetKeyboardLayout(if target_thread != 0 { target_thread } else { fg_thread });
         let lang_id = (hkl as usize) & 0xFFFF;
         let mouse_clicked = MOUSE_CLICKED_SINCE_KEY.swap(false, Ordering::Relaxed)
             || (GetAsyncKeyState(0x01) != 0)
             || (GetAsyncKeyState(0x02) != 0)
             || (GetAsyncKeyState(0x04) != 0);
         if mouse_clicked {
-            let mut buf = TYPED_BUFFER.lock().unwrap();
-            buf.clear();
+            TYPED_BUFFER.lock().unwrap().clear();
+            PENDING_SHORT_WORDS.lock().unwrap().clear();
         }
-        (hwnd as isize, hkl as usize, lang_id == 0x0409)
+        (fg_hwnd as isize, hkl as usize, lang_id == 0x0409)
     };
 
     let prev_hwnd = LAST_TYPED_HWND.swap(current_hwnd, Ordering::Relaxed);
     let prev_hkl = LAST_TYPED_HKL.swap(current_hkl, Ordering::Relaxed);
     if (prev_hwnd != 0 && prev_hwnd != current_hwnd) || (prev_hkl != 0 && prev_hkl != current_hkl) {
-        let mut buf = TYPED_BUFFER.lock().unwrap();
-        buf.clear();
+        TYPED_BUFFER.lock().unwrap().clear();
+        PENDING_SHORT_WORDS.lock().unwrap().clear();
     }
 
-    // Сбрасываем буфер ввода, если была пауза в печати больше 2 секунд
+    // Сбрасываем буфер ввода, если была пауза в печати больше 3 секунд
     {
         let mut last_time = LAST_KEY_TIME.lock().unwrap();
-        if last_time.elapsed() > Duration::from_secs(2) {
-            let mut buf = TYPED_BUFFER.lock().unwrap();
-            buf.clear();
+        if last_time.elapsed() > Duration::from_secs(3) {
+            TYPED_BUFFER.lock().unwrap().clear();
+            PENDING_SHORT_WORDS.lock().unwrap().clear();
         }
         *last_time = Instant::now();
     }
 
     if let Some((eng, rus)) = map_vk_to_chars(vk) {
         if ctrl || alt || win {
-            let mut buf = TYPED_BUFFER.lock().unwrap();
-            buf.clear();
+            TYPED_BUFFER.lock().unwrap().clear();
+            PENDING_SHORT_WORDS.lock().unwrap().clear();
             return false;
         }
 
@@ -3080,18 +3555,23 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
         if ctrl || alt || shift || win {
             // Ctrl+Backspace (или модифицированный Backspace) удаляет слово целиком — очищаем весь буфер!
             buf.clear();
+            PENDING_SHORT_WORDS.lock().unwrap().clear();
         } else if !buf.is_empty() {
             buf.pop();
+        } else {
+            // Пользователь стер пробел перед текущим словом — сбрасываем ожидающие короткие слова
+            PENDING_SHORT_WORDS.lock().unwrap().clear();
         }
     } else if vk == 0x20 || vk == 0x0D {
         if ctrl || alt || win {
-            let mut buf = TYPED_BUFFER.lock().unwrap();
-            buf.clear();
+            TYPED_BUFFER.lock().unwrap().clear();
+            PENDING_SHORT_WORDS.lock().unwrap().clear();
             return false;
         }
 
         let mut buf_guard = TYPED_BUFFER.lock().unwrap();
         if buf_guard.is_empty() {
+            PENDING_SHORT_WORDS.lock().unwrap().clear();
             return false;
         }
 
@@ -3102,77 +3582,131 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
         let first_layout = typed_keys[0].is_english_layout;
         let all_same_layout = typed_keys.iter().all(|k| k.is_english_layout == first_layout && k.is_english_layout == is_eng_layout);
         if !all_same_layout {
+            PENDING_SHORT_WORDS.lock().unwrap().clear();
             return false;
         }
 
         let word_current: String = typed_keys.iter().map(|k| if first_layout { k.eng_char } else { k.rus_char }).collect();
         let word_alternate: String = typed_keys.iter().map(|k| if first_layout { k.rus_char } else { k.eng_char }).collect();
-
-        if word_current.chars().count() < 3 {
-            return false;
-        }
+        let char_count = word_current.chars().count();
 
         // Проверяем, не находится ли слово (или его перевод) в списке исключений
-        {
+        let is_excluded = {
             let word_set = EXCLUDED_WORDS.lock().unwrap();
             let clean_curr = word_current.trim_end_matches(|c| matches!(c, '.' | ',' | ';' | ':' | '/')).to_lowercase();
             let clean_alt = word_alternate.trim_end_matches(|c| matches!(c, '.' | ',' | ';' | ':' | '/')).to_lowercase();
-            if word_set.contains(&word_current.to_lowercase())
+            word_set.contains(&word_current.to_lowercase())
                 || word_set.contains(&clean_curr)
                 || word_set.contains(&word_alternate.to_lowercase())
                 || word_set.contains(&clean_alt)
-            {
-                return false;
-            }
+        };
+        if is_excluded {
+            PENDING_SHORT_WORDS.lock().unwrap().clear();
+            return false;
         }
 
-        if should_autocorrect_layout(&word_current, &word_alternate, first_layout) {
-            let word_len = word_current.chars().count();
+        let should_convert = if char_count >= 3 {
+            should_autocorrect_layout(&word_current, &word_alternate, first_layout)
+        } else if char_count == 2 {
+            should_autocorrect_short_word(&word_current, &word_alternate, first_layout)
+        } else {
+            false
+        };
+
+        if should_convert {
+            // Забираем накопленные короткие слова 1-2 буквы ("а", "у", "я", "и", "в", "с", "к", "о", "мы" и т.д.),
+            // чтобы фразы вроде "f tckb e vtyz" целиком превращались в "а если у меня"!
+            let pending_list: Vec<PendingShortWord> = {
+                let mut pend = PENDING_SHORT_WORDS.lock().unwrap();
+                let list = pend.clone();
+                pend.clear();
+                list
+            };
+
+            let mut full_current = String::new();
+            let mut full_alternate = String::new();
+            if !pending_list.is_empty() && pending_list.iter().all(|p| p.is_english_layout == first_layout) {
+                for p in &pending_list {
+                    full_current.push_str(&p.word_current);
+                    full_current.push(' ');
+                    full_alternate.push_str(&p.word_alternate);
+                    full_alternate.push(' ');
+                }
+            }
+            full_current.push_str(&word_current);
+            full_alternate.push_str(&word_alternate);
+
+            let replace_len = full_current.chars().count();
+            let undo_len = full_alternate.chars().count() + 1;
+
             std::thread::spawn(move || {
                 LAYOUT_PROCESSING.store(true, Ordering::SeqCst);
-                std::thread::sleep(Duration::from_millis(30));
-                simulate_backspaces(word_len);
-                std::thread::sleep(Duration::from_millis(50));
-                simulate_unicode_input(&word_alternate);
                 switch_active_window_layout(!first_layout);
-                
+                std::thread::sleep(Duration::from_millis(10));
+                simulate_backspaces(replace_len);
+                std::thread::sleep(Duration::from_millis(15));
+                simulate_unicode_input(&full_alternate);
+
                 if vk == 0x20 {
                     simulate_unicode_input(" ");
                 } else {
                     simulate_enter();
                 }
-                
+
+                LAST_TYPED_HKL.store(0, Ordering::SeqCst);
+
                 let mut last_correct = LAST_AUTOCORRECT.lock().unwrap();
-                let total_backspaces = word_len + 1;
-                *last_correct = Some((word_current.clone(), word_alternate.clone(), !first_layout, total_backspaces));
-                
+                *last_correct = Some((full_current.clone(), full_alternate.clone(), !first_layout, undo_len));
+
                 unsafe { let _ = winapi::um::utilapiset::Beep(400, 40); }
-                log_to_file(&format!("Autocorrected: '{}' -> '{}'", word_current, word_alternate));
-                
+                log_to_file(&format!("Autocorrected: '{}' -> '{}'", full_current, full_alternate));
+
                 LAYOUT_PROCESSING.store(false, Ordering::SeqCst);
             });
             return true;
+        } else if vk == 0x20 && (1..=2).contains(&char_count) && is_valid_pending_short_word(&word_current, &word_alternate, first_layout) {
+            let mut pend = PENDING_SHORT_WORDS.lock().unwrap();
+            if !pend.is_empty() && pend[0].is_english_layout != first_layout {
+                pend.clear();
+            }
+            pend.push(PendingShortWord {
+                word_current,
+                word_alternate,
+                is_english_layout: first_layout,
+            });
+            if pend.len() > 4 {
+                pend.remove(0);
+            }
+        } else {
+            PENDING_SHORT_WORDS.lock().unwrap().clear();
         }
     } else if !is_modifier {
-        let mut buf = TYPED_BUFFER.lock().unwrap();
-        buf.clear();
+        TYPED_BUFFER.lock().unwrap().clear();
+        PENDING_SHORT_WORDS.lock().unwrap().clear();
     }
 
     false
 }
 
 fn switch_active_window_layout(to_english: bool) {
-    use winapi::um::winuser::{GetForegroundWindow, PostMessageW, WM_INPUTLANGCHANGEREQUEST};
+    use winapi::um::winuser::{GetForegroundWindow, GetWindowThreadProcessId, GetGUIThreadInfo, GUITHREADINFO, PostMessageW, WM_INPUTLANGCHANGEREQUEST};
     use winapi::shared::minwindef::LPARAM;
     unsafe {
-        let hwnd = GetForegroundWindow();
-        if !hwnd.is_null() {
+        let fg_hwnd = GetForegroundWindow();
+        if !fg_hwnd.is_null() {
             let layout_id = if to_english {
                 0x04090409 as LPARAM
             } else {
                 0x04190419 as LPARAM
             };
-            PostMessageW(hwnd, WM_INPUTLANGCHANGEREQUEST, 0, layout_id);
+            let fg_thread = GetWindowThreadProcessId(fg_hwnd, std::ptr::null_mut());
+            let mut gui_info: GUITHREADINFO = std::mem::zeroed();
+            gui_info.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+            if GetGUIThreadInfo(fg_thread, &mut gui_info) != 0 && !gui_info.hwndFocus.is_null() && gui_info.hwndFocus != fg_hwnd {
+                PostMessageW(gui_info.hwndFocus, WM_INPUTLANGCHANGEREQUEST, 0, layout_id);
+            }
+            PostMessageW(fg_hwnd, WM_INPUTLANGCHANGEREQUEST, 0, layout_id);
+            LAST_TYPED_HKL.store(0, Ordering::SeqCst);
             log_to_file(&format!("switch_active_window_layout: Sent WM_INPUTLANGCHANGEREQUEST with layout_id: {:#X}", layout_id));
         }
     }
@@ -10946,4 +11480,200 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    fn en_to_ru_str(s: &str) -> String {
+        let en = "qwertyuiop[]asdfghjkl;'zxcvbnm,.`";
+        let ru: Vec<char> = "йцукенгшщзхъфывапролджэячсмитьбюё".chars().collect();
+        s.chars()
+            .map(|c| {
+                let lower = c.to_ascii_lowercase();
+                if let Some(idx) = en.find(lower) {
+                    let r = ru[idx];
+                    if c.is_uppercase() {
+                        r.to_uppercase().next().unwrap_or(r)
+                    } else {
+                        r
+                    }
+                } else {
+                    c
+                }
+            })
+            .collect()
+    }
+
+    fn ru_to_en_str(s: &str) -> String {
+        let en: Vec<char> = "qwertyuiop[]asdfghjkl;'zxcvbnm,.`".chars().collect();
+        let ru: Vec<char> = "йцукенгшщзхъфывапролджэячсмитьбюё".chars().collect();
+        s.chars()
+            .map(|c| {
+                let lower = c.to_lowercase().next().unwrap_or(c);
+                if let Some(idx) = ru.iter().position(|&r| r == lower) {
+                    let e = en[idx];
+                    if c.is_uppercase() {
+                        e.to_ascii_uppercase()
+                    } else {
+                        e
+                    }
+                } else {
+                    c
+                }
+            })
+            .collect()
+    }
+
+    fn simulate_phrase_typing(words: &[&str], start_is_en: bool) -> String {
+        let mut is_en = start_is_en;
+        let mut pending: Vec<PendingShortWord> = Vec::new();
+        let mut screen = String::new();
+
+        for (idx, &raw_word) in words.iter().enumerate() {
+            let word_current = if is_en == start_is_en {
+                raw_word.to_string()
+            } else if is_en {
+                // Layout switched to EN; user intended EN, so raw_word in RU keys maps to EN directly
+                ru_to_en_str(raw_word)
+            } else {
+                // Layout switched to RU; user intended RU, so raw_word in EN keys maps to RU directly
+                en_to_ru_str(raw_word)
+            };
+            let word_alternate = if is_en {
+                en_to_ru_str(&word_current)
+            } else {
+                ru_to_en_str(&word_current)
+            };
+            let char_count = word_current.chars().count();
+
+            screen.push_str(&word_current);
+
+            let should_convert = if char_count >= 3 {
+                should_autocorrect_layout(&word_current, &word_alternate, is_en)
+            } else if char_count == 2 {
+                should_autocorrect_short_word(&word_current, &word_alternate, is_en)
+            } else {
+                false
+            };
+
+            if should_convert {
+                let mut full_current = String::new();
+                let mut full_alternate = String::new();
+                if !pending.is_empty() && pending.iter().all(|p| p.is_english_layout == is_en) {
+                    for p in &pending {
+                        full_current.push_str(&p.word_current);
+                        full_current.push(' ');
+                        full_alternate.push_str(&p.word_alternate);
+                        full_alternate.push(' ');
+                    }
+                }
+                pending.clear();
+                full_current.push_str(&word_current);
+                full_alternate.push_str(&word_alternate);
+
+                let replace_len = full_current.chars().count();
+                let remaining_chars = screen.chars().count() - replace_len;
+                screen = screen.chars().take(remaining_chars).collect();
+                screen.push_str(&full_alternate);
+                is_en = !is_en;
+            } else if (1..=2).contains(&char_count) && is_valid_pending_short_word(&word_current, &word_alternate, is_en) {
+                pending.push(PendingShortWord {
+                    word_current,
+                    word_alternate,
+                    is_english_layout: is_en,
+                });
+            } else {
+                pending.clear();
+            }
+
+            if idx + 1 < words.len() {
+                screen.push(' ');
+            }
+        }
+        screen
+    }
+
+    #[test]
+    fn test_user_reported_phrases_and_words() {
+        // 1. "а если у меня" typed in EN layout ("f tckb e vtyz")
+        assert_eq!(
+            simulate_phrase_typing(&["f", "tckb", "e", "vtyz"], true),
+            "а если у меня"
+        );
+        // Even if OS layout never switched between words, each pair ("f tckb" and "e vtyz") converts!
+        assert_eq!(
+            simulate_phrase_typing(&["f", "tckb"], true),
+            "а если"
+        );
+        assert_eq!(
+            simulate_phrase_typing(&["e", "vtyz"], true),
+            "у меня"
+        );
+        assert_eq!(
+            simulate_phrase_typing(&["Z", "gbie", "f", "tckb", "e", "vtyz"], true),
+            "Я пишу а если у меня"
+        );
+        assert_eq!(
+            simulate_phrase_typing(&["kbim", "jlyf", "rjv,byfwbz", "bp", "vyjub["], true),
+            "лишь одна комбинация из многих"
+        );
+
+        // 2. Words with "ck"="сл", "th"="ер", "ch"="ср" must convert EN -> RU
+        for ru_word in &[
+            "если", "после", "слово", "случай", "мысли", "через", "перед", "теперь",
+            "первый", "сервер", "верно", "наверное", "проверить", "вчера", "вечер",
+            "сразу", "среди", "среда", "срочно", "интересно", "уверен", "размер", "номер",
+            "одна", "один", "много", "мало", "книга", "улица", "группа", "машина", "комната",
+            "знаю", "думаю", "понимаю", "говорю", "смотрю", "люблю",
+        ] {
+            let en_typed = ru_to_en_str(ru_word);
+            assert!(
+                should_autocorrect_layout(&en_typed, ru_word, true),
+                "Expected EN->RU conversion for '{}' (typed as '{}')",
+                ru_word,
+                en_typed
+            );
+        }
+
+        // 3. Real English words (including with trailing punctuation) must NEVER convert to non-existent Russian words
+        for en_word in &[
+            "date.", "name.", "site.", "page.", "mode.", "node.", "code.", "game.", "love.", "save.",
+            "expert", "effort", "entire", "ensure", "explore", "exist", "desert", "desire",
+            "self", "pub", "gif", "roof", "rhythm", "hello,", "world.", "update", "updated", "making",
+        ] {
+            let ru_alt = en_to_ru_str(en_word);
+            assert!(
+                !should_autocorrect_layout(en_word, &ru_alt, true),
+                "Real English word '{}' must NOT convert to '{}'",
+                en_word,
+                ru_alt
+            );
+        }
+
+        // 4. Real Russian words (including collision words) must NEVER convert to English or fake English words
+        for ru_word in &[
+            "рук", "руку", "руки", "руке", "уму", "внук", "учу", "дом", "год", "шаг", "код",
+            "мир", "сон", "кот", "лес", "сад", "зал", "душ", "муж", "нож", "чай", "бой",
+            "путь", "суть", "чуть", "круг", "звук", "брат",
+        ] {
+            let en_alt = ru_to_en_str(ru_word);
+            assert!(
+                !should_autocorrect_layout(ru_word, &en_alt, false),
+                "Real Russian word '{}' must NOT convert to '{}'",
+                ru_word,
+                en_alt
+            );
+        }
+
+        // 5. Fake English forms ("thers", "thess", "befors", "peopls", "writed") must not be recognized as English
+        for fake_en in &["thers", "thess", "befors", "peopls", "writed", "maked", "taked", "ared", "thed"] {
+            assert!(
+                !is_recognized_english_word(fake_en),
+                "Non-existent English word '{}' must not be recognized",
+                fake_en
+            );
+        }
+    }
 }
