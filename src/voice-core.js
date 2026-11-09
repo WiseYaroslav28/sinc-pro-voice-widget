@@ -455,14 +455,14 @@ class VoiceCore {
             while (remaining.length > maxLen) {
                 // Ищем естественную пунктуационную границу клаузы (тире, двоеточие, запятая) в окне до maxLen + 40,
                 // НЕ разрывая предложение по закрывающей скобке ") " или слэшу " / " внутри фразы
-                const punctLimit = Math.min(maxLen + 40, Math.max(80, remaining.length - 40));
+                const punctLimit = Math.min(maxLen + 110, Math.max(80, remaining.length - 25));
                 const punctSlice = remaining.slice(0, punctLimit);
-                const dashIdx = Math.max(punctSlice.lastIndexOf(' — '), punctSlice.lastIndexOf(' - '));
+                const dashIdx = Math.max(punctSlice.lastIndexOf(' — '), punctSlice.lastIndexOf(' – '), punctSlice.lastIndexOf(' - '));
                 const colonIdx = punctSlice.lastIndexOf(': ');
                 const commaIdx = punctSlice.lastIndexOf(', ');
                 const punctMatch = Math.max(dashIdx, colonIdx, commaIdx);
                 let splitIdx = -1;
-                if (punctMatch >= 60) {
+                if (punctMatch >= 35) {
                     splitIdx = punctMatch + (punctSlice[punctMatch] === ' ' ? 3 : 1);
                 } else {
                     const spaceLimit = Math.min(maxLen, Math.max(80, remaining.length - 40));
@@ -483,7 +483,7 @@ class VoiceCore {
         };
 
         const isGemini = this.isGeminiEngine();
-        const maxChunkLen = isGemini ? 420 : 340;
+        const maxChunkLen = isGemini ? 560 : 380;
         const rawClean = [];
         for (let s of rawSentences) {
             s = s.replace(/<DOT>/g, ".");
@@ -516,8 +516,8 @@ class VoiceCore {
         const baseVoiceKey = isLocal 
             ? (this.settings.tts_local_voice || 'ru_RU-dmitri-medium.onnx')
             : isGemini
-                ? `${this.settings.voice || 'gemini:Aoede'}_${this.settings.tts_gemini_model || 'gemini-2.5-flash-native-audio-latest'}_${this.settings.tts_gemini_thinking || 'off'}_pad1`
-                : (this.settings.voice || 'ru-RU-SvetlanaNeural');
+                ? `${this.settings.voice || 'gemini:Aoede'}_${this.settings.tts_gemini_model || 'gemini-2.5-flash-native-audio-latest'}_${this.settings.tts_gemini_thinking || 'off'}_pad2`
+                : `${this.settings.voice || 'ru-RU-SvetlanaNeural'}_pad2`;
         return `${baseVoiceKey}${this.settings.expressive !== false ? '' : '_flat'}`;
     }
 

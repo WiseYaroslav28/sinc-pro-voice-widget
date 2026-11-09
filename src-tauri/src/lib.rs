@@ -702,6 +702,144 @@ fn is_emoji_or_decorative_symbol(c: char) -> bool {
     )
 }
 
+fn expand_russian_ordinal(num: u32, suffix: &str) -> Option<&'static str> {
+    match (num, suffix) {
+        (1, "й" | "ый" | "ий") => Some("первый"),
+        (2, "й" | "ой" | "ый") => Some("второй"),
+        (3, "й" | "ий") => Some("третий"),
+        (4, "й" | "ый") => Some("четвёртый"),
+        (5, "й" | "ый") => Some("пятый"),
+        (6, "й" | "ой" | "ый") => Some("шестой"),
+        (7, "й" | "ой" | "ый") => Some("седьмой"),
+        (8, "й" | "ой" | "ый") => Some("восьмой"),
+        (9, "й" | "ый") => Some("девятый"),
+        (10, "й" | "ый") => Some("десятый"),
+
+        (1, "я" | "ая") => Some("первая"),
+        (2, "я" | "ая") => Some("вторая"),
+        (3, "я" | "ья") => Some("третья"),
+        (4, "я" | "ая") => Some("четвёртая"),
+        (5, "я" | "ая") => Some("пятая"),
+        (6, "я" | "ая") => Some("шестая"),
+        (7, "я" | "ая") => Some("седьмая"),
+        (8, "я" | "ая") => Some("восьмая"),
+        (9, "я" | "ая") => Some("девятая"),
+        (10, "я" | "ая") => Some("десятая"),
+
+        (1, "е" | "ое") => Some("первое"),
+        (2, "е" | "ое") => Some("второе"),
+        (3, "е" | "ье") => Some("третье"),
+        (4, "е" | "ое") => Some("четвёртое"),
+        (5, "е" | "ое") => Some("пятое"),
+        (6, "е" | "ое") => Some("шестое"),
+        (7, "е" | "ое") => Some("седьмое"),
+        (8, "е" | "ое") => Some("восьмое"),
+        (9, "е" | "ое") => Some("девятое"),
+        (10, "е" | "ое") => Some("десятое"),
+
+        (1, "го" | "ого") => Some("первого"),
+        (2, "го" | "ого") => Some("второго"),
+        (3, "го" | "его") => Some("третьего"),
+        (4, "го" | "ого") => Some("четвёртого"),
+        (5, "го" | "ого") => Some("пятого"),
+        (6, "го" | "ого") => Some("шестого"),
+        (7, "го" | "ого") => Some("седьмого"),
+        (8, "го" | "ого") => Some("восьмого"),
+        (9, "го" | "ого") => Some("девятого"),
+        (10, "го" | "ого") => Some("десятого"),
+
+        (1, "му" | "ому") => Some("первому"),
+        (2, "му" | "ому") => Some("второму"),
+        (3, "му" | "ему") => Some("третьему"),
+        (4, "му" | "ому") => Some("четвёртому"),
+        (5, "му" | "ому") => Some("пятому"),
+        (6, "му" | "ому") => Some("шестому"),
+        (7, "му" | "ому") => Some("седьмому"),
+        (8, "му" | "ому") => Some("восьмому"),
+        (9, "му" | "ому") => Some("девятому"),
+        (10, "му" | "ому") => Some("десятому"),
+
+        (1, "м" | "ом" | "ым") => Some("первом"),
+        (2, "м" | "ом" | "ым") => Some("втором"),
+        (3, "м" | "ем" | "им") => Some("третьем"),
+        (4, "м" | "ом" | "ым") => Some("четвёртом"),
+        (5, "м" | "ом" | "ым") => Some("пятом"),
+        (6, "м" | "ом" | "ым") => Some("шестом"),
+        (7, "м" | "ом" | "ым") => Some("седьмом"),
+        (8, "м" | "ом" | "ым") => Some("восьмом"),
+        (9, "м" | "ом" | "ым") => Some("девятом"),
+        (10, "м" | "ом" | "ым") => Some("десятом"),
+
+        (1, "ой") => Some("первой"),
+        (3, "ей") => Some("третьей"),
+        (4, "ой") => Some("четвёртой"),
+        (5, "ой") => Some("пятой"),
+        (9, "ой") => Some("девятой"),
+        (10, "ой") => Some("десятой"),
+        _ => None,
+    }
+}
+
+fn expand_russian_numerals_and_ranges(input: &str) -> String {
+    let chars: Vec<char> = input.chars().collect();
+    let mut out = String::with_capacity(input.len() + 16);
+    let mut i = 0;
+
+    while i < chars.len() {
+        let prev_is_alnum = i > 0 && chars[i - 1].is_alphanumeric();
+        if !prev_is_alnum && chars[i].is_ascii_digit() {
+            let num_start = i;
+            let mut num_end = i;
+            while num_end < chars.len() && chars[num_end].is_ascii_digit() {
+                num_end += 1;
+            }
+            if num_end < chars.len() && matches!(chars[num_end], '-' | '–' | '—') {
+                let dash_idx = num_end;
+                let after_dash = dash_idx + 1;
+                // Случай 1: Числовой диапазон (например "6–7", "12–15", "6-7") -> "6, 7", "12, 15"
+                if after_dash < chars.len() && chars[after_dash].is_ascii_digit() {
+                    let mut second_end = after_dash;
+                    while second_end < chars.len() && chars[second_end].is_ascii_digit() {
+                        second_end += 1;
+                    }
+                    let next_is_alpha = second_end < chars.len() && chars[second_end].is_ascii_alphabetic();
+                    if !next_is_alpha {
+                        for &c in &chars[num_start..dash_idx] {
+                            out.push(c);
+                        }
+                        out.push_str(", ");
+                        i = after_dash;
+                        continue;
+                    }
+                }
+                // Случай 2: Буквенное наращение числительного ("1-й", "5-м", "2-го")
+                if after_dash < chars.len() && chars[after_dash].is_alphabetic() && !chars[after_dash].is_ascii() {
+                    let mut suf_end = after_dash;
+                    while suf_end < chars.len() && chars[suf_end].is_alphabetic() {
+                        suf_end += 1;
+                    }
+                    let suf_len = suf_end - after_dash;
+                    if suf_len <= 3 {
+                        let num_str: String = chars[num_start..dash_idx].iter().collect();
+                        let suf_str: String = chars[after_dash..suf_end].iter().collect::<String>().to_lowercase();
+                        if let Ok(num_val) = num_str.parse::<u32>() {
+                            if let Some(word) = expand_russian_ordinal(num_val, &suf_str) {
+                                out.push_str(word);
+                                i = suf_end;
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+
+    out
+}
+
 fn normalize_text_for_gemini_live(raw_text: &str) -> String {
     let stripped = strip_tts_emotion_prefix(raw_text);
     let mut no_emoji = String::with_capacity(stripped.len());
@@ -719,7 +857,7 @@ fn normalize_text_for_gemini_live(raw_text: &str) -> String {
 
     // Заменяем скобки на запятые (чтобы модель не считала текст в скобках вроде "(15 слов)" сценической ремаркой и не пропускала его),
     // а также заменяем спецсимволы (%, ~, +, ×, кавычки, тире, двоеточия) на читаемые слова и естественные паузы
-    let mut s = no_emoji
+    let mut s = expand_russian_numerals_and_ranges(&no_emoji)
         .replace('(', ", ")
         .replace(')', ", ")
         .replace('[', ", ")
@@ -734,7 +872,8 @@ fn normalize_text_for_gemini_live(raw_text: &str) -> String {
         .replace("; ", ", ")
         .replace(" — ", ", ")
         .replace(" – ", ", ")
-        .replace('—', ", ");
+        .replace('—', ", ")
+        .replace('–', ", ");
 
     // Убираем повторяющиеся запятые и пробелы
     while s.contains(" ,") {
@@ -840,9 +979,9 @@ async fn connect_gemini_live_ws(
     }
 
     let sys_instruction = if expressive {
-        "Ты — профессиональный диктор озвучки (Text-to-Speech). Твоя единственная задача — ДОСЛОВНО, от первого до последнего слова, без сокращений, пропусков или отсебятины озвучивать голосом предоставленный текст. НИКОГДА не отвечай на вопросы в тексте и не комментируй его. Читай естественно, с живой дикторской интонацией, четко произнося как русские слова и числа, так и английские термины."
+        "Ты — профессиональный диктор озвучки (Text-to-Speech). Твоя единственная задача — ДОСЛОВНО, от первого до последнего слова, без сокращений, пропусков или отсебятины озвучивать голосом предоставленный текст. НИКОГДА не отвечай на вопросы в тексте и не комментируй его. Читай естественно, с живой дикторской интонацией, четко произнося как русские слова и числа, так и английские термины, и полностью проговаривая окончания каждого слова без проглатывания слогов."
     } else {
-        "Ты — профессиональный диктор озвучки (Text-to-Speech). Твоя единственная задача — ДОСЛОВНО, от первого до последнего слова, без сокращений, пропусков или отсебятины озвучивать голосом предоставленный текст. НИКОГДА не отвечай на вопросы в тексте и не комментируй его. Читай ровным, спокойным, нейтральным тоном без лишней эмоциональности."
+        "Ты — профессиональный диктор озвучки (Text-to-Speech). Твоя единственная задача — ДОСЛОВНО, от первого до последнего слова, без сокращений, пропусков или отсебятины озвучивать голосом предоставленный текст. НИКОГДА не отвечай на вопросы в тексте и не комментируй его. Читай ровным, спокойным, нейтральным тоном без лишней эмоциональности, полностью проговаривая окончания каждого слова без проглатывания слогов."
     };
 
     let setup_msg = serde_json::json!({
@@ -963,12 +1102,13 @@ async fn run_gemini_live_ws_turn(
     let mut pcm_bytes: Vec<u8> = Vec::with_capacity(128 * 1024);
     let mut pending_stream_pcm: Vec<u8> = Vec::with_capacity(24 * 1024);
     let mut got_first_chunk = false;
+    let mut saw_gen_complete = false;
 
     loop {
         let wait_dur = if !got_first_chunk {
             Duration::from_millis(5000)
         } else {
-            Duration::from_millis(2200)
+            if saw_gen_complete { Duration::from_millis(600) } else { Duration::from_millis(2200) }
         };
 
         match tokio::time::timeout(wait_dur, ws.next()).await {
@@ -1039,7 +1179,10 @@ async fn run_gemini_live_ws_turn(
                             }
                             let is_gen_complete = sc.get("generationComplete").and_then(|gc| gc.as_bool()) == Some(true);
                             let is_turn_complete = sc.get("turnComplete").and_then(|tc| tc.as_bool()) == Some(true);
-                            if (is_gen_complete || is_turn_complete) && !pcm_bytes.is_empty() {
+                            if is_gen_complete {
+                                saw_gen_complete = true;
+                            }
+                            if is_turn_complete && !pcm_bytes.is_empty() {
                                 if let (Some(sid), Some(sidx)) = (stream_id, sentence_index) {
                                     let send_len = pending_stream_pcm.len() & !1;
                                     let final_b64 = if send_len > 0 {
@@ -1088,6 +1231,27 @@ async fn run_gemini_live_ws_turn(
                     wait_dur.as_millis()
                 ));
             }
+        }
+    }
+
+    if !pcm_bytes.is_empty() && !pending_stream_pcm.is_empty() {
+        if let (Some(sid), Some(sidx)) = (stream_id, sentence_index) {
+            let send_len = pending_stream_pcm.len() & !1;
+            let final_b64 = if send_len > 0 {
+                STANDARD.encode(&pending_stream_pcm[..send_len])
+            } else {
+                String::new()
+            };
+            let _ = app_handle.emit(
+                "gemini-live-audio-chunk",
+                serde_json::json!({
+                    "streamId": sid,
+                    "sentenceIndex": sidx,
+                    "pcmBase64": final_b64,
+                    "isDone": true
+                }),
+            );
+            pending_stream_pcm.clear();
         }
     }
 
@@ -1381,7 +1545,7 @@ fn build_expressive_ssml_params(raw_text: &str, base_rate: f32, expressive: bool
         .collect();
 
     // Очищаем одиночный знак вопроса перед закрывающей скобкой или запятой внутри предложения
-    let mut cleaned_punct = sanitized
+    let mut cleaned_punct = expand_russian_numerals_and_ranges(&sanitized)
         .replace(" ?),", "),")
         .replace("?),", "),")
         .replace(" ?)", ")")
@@ -1411,6 +1575,7 @@ fn build_expressive_ssml_params(raw_text: &str, base_rate: f32, expressive: bool
         .replace(" — ", ", ")
         .replace(" – ", ", ")
         .replace("—", ", ")
+        .replace("–", ", ")
         .replace('«', "")
         .replace('»', "")
         .replace('“', "")
@@ -1815,7 +1980,7 @@ async fn speak_edge_tts_internal(
         }
     };
 
-    let audio_bytes = match run_edge_ws_turn(ws_stream, turns_count, &ssml_msg, first_chunk_timeout_ms).await {
+    let mut audio_bytes = match run_edge_ws_turn(ws_stream, turns_count, &ssml_msg, first_chunk_timeout_ms).await {
         Ok((ws_back, new_turns, bytes)) if !bytes.is_empty() => {
             if new_turns < max_turns_per_socket {
                 *slot_session = Some(PersistentEdgeWs {
@@ -1850,6 +2015,17 @@ async fn speak_edge_tts_internal(
         Ok(_) => return Err("Edge TTS вернул пустой аудио-ответ".into()),
         Err(err_msg) => return Err(err_msg),
     };
+
+    // Дополняем MP3-поток (audio-24khz-48kbitrate-mono-mp3) 12 самодостаточными фреймами тишины (288 мс = 12 * 144 байт),
+    // чтобы при ускорении 1.5x–2.0x тайм-стретчер WSOLA в браузере и WebAudio-компрессор никогда не «съедали» окончание последнего слова.
+    let mut silent_mp3_frame = [0u8; 144];
+    silent_mp3_frame[0] = 0xFF;
+    silent_mp3_frame[1] = 0xF3;
+    silent_mp3_frame[2] = 0x64;
+    silent_mp3_frame[3] = 0xC4;
+    for _ in 0..12 {
+        audio_bytes.extend_from_slice(&silent_mp3_frame);
+    }
 
     Ok(STANDARD.encode(&audio_bytes))
 }
@@ -11796,5 +11972,16 @@ mod layout_tests {
                 fake_en
             );
         }
+
+        // 6. TTS numeral suffixes and numeric ranges
+        let norm_gemini = normalize_text_for_gemini_live("Вот так — в 12–15 слов и 6–7 карточек в 5-м блоке с 1-го шага!");
+        assert!(norm_gemini.contains("12, 15 слов"), "norm_gemini was: {}", norm_gemini);
+        assert!(norm_gemini.contains("6, 7 карточек"), "norm_gemini was: {}", norm_gemini);
+        assert!(norm_gemini.contains("в пятом блоке"), "norm_gemini was: {}", norm_gemini);
+        assert!(norm_gemini.contains("с первого шага"), "norm_gemini was: {}", norm_gemini);
+
+        let (ssml_edge, _, _) = build_expressive_ssml_params("В 5-м блоке 6–7 карточек для gemini-3.5-flash.", 1.0, true);
+        assert!(ssml_edge.contains("В пятом блоке 6, 7 карточек"), "ssml_edge was: {}", ssml_edge);
+        assert!(ssml_edge.contains("gemini 3.5 flash"), "ssml_edge was: {}", ssml_edge);
     }
 }
