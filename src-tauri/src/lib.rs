@@ -929,13 +929,36 @@ async fn connect_gemini_live_ws(
         api_key.trim()
     );
 
-    let (mut ws, _) = tokio::time::timeout(
-        Duration::from_secs(7),
-        connect_async_tls_with_config(&ws_url, None, true, None),
-    )
-    .await
-    .map_err(|_| "Таймаут подключения к Gemini Live WebSocket (7s)".to_string())?
-    .map_err(|e| format!("Ошибка подключения Gemini Live WebSocket: {}", e))?;
+    let mut ws = {
+        let mut last_conn_err = String::new();
+        let mut connected_ws = None;
+        for conn_try in 1..=2 {
+            match tokio::time::timeout(
+                Duration::from_secs(7),
+                connect_async_tls_with_config(&ws_url, None, true, None),
+            )
+            .await
+            {
+                Ok(Ok((stream, _))) => {
+                    connected_ws = Some(stream);
+                    break;
+                }
+                Ok(Err(e)) => {
+                    last_conn_err = format!("Ошибка подключения Gemini Live WebSocket: {}", e);
+                }
+                Err(_) => {
+                    last_conn_err = "Таймаут подключения к Gemini Live WebSocket (7s)".to_string();
+                }
+            }
+            if conn_try == 1 {
+                tokio::time::sleep(Duration::from_millis(220)).await;
+            }
+        }
+        match connected_ws {
+            Some(s) => s,
+            None => return Err(last_conn_err),
+        }
+    };
 
     let full_model = if model.trim().is_empty() {
         "models/gemini-2.5-flash-native-audio-latest".to_string()
@@ -988,7 +1011,6 @@ async fn connect_gemini_live_ws(
         "setup": {
             "model": full_model,
             "generationConfig": gen_config,
-            "outputAudioTranscription": {},
             "systemInstruction": {
                 "parts": [
                     { "text": sys_instruction }
@@ -1057,23 +1079,14 @@ async fn connect_gemini_live_ws(
 
 fn extract_alnum_words(s: &str) -> Vec<String> {
     s.split(|c: char| !c.is_alphanumeric())
-        .map(|w| w.trim().to_lowercase().replace('ё', "е"))
+        .map(|w| w.trim().to_lowercase())
         .filter(|w| !w.is_empty())
-        .collect()
-}
-
-fn extract_cyrillic_stems(s: &str) -> Vec<String> {
-    s.split(|c: char| !c.is_alphabetic())
-        .map(|w| w.trim().to_lowercase().replace('ё', "е"))
-        .filter(|w| w.chars().count() >= 4 && w.chars().all(|c| ('\u{0400}'..='\u{04FF}').contains(&c)))
-        .map(|w| w.chars().take(4).collect::<String>())
         .collect()
 }
 
 fn validate_gemini_live_turn_completeness(
     clean_text: &str,
     pcm_bytes: &[u8],
-    transcript: &str,
 ) -> Result<(), String> {
     if pcm_bytes.is_empty() {
         return Err("Gemini Live API вернул пустой ответ (0 байт)".to_string());
@@ -1081,69 +1094,17 @@ fn validate_gemini_live_turn_completeness(
 
     // 24 кГц, 16-бит моно = 48000 байт/сек
     let audio_secs = (pcm_bytes.len() as f32) / 48000.0;
-    let expected_words = extract_alnum_words(clean_text);
-    let word_count = expected_words.len();
+    let word_count = extract_alnum_words(clean_text).len();
 
-    // 1. Проверка минимальной физической длительности аудио для средних и длинных фраз
-    if word_count >= 7 {
-        let min_secs = (word_count as f32) * 0.18;
+    // Защита только от реального обрыва длинной фразы на середине (например, 4.5 сек вместо 18 сек для 33 слов),
+    // без ложных срабатываний на сокращениях/цифрах ("3D", "3-мерный", "100%", "0-ю мс") в текстовой транскрипции.
+    if word_count >= 12 {
+        let min_secs = (word_count as f32) * 0.14;
         if audio_secs < min_secs {
             return Err(format!(
                 "Gemini Live API оборвал озвучку слишком рано ({:.1} сек для {} слов)",
                 audio_secs, word_count
             ));
-        }
-    }
-
-    // 2. Проверка полноты по транскрипции (outputAudioTranscription)
-    let norm_transcript = transcript.to_lowercase().replace('ё', "е");
-    let spoken_words = extract_alnum_words(&norm_transcript);
-    if !spoken_words.is_empty() && word_count >= 7 {
-        if spoken_words.len() * 100 < word_count * 65 {
-            return Err(format!(
-                "Gemini Live API озвучил не весь текст ({} из {} слов)",
-                spoken_words.len(),
-                word_count
-            ));
-        }
-
-        let stems = extract_cyrillic_stems(clean_text);
-        if stems.len() >= 5 {
-            let mut matched = 0usize;
-            let mut consecutive_missed = 0usize;
-            let mut max_consecutive_missed = 0usize;
-
-            for stem in &stems {
-                if norm_transcript.contains(stem.as_str()) {
-                    matched += 1;
-                    consecutive_missed = 0;
-                } else {
-                    consecutive_missed += 1;
-                    if consecutive_missed > max_consecutive_missed {
-                        max_consecutive_missed = consecutive_missed;
-                    }
-                }
-            }
-
-            // Если пропущено более 25% значимых русских слов или 3 слова подряд (выпала клауза)
-            if matched * 100 < stems.len() * 75 || max_consecutive_missed >= 3 {
-                return Err(format!(
-                    "Gemini Live API пропустил часть фразы при чтении (совпало {}/{} опорных слов, подряд пропущено {})",
-                    matched,
-                    stems.len(),
-                    max_consecutive_missed
-                ));
-            }
-
-            // Проверяем, что концовка предложения не была оборвана (хотя бы одно из 2 последних русских слов произнесено)
-            let tail_matched = stems
-                .iter()
-                .rev()
-                .take(2)
-                .any(|stem| norm_transcript.contains(stem.as_str()));
-            if !tail_matched {
-                return Err("Gemini Live API не дочитал концовку предложения".to_string());
-            }
         }
     }
 
@@ -1196,7 +1157,6 @@ async fn run_gemini_live_ws_turn(
 
     let mut pcm_bytes: Vec<u8> = Vec::with_capacity(128 * 1024);
     let mut pending_stream_pcm: Vec<u8> = Vec::with_capacity(24 * 1024);
-    let mut transcript_buf = String::with_capacity(512);
     let mut got_first_chunk = false;
     let mut saw_gen_complete = false;
     let mut emitted_first_live_chunk = false;
@@ -1205,7 +1165,7 @@ async fn run_gemini_live_ws_turn(
         let wait_dur = if !got_first_chunk {
             Duration::from_millis(5500)
         } else if saw_gen_complete {
-            Duration::from_millis(250)
+            Duration::from_millis(60)
         } else {
             Duration::from_millis(4500)
         };
@@ -1237,13 +1197,6 @@ async fn run_gemini_live_ws_turn(
                             return Err(format!("Ошибка Gemini Live API: {}", err_obj));
                         }
                         if let Some(sc) = parsed.get("serverContent") {
-                            if let Some(ot_text) = sc
-                                .get("outputTranscription")
-                                .and_then(|ot| ot.get("text"))
-                                .and_then(|t| t.as_str())
-                            {
-                                transcript_buf.push_str(ot_text);
-                            }
                             if let Some(parts) = sc
                                 .get("modelTurn")
                                 .and_then(|mt| mt.get("parts"))
@@ -1326,8 +1279,8 @@ async fn run_gemini_live_ws_turn(
         }
     }
 
-    // Проверяем, что модель озвучила предложение полностью, без пропуска клауз и без обрыва на середине
-    validate_gemini_live_turn_completeness(clean_text, &pcm_bytes, &transcript_buf)?;
+    // Проверяем, что модель не оборвала длинную фразу в самом начале
+    validate_gemini_live_turn_completeness(clean_text, &pcm_bytes)?;
 
     if !pcm_bytes.is_empty() && !pending_stream_pcm.is_empty() {
         if let (Some(sid), Some(sidx)) = (stream_id, sentence_index) {
@@ -1396,7 +1349,10 @@ async fn speak_gemini_live_tts(
 
     let mut last_err = String::new();
     for (_key_idx, active_key) in keys.iter().enumerate() {
-        for attempt_num in 1..=3 {
+        for attempt_num in 1..=2 {
+            if attempt_num > 1 {
+                tokio::time::sleep(Duration::from_millis(220)).await;
+            }
             let existing_session = if attempt_num == 1 {
                 let mut slot_guard = GEMINI_LIVE_WS_SLOT.lock().await;
                 if let Some(sess) = slot_guard.take() {
@@ -1431,12 +1387,20 @@ async fn speak_gemini_live_tts(
 
             if attempt_num == 1 {
                 // Заранее в фоне открываем и инициализируем (setupComplete) резервный WebSocket-сокет для следующей фразы,
-                // пока текущая фраза генерирует аудио (чтобы следующий ход стартовал с 0 мс ожидания)
+                // с небольшой задержкой при холодном старте, чтобы не сталкивать два TLS-рукопожатия одновременно
                 let bg_key = active_key.clone();
                 let bg_model = model.clone();
                 let bg_voice = gemini_voice.clone();
                 let bg_thinking = thinking.clone();
+                let delay_ms = if was_reused { 40 } else { 350 };
                 tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    {
+                        let guard = GEMINI_LIVE_WS_SLOT.lock().await;
+                        if guard.is_some() {
+                            return;
+                        }
+                    }
                     if let Ok(standby_ws) = connect_gemini_live_ws(&bg_key, &bg_model, &bg_voice, &bg_thinking, expressive).await {
                         let mut guard = GEMINI_LIVE_WS_SLOT.lock().await;
                         if guard.is_none() {
@@ -1472,39 +1436,6 @@ async fn speak_gemini_live_tts(
                     });
                     let wav_bytes = pcm_24k_mono_to_wav(&pcm);
                     return Ok(STANDARD.encode(&wav_bytes));
-                }
-                Ok(_) | Err(_) if was_reused => {
-                    // Предпрогретый сокет закрылся по таймауту простоя — мгновенно переподключаемся
-                    tokio::time::sleep(Duration::from_millis(40)).await;
-                    if let Ok(fresh_ws) =
-                        connect_gemini_live_ws(active_key, &model, &gemini_voice, &thinking, expressive).await
-                    {
-                        match run_gemini_live_ws_turn(
-                            app_handle,
-                            fresh_ws,
-                            0,
-                            &clean_text,
-                            stream_id,
-                            sentence_index,
-                            attempt_num,
-                        )
-                        .await
-                        {
-                            Ok((mut ws_back, _new_turns, pcm)) if !pcm.is_empty() => {
-                                tokio::spawn(async move {
-                                    let _ = ws_back.close(None).await;
-                                });
-                                let wav_bytes = pcm_24k_mono_to_wav(&pcm);
-                                return Ok(STANDARD.encode(&wav_bytes));
-                            }
-                            Ok(_) => {
-                                last_err = "Gemini Live API вернул пустой аудио-поток".to_string();
-                            }
-                            Err(e) => {
-                                last_err = e;
-                            }
-                        }
-                    }
                 }
                 Ok(_) => {
                     last_err = "Gemini Live API вернул пустой аудио-поток".to_string();
