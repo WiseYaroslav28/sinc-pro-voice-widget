@@ -291,9 +291,11 @@ document.addEventListener('DOMContentLoaded', () => {
             let fillPercent = 0;
             if (i < engine.currentSentenceIndex) fillPercent = 100;
             else if (i === engine.currentSentenceIndex) {
-                const currentAudioProgress = (engine.audioElement.duration && !isNaN(engine.audioElement.duration))
-                    ? (engine.audioElement.currentTime / engine.audioElement.duration)
-                    : 0;
+                const currentAudioProgress = typeof engine.getCurrentSentenceProgress === 'function'
+                    ? engine.getCurrentSentenceProgress()
+                    : ((engine.audioElement.duration && !isNaN(engine.audioElement.duration))
+                        ? (engine.audioElement.currentTime / engine.audioElement.duration)
+                        : 0);
                 fillPercent = currentAudioProgress * 100;
             }
             fillEl.style.width = `${fillPercent}%`;

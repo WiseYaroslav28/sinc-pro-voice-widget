@@ -1282,7 +1282,7 @@ async fn run_gemini_live_ws_turn(
     // Проверяем, что модель не оборвала длинную фразу в самом начале
     validate_gemini_live_turn_completeness(clean_text, &pcm_bytes)?;
 
-    if !pcm_bytes.is_empty() && !pending_stream_pcm.is_empty() {
+    if !pcm_bytes.is_empty() {
         if let (Some(sid), Some(sidx)) = (stream_id, sentence_index) {
             let send_len = pending_stream_pcm.len() & !1;
             let final_b64 = if send_len > 0 {
@@ -1386,34 +1386,40 @@ async fn speak_gemini_live_tts(
             };
 
             if attempt_num == 1 {
-                // Заранее в фоне открываем и инициализируем (setupComplete) резервный WebSocket-сокет для следующей фразы,
-                // с небольшой задержкой при холодном старте, чтобы не сталкивать два TLS-рукопожатия одновременно
+                // Заранее в фоне открываем и инициализируем (setupComplete) резервный WebSocket-сокет для следующей фразы
+                // (основной сокет к этому моменту уже подключён, поэтому параллельного столкновения TLS нет)
                 let bg_key = active_key.clone();
                 let bg_model = model.clone();
                 let bg_voice = gemini_voice.clone();
                 let bg_thinking = thinking.clone();
-                let delay_ms = if was_reused { 40 } else { 350 };
+                let delay_ms = if was_reused { 20 } else { 50 };
                 tokio::spawn(async move {
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                    {
-                        let guard = GEMINI_LIVE_WS_SLOT.lock().await;
-                        if guard.is_some() {
+                    for bg_attempt in 1..=2 {
+                        {
+                            let guard = GEMINI_LIVE_WS_SLOT.lock().await;
+                            if guard.is_some() {
+                                return;
+                            }
+                        }
+                        if let Ok(standby_ws) = connect_gemini_live_ws(&bg_key, &bg_model, &bg_voice, &bg_thinking, expressive).await {
+                            let mut guard = GEMINI_LIVE_WS_SLOT.lock().await;
+                            if guard.is_none() {
+                                *guard = Some(PersistentGeminiLiveWs {
+                                    ws: standby_ws,
+                                    api_key: bg_key,
+                                    model: bg_model,
+                                    voice: bg_voice,
+                                    thinking: bg_thinking,
+                                    expressive,
+                                    last_used: Instant::now(),
+                                    turns_count: 0,
+                                });
+                            }
                             return;
                         }
-                    }
-                    if let Ok(standby_ws) = connect_gemini_live_ws(&bg_key, &bg_model, &bg_voice, &bg_thinking, expressive).await {
-                        let mut guard = GEMINI_LIVE_WS_SLOT.lock().await;
-                        if guard.is_none() {
-                            *guard = Some(PersistentGeminiLiveWs {
-                                ws: standby_ws,
-                                api_key: bg_key,
-                                model: bg_model,
-                                voice: bg_voice,
-                                thinking: bg_thinking,
-                                expressive,
-                                last_used: Instant::now(),
-                                turns_count: 0,
-                            });
+                        if bg_attempt == 1 {
+                            tokio::time::sleep(Duration::from_millis(250)).await;
                         }
                     }
                 });
