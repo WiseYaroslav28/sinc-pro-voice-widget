@@ -2,6 +2,14 @@
 
 Все заметные изменения в этом проекте документируются в этом файле по стандарту [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/).
 
+## [3.5.49] - 2026-11-10
+
+### Fixed
+- **Устранено повторное воспроизведение отдельных предложений и сообщений при озвучке (`src/voice-core.js`, `src/tts.js`, `src-tauri/src/lib.rs`)**:
+  - Закрыто окно гонки (`85 мс` в `setupAudioEvents`) между событием `ended` и переключением `currentSentenceIndex++`: добавлены флаг `_endingTransition` и управляемый таймер `_endedTimer`, а в `playCurrentSentence()` и `loadCachedSentences()` заблокирован повторный перезапуск предложения, которое уже играет или завершает переход.
+  - В системную инструкцию (`connect_gemini_live_ws`) и промпт хода (`run_gemini_live_ws_turn`) для Gemini Live API добавлено прямое требование читать каждую фразу строго один раз без повторов слов или предложений дважды, а также уровень `MINIMAL` при выключенном размышлении (`thinking: "off"`) для `gemini-3.1-flash-live-preview`.
+  - В `capture_clipboard_text` (`src-tauri/src/lib.rs`) исправлен принудительный сброс `CTRL_PRESSED` / `SHIFT_PRESSED` / `ALT_PRESSED` в `false` (заменён на синхронизацию с физическим состоянием клавиш через `GetAsyncKeyState`) и добавлен дебаунс `420 мс` в `src/tts.js`, чтобы удержание `Ctrl+Shift` / `Ctrl+Alt` не вызывало двойной старт чтения.
+
 ## [3.5.48] - 2026-11-10
 
 ### Fixed

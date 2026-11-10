@@ -389,8 +389,12 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         let activeCaptureRequestId = 0;
+        let lastTtsHotkeyTriggerTime = 0;
 
         listen('tts-action-read', async () => {
+            const now = Date.now();
+            if (now - lastTtsHotkeyTriggerTime < 420) return;
+            lastTtsHotkeyTriggerTime = now;
             const reqId = ++activeCaptureRequestId;
             try {
                 // МГНОВЕННО (0 мс) переключаем кнопку Play -> Pause и выключаем режим перевода (гасим 文A)
@@ -421,6 +425,9 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         
         listen('tts-action-translate', async () => {
+            const now = Date.now();
+            if (now - lastTtsHotkeyTriggerTime < 420) return;
+            lastTtsHotkeyTriggerTime = now;
             const reqId = ++activeCaptureRequestId;
             try {
                 // МГНОВЕННО (0 мс) переключаем кнопку Play -> Pause и включаем режим перевода (подсвечиваем 文A)

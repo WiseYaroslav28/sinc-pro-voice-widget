@@ -189,6 +189,8 @@ class VoiceCore {
         this._prebufferCompleted = false;
         this._initialBufferCompleted = false;
         this._forceBypassBuffer = false;
+        this._endingTransition = false;
+        this._endedTimer = null;
         this.currentlyLoading = new Set(); // Набор индексов предложений, находящихся в процессе загрузки
         this.lastNetworkRequestTime = 0; // Время завершения последнего сетевого запроса к Edge TTS
         this.isNetworkFetching = false; // Флаг активного сетевого запроса к Edge TTS
@@ -546,7 +548,7 @@ class VoiceCore {
         const baseVoiceKey = isLocal 
             ? (this.settings.tts_local_voice || 'ru_RU-dmitri-medium.onnx')
             : isGemini
-                ? `${this.settings.voice || 'gemini:Aoede'}_${this.settings.tts_gemini_model || 'gemini-2.5-flash-native-audio-latest'}_${this.settings.tts_gemini_thinking || 'off'}_pad3`
+                ? `${this.settings.voice || 'gemini:Aoede'}_${this.settings.tts_gemini_model || 'gemini-2.5-flash-native-audio-latest'}_${this.settings.tts_gemini_thinking || 'off'}_pad4`
                 : `${this.settings.voice || 'ru-RU-SvetlanaNeural'}_pad3`;
         return `${baseVoiceKey}${this.settings.expressive !== false ? '' : '_flat'}`;
     }
@@ -599,7 +601,7 @@ class VoiceCore {
             this.updateProgress();
 
             // Если активное предложение загрузилось из кэша и плеер ждёт старта — сразу запускаем озвучку
-            if (this.isPlaying && !this.audioElement.src && this.audioBuffers[this.currentSentenceIndex] && this.audioBuffers[this.currentSentenceIndex] !== "ERROR") {
+            if (this.isPlaying && !this._endingTransition && this._playingSentenceIndex !== this.currentSentenceIndex && !this.audioElement.hasAttribute('src') && this.audioBuffers[this.currentSentenceIndex] && this.audioBuffers[this.currentSentenceIndex] !== "ERROR") {
                 this.log(`Cache load ready -> triggering playCurrentSentence() for active index ${this.currentSentenceIndex}`);
                 this.playCurrentSentence();
             }
@@ -663,6 +665,11 @@ class VoiceCore {
     }
 
     preparePlayback() {
+        if (this._endedTimer) {
+            clearTimeout(this._endedTimer);
+            this._endedTimer = null;
+        }
+        this._endingTransition = false;
         this.audioElement.pause();
         this.audioElement.removeAttribute('src');
         this._playingSentenceIndex = -1;
@@ -717,6 +724,11 @@ class VoiceCore {
             }
         }
 
+        if (this._endedTimer) {
+            clearTimeout(this._endedTimer);
+            this._endedTimer = null;
+        }
+        this._endingTransition = false;
         if (autoPlay) {
             this.audioElement.pause();
             this.audioElement.removeAttribute('src');
@@ -991,6 +1003,11 @@ class VoiceCore {
     seek(index) {
         if (index >= 0 && index < this.sentences.length) {
             this.log(`seek() called to index ${index}`);
+            if (this._endedTimer) {
+                clearTimeout(this._endedTimer);
+                this._endedTimer = null;
+            }
+            this._endingTransition = false;
             this.currentSentenceIndex = index;
             this._playingSentenceIndex = -1;
             this._initialBufferCompleted = false;
@@ -1099,6 +1116,11 @@ class VoiceCore {
     }
 
     pause(shouldBroadcast = true) {
+        if (this._endedTimer) {
+            clearTimeout(this._endedTimer);
+            this._endedTimer = null;
+        }
+        this._endingTransition = false;
         this.isPlaying = false;
         this.isPaused = true;
         this.isPrebuffering = false;
@@ -1110,6 +1132,11 @@ class VoiceCore {
     }
 
     stop(shouldBroadcast = true) {
+        if (this._endedTimer) {
+            clearTimeout(this._endedTimer);
+            this._endedTimer = null;
+        }
+        this._endingTransition = false;
         this.isPlaying = false;
         this.isPaused = false;
         this.isPrebuffering = false;
@@ -1140,6 +1167,10 @@ class VoiceCore {
     async playCurrentSentence() {
         this.log('playCurrentSentence() index=' + this.currentSentenceIndex + ' isPlaying=' + this.isPlaying);
         if (!this.isPlaying) return;
+        if (this._endingTransition) {
+            this.log('playCurrentSentence() skipped during 85ms ended transition');
+            return;
+        }
         
         if (this.currentSentenceIndex >= this.sentences.length) {
             this.log('playCurrentSentence() - reached end of sentences');
@@ -1172,9 +1203,9 @@ class VoiceCore {
         }
 
         // Если мы догнали загрузку в середине текста и следующего предложения ещё нет в памяти,
-        // снова включаем накопление буфера (если пользователь не нажал принудительный Play)
+        // для быстрых движков (Edge TTS) включаем повторное накопление буфера, а для Gemini Live ждём только текущее предложение
         if (!currentBuf || !currentBuf.startsWith("data:")) {
-            if (!this._forceBypassBuffer) {
+            if (!this._forceBypassBuffer && !this.isGeminiEngine()) {
                 this._initialBufferCompleted = false;
             }
         }
@@ -1208,9 +1239,9 @@ class VoiceCore {
                 this.broadcastState('play', { isPrebuffering: false });
             }
 
-            // Защита от повторного перезапуска уже играющего предложения
-            if (this._playingSentenceIndex === this.currentSentenceIndex && this.audioElement.hasAttribute('src') && !this.audioElement.ended) {
-                if (this.audioElement.paused) {
+            // Защита от повторного перезапуска уже играющего или только что доигравшего предложения
+            if (this._playingSentenceIndex === this.currentSentenceIndex && this.audioElement.hasAttribute('src')) {
+                if (this.audioElement.paused && !this.audioElement.ended) {
                     this.audioElement.play().catch(() => {});
                 }
                 return;
@@ -1248,9 +1279,15 @@ class VoiceCore {
             }
             const finishedIdx = this.currentSentenceIndex;
             this.log('audioElement ended event for index ' + finishedIdx);
+            this._endingTransition = true;
+            if (this._endedTimer) {
+                clearTimeout(this._endedTimer);
+            }
             // Даём 85 мс на полное опустошение буфера WebAudio компрессора и ресемплера (особенно на скорости 1.5x–2.0x),
             // чтобы гарантированно не проглатывалось последнее слово перед сменой src
-            setTimeout(() => {
+            this._endedTimer = setTimeout(() => {
+                this._endedTimer = null;
+                this._endingTransition = false;
                 if (!this.isPlaying || this._playingSentenceIndex !== finishedIdx || this.currentSentenceIndex !== finishedIdx) {
                     return;
                 }
@@ -1333,6 +1370,11 @@ class VoiceCore {
                     }
                     const nextCacheKey = this.getCacheVoiceKey();
                     if (nextCacheKey !== prevCacheKey && this.sentences.length > 0) {
+                        if (this._endedTimer) {
+                            clearTimeout(this._endedTimer);
+                            this._endedTimer = null;
+                        }
+                        this._endingTransition = false;
                         this.audioBuffers = this.sentences.map(s => this.cache.getSync(nextCacheKey, s) || null);
                         this.currentlyLoading.clear();
                         this.isPrefetching = false;
