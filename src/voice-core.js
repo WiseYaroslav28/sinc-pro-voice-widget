@@ -482,16 +482,46 @@ class VoiceCore {
             return parts;
         };
 
-        const isGemini = this.isGeminiEngine();
-        const maxChunkLen = isGemini ? 560 : 380;
+        const splitByColonIfMultiClause = (sentence) => {
+            if (sentence.length <= 130 || !sentence.includes(': ')) return [sentence];
+            const result = [];
+            let cur = sentence.trim();
+            while (cur.length > 130) {
+                let splitPos = -1;
+                let parenDepth = 0;
+                for (let idx = 0; idx < cur.length - 1; idx++) {
+                    const ch = cur[idx];
+                    if (ch === '(' || ch === '[') parenDepth++;
+                    else if (ch === ')' || ch === ']') parenDepth = Math.max(0, parenDepth - 1);
+                    else if (ch === ':' && cur[idx + 1] === ' ' && parenDepth === 0) {
+                        const beforeLen = idx + 1;
+                        const afterLen = cur.length - (idx + 2);
+                        if (beforeLen >= 24 && afterLen >= 35) {
+                            splitPos = idx + 1; // оставляем двоеточие в конце первой клаузы
+                            break;
+                        }
+                    }
+                }
+                if (splitPos === -1) break;
+                const left = cur.slice(0, splitPos).trim();
+                if (left.length > 0 && /[\p{L}\p{N}]/u.test(left)) result.push(left);
+                cur = cur.slice(splitPos).trim();
+            }
+            if (cur.length > 0 && /[\p{L}\p{N}]/u.test(cur)) result.push(cur);
+            return result;
+        };
+
+        const maxChunkLen = 340;
         const rawClean = [];
         for (let s of rawSentences) {
             s = s.replace(/<DOT>/g, ".");
             s = s.replace(/<ELLIPSIS>/g, "...");
             const trimmed = s.trim();
             if (trimmed.length === 0 || !/[\p{L}\p{N}]/u.test(trimmed)) continue;
-            for (const sub of splitLongSentence(trimmed, maxChunkLen)) {
-                rawClean.push(sub);
+            for (const colonPart of splitByColonIfMultiClause(trimmed)) {
+                for (const sub of splitLongSentence(colonPart, maxChunkLen)) {
+                    rawClean.push(sub);
+                }
             }
         }
 
@@ -516,8 +546,8 @@ class VoiceCore {
         const baseVoiceKey = isLocal 
             ? (this.settings.tts_local_voice || 'ru_RU-dmitri-medium.onnx')
             : isGemini
-                ? `${this.settings.voice || 'gemini:Aoede'}_${this.settings.tts_gemini_model || 'gemini-2.5-flash-native-audio-latest'}_${this.settings.tts_gemini_thinking || 'off'}_pad2`
-                : `${this.settings.voice || 'ru-RU-SvetlanaNeural'}_pad2`;
+                ? `${this.settings.voice || 'gemini:Aoede'}_${this.settings.tts_gemini_model || 'gemini-2.5-flash-native-audio-latest'}_${this.settings.tts_gemini_thinking || 'off'}_pad3`
+                : `${this.settings.voice || 'ru-RU-SvetlanaNeural'}_pad3`;
         return `${baseVoiceKey}${this.settings.expressive !== false ? '' : '_flat'}`;
     }
 
@@ -1357,6 +1387,9 @@ class VoiceCore {
             const sIdx = typeof p.sentenceIndex === 'number' ? p.sentenceIndex : -1;
             if (sIdx < 0 || sIdx >= this.sentences.length) return;
             if (!this._liveStreamBytesByIndex) this._liveStreamBytesByIndex = {};
+            if (p.isFirstChunk) {
+                this._liveStreamBytesByIndex[sIdx] = 0;
+            }
             const chunkBytes = p.pcmBase64 ? Math.floor((p.pcmBase64.length * 3) / 4) : 0;
             this._liveStreamBytesByIndex[sIdx] = (this._liveStreamBytesByIndex[sIdx] || 0) + chunkBytes;
             if (sIdx === this.currentSentenceIndex) {

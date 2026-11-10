@@ -1055,6 +1055,101 @@ async fn connect_gemini_live_ws(
     Ok(ws)
 }
 
+fn extract_alnum_words(s: &str) -> Vec<String> {
+    s.split(|c: char| !c.is_alphanumeric())
+        .map(|w| w.trim().to_lowercase().replace('ё', "е"))
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+fn extract_cyrillic_stems(s: &str) -> Vec<String> {
+    s.split(|c: char| !c.is_alphabetic())
+        .map(|w| w.trim().to_lowercase().replace('ё', "е"))
+        .filter(|w| w.chars().count() >= 4 && w.chars().all(|c| ('\u{0400}'..='\u{04FF}').contains(&c)))
+        .map(|w| w.chars().take(4).collect::<String>())
+        .collect()
+}
+
+fn validate_gemini_live_turn_completeness(
+    clean_text: &str,
+    pcm_bytes: &[u8],
+    transcript: &str,
+) -> Result<(), String> {
+    if pcm_bytes.is_empty() {
+        return Err("Gemini Live API вернул пустой ответ (0 байт)".to_string());
+    }
+
+    // 24 кГц, 16-бит моно = 48000 байт/сек
+    let audio_secs = (pcm_bytes.len() as f32) / 48000.0;
+    let expected_words = extract_alnum_words(clean_text);
+    let word_count = expected_words.len();
+
+    // 1. Проверка минимальной физической длительности аудио для средних и длинных фраз
+    if word_count >= 7 {
+        let min_secs = (word_count as f32) * 0.18;
+        if audio_secs < min_secs {
+            return Err(format!(
+                "Gemini Live API оборвал озвучку слишком рано ({:.1} сек для {} слов)",
+                audio_secs, word_count
+            ));
+        }
+    }
+
+    // 2. Проверка полноты по транскрипции (outputAudioTranscription)
+    let norm_transcript = transcript.to_lowercase().replace('ё', "е");
+    let spoken_words = extract_alnum_words(&norm_transcript);
+    if !spoken_words.is_empty() && word_count >= 7 {
+        if spoken_words.len() * 100 < word_count * 65 {
+            return Err(format!(
+                "Gemini Live API озвучил не весь текст ({} из {} слов)",
+                spoken_words.len(),
+                word_count
+            ));
+        }
+
+        let stems = extract_cyrillic_stems(clean_text);
+        if stems.len() >= 5 {
+            let mut matched = 0usize;
+            let mut consecutive_missed = 0usize;
+            let mut max_consecutive_missed = 0usize;
+
+            for stem in &stems {
+                if norm_transcript.contains(stem.as_str()) {
+                    matched += 1;
+                    consecutive_missed = 0;
+                } else {
+                    consecutive_missed += 1;
+                    if consecutive_missed > max_consecutive_missed {
+                        max_consecutive_missed = consecutive_missed;
+                    }
+                }
+            }
+
+            // Если пропущено более 25% значимых русских слов или 3 слова подряд (выпала клауза)
+            if matched * 100 < stems.len() * 75 || max_consecutive_missed >= 3 {
+                return Err(format!(
+                    "Gemini Live API пропустил часть фразы при чтении (совпало {}/{} опорных слов, подряд пропущено {})",
+                    matched,
+                    stems.len(),
+                    max_consecutive_missed
+                ));
+            }
+
+            // Проверяем, что концовка предложения не была оборвана (хотя бы одно из 2 последних русских слов произнесено)
+            let tail_matched = stems
+                .iter()
+                .rev()
+                .take(2)
+                .any(|stem| norm_transcript.contains(stem.as_str()));
+            if !tail_matched {
+                return Err("Gemini Live API не дочитал концовку предложения".to_string());
+            }
+        }
+    }
+
+    Ok(())
+}
+
 async fn run_gemini_live_ws_turn(
     app_handle: &tauri::AppHandle,
     mut ws: EdgeWsStream,
@@ -1071,7 +1166,7 @@ async fn run_gemini_live_ws_turn(
         )
     } else {
         format!(
-            "Прочитай вслух этот текст полностью без изменений:\n{}",
+            "Прочитай вслух этот текст полностью без изменений и без пропусков слов:\n{}",
             clean_text
         )
     };
@@ -1101,14 +1196,18 @@ async fn run_gemini_live_ws_turn(
 
     let mut pcm_bytes: Vec<u8> = Vec::with_capacity(128 * 1024);
     let mut pending_stream_pcm: Vec<u8> = Vec::with_capacity(24 * 1024);
+    let mut transcript_buf = String::with_capacity(512);
     let mut got_first_chunk = false;
     let mut saw_gen_complete = false;
+    let mut emitted_first_live_chunk = false;
 
     loop {
         let wait_dur = if !got_first_chunk {
-            Duration::from_millis(5000)
+            Duration::from_millis(5500)
+        } else if saw_gen_complete {
+            Duration::from_millis(250)
         } else {
-            if saw_gen_complete { Duration::from_millis(600) } else { Duration::from_millis(2200) }
+            Duration::from_millis(4500)
         };
 
         match tokio::time::timeout(wait_dur, ws.next()).await {
@@ -1121,7 +1220,7 @@ async fn run_gemini_live_ws_turn(
                         None
                     }
                     Message::Close(frame) => {
-                        if !pcm_bytes.is_empty() {
+                        if saw_gen_complete && !pcm_bytes.is_empty() {
                             break;
                         }
                         let reason = frame
@@ -1138,6 +1237,13 @@ async fn run_gemini_live_ws_turn(
                             return Err(format!("Ошибка Gemini Live API: {}", err_obj));
                         }
                         if let Some(sc) = parsed.get("serverContent") {
+                            if let Some(ot_text) = sc
+                                .get("outputTranscription")
+                                .and_then(|ot| ot.get("text"))
+                                .and_then(|t| t.as_str())
+                            {
+                                transcript_buf.push_str(ot_text);
+                            }
                             if let Some(parts) = sc
                                 .get("modelTurn")
                                 .and_then(|mt| mt.get("parts"))
@@ -1159,12 +1265,15 @@ async fn run_gemini_live_ws_turn(
                                                     if pending_stream_pcm.len() >= 10560 {
                                                         let send_len = pending_stream_pcm.len() & !1;
                                                         if send_len > 0 {
+                                                            let is_first = !emitted_first_live_chunk;
+                                                            emitted_first_live_chunk = true;
                                                             let _ = app_handle.emit(
                                                                 "gemini-live-audio-chunk",
                                                                 serde_json::json!({
                                                                     "streamId": stream_id.unwrap_or_default(),
                                                                     "sentenceIndex": sentence_index.unwrap_or(0),
                                                                     "pcmBase64": STANDARD.encode(&pending_stream_pcm[..send_len]),
+                                                                    "isFirstChunk": is_first,
                                                                     "isDone": false
                                                                 }),
                                                             );
@@ -1183,24 +1292,6 @@ async fn run_gemini_live_ws_turn(
                                 saw_gen_complete = true;
                             }
                             if is_turn_complete && !pcm_bytes.is_empty() {
-                                if let (Some(sid), Some(sidx)) = (stream_id, sentence_index) {
-                                    let send_len = pending_stream_pcm.len() & !1;
-                                    let final_b64 = if send_len > 0 {
-                                        STANDARD.encode(&pending_stream_pcm[..send_len])
-                                    } else {
-                                        String::new()
-                                    };
-                                    let _ = app_handle.emit(
-                                        "gemini-live-audio-chunk",
-                                        serde_json::json!({
-                                            "streamId": sid,
-                                            "sentenceIndex": sidx,
-                                            "pcmBase64": final_b64,
-                                            "isDone": true
-                                        }),
-                                    );
-                                    pending_stream_pcm.clear();
-                                }
                                 break;
                             }
                             if is_turn_complete && pcm_bytes.is_empty() {
@@ -1211,28 +1302,32 @@ async fn run_gemini_live_ws_turn(
                 }
             }
             Ok(None) => {
-                if !pcm_bytes.is_empty() {
+                if saw_gen_complete && !pcm_bytes.is_empty() {
                     break;
                 }
                 return Err("Gemini Live WebSocket закрыт сервером во время генерации".to_string());
             }
             Ok(Some(Err(e))) => {
-                if !pcm_bytes.is_empty() {
+                if saw_gen_complete && !pcm_bytes.is_empty() {
                     break;
                 }
                 return Err(format!("Ошибка потока Gemini Live WebSocket: {}", e));
             }
             Err(_) => {
-                if !pcm_bytes.is_empty() {
+                if saw_gen_complete && !pcm_bytes.is_empty() {
                     break;
                 }
                 return Err(format!(
-                    "Таймаут ожидания аудио от Gemini Live API ({} мс)",
-                    wait_dur.as_millis()
+                    "Таймаут ожидания аудио от Gemini Live API ({} мс, получено {} байт до обрыва)",
+                    wait_dur.as_millis(),
+                    pcm_bytes.len()
                 ));
             }
         }
     }
+
+    // Проверяем, что модель озвучила предложение полностью, без пропуска клауз и без обрыва на середине
+    validate_gemini_live_turn_completeness(clean_text, &pcm_bytes, &transcript_buf)?;
 
     if !pcm_bytes.is_empty() && !pending_stream_pcm.is_empty() {
         if let (Some(sid), Some(sidx)) = (stream_id, sentence_index) {
@@ -1242,12 +1337,14 @@ async fn run_gemini_live_ws_turn(
             } else {
                 String::new()
             };
+            let is_first = !emitted_first_live_chunk;
             let _ = app_handle.emit(
                 "gemini-live-audio-chunk",
                 serde_json::json!({
                     "streamId": sid,
                     "sentenceIndex": sidx,
                     "pcmBase64": final_b64,
+                    "isFirstChunk": is_first,
                     "isDone": true
                 }),
             );
@@ -1299,7 +1396,7 @@ async fn speak_gemini_live_tts(
 
     let mut last_err = String::new();
     for (_key_idx, active_key) in keys.iter().enumerate() {
-        for attempt_num in 1..=2 {
+        for attempt_num in 1..=3 {
             let existing_session = if attempt_num == 1 {
                 let mut slot_guard = GEMINI_LIVE_WS_SLOT.lock().await;
                 if let Some(sess) = slot_guard.take() {
