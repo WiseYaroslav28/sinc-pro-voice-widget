@@ -263,15 +263,6 @@ class VoiceCore {
         this._gainNode = null;
         this._compressorNode = null;
         this._sourceNode = null;
-        this._livePcmChunksByIndex = {};
-        this._livePlayingSentenceIndex = -1;
-        this._liveActiveNodes = [];
-        this._liveNextPlayTime = 0;
-        this._livePlayStartCtxTime = 0;
-        this._livePausedElapsedSec = 0;
-        this._liveTotalScheduledSec = 0;
-        this._liveFinishTimer = null;
-        this._liveProgressTimer = null;
         this.applyEffectiveVolume(this.settings.volume);
         
         // Слушатели событий
@@ -608,292 +599,19 @@ class VoiceCore {
             this.updateProgress();
 
             // Если активное предложение загрузилось из кэша и плеер ждёт старта — сразу запускаем озвучку
-            if (this.isPlaying && !this.audioElement.src && this._livePlayingSentenceIndex !== this.currentSentenceIndex && this.audioBuffers[this.currentSentenceIndex] && this.audioBuffers[this.currentSentenceIndex] !== "ERROR") {
+            if (this.isPlaying && !this.audioElement.src && this.audioBuffers[this.currentSentenceIndex] && this.audioBuffers[this.currentSentenceIndex] !== "ERROR") {
                 this.log(`Cache load ready -> triggering playCurrentSentence() for active index ${this.currentSentenceIndex}`);
                 this.playCurrentSentence();
             }
         }
     }
 
-    _stopLiveWebAudio(clearChunks = true) {
-        if (this._liveFinishTimer) {
-            clearTimeout(this._liveFinishTimer);
-            this._liveFinishTimer = null;
-        }
-        if (this._liveProgressTimer) {
-            clearInterval(this._liveProgressTimer);
-            this._liveProgressTimer = null;
-        }
-        if (Array.isArray(this._liveActiveNodes)) {
-            for (const node of this._liveActiveNodes) {
-                try {
-                    node.onended = null;
-                    node.stop();
-                    node.disconnect();
-                } catch (_) {}
-            }
-            this._liveActiveNodes = [];
-        }
-        this._livePlayingSentenceIndex = -1;
-        this._liveNextPlayTime = 0;
-        this._livePlayStartCtxTime = 0;
-        this._livePausedElapsedSec = 0;
-        this._liveTotalScheduledSec = 0;
-        if (clearChunks) {
-            this._livePcmChunksByIndex = {};
-        }
-        if (this._audioCtx && this._audioCtx.state === 'suspended' && this.isPlaying && !this.isPaused) {
-            this._audioCtx.resume().catch(() => {});
-        }
-    }
-
-    _timeStretchPcm24k(samples, speed) {
-        const rate = Math.max(0.5, Math.min(2.0, parseFloat(speed) || 1.0));
-        if (!samples || samples.length === 0 || Math.abs(rate - 1.0) <= 0.04) {
-            return samples;
-        }
-        const outLen = Math.max(1, Math.round(samples.length / rate));
-        const winSize = 480; // 20 мс при 24 кГц
-        const hopOut = 240;  // 10 мс (50% перекрытие Ханна)
-        if (samples.length < winSize * 2) {
-            const out = new Float32Array(outLen);
-            for (let i = 0; i < outLen; i++) {
-                const srcIdx = Math.min(samples.length - 1, Math.floor(i * rate));
-                out[i] = samples[srcIdx];
-            }
-            return out;
-        }
-        const out = new Float32Array(outLen);
-        const norm = new Float32Array(outLen);
-        if (!this._hannWin480) {
-            this._hannWin480 = new Float32Array(winSize);
-            for (let n = 0; n < winSize; n++) {
-                this._hannWin480[n] = 0.5 * (1 - Math.cos((2 * Math.PI * n) / winSize));
-            }
-        }
-        const hann = this._hannWin480;
-        const searchRange = 120;
-        let outPos = 0;
-        let prevInPos = -1;
-        while (outPos + winSize <= outLen) {
-            let idealInPos = Math.round(outPos * rate);
-            if (idealInPos + winSize > samples.length) {
-                idealInPos = samples.length - winSize;
-            }
-            let bestInPos = idealInPos;
-            if (prevInPos >= 0) {
-                const naturalNext = prevInPos + hopOut;
-                if (naturalNext + winSize <= samples.length) {
-                    const minSearch = Math.max(0, idealInPos - searchRange);
-                    const maxSearch = Math.min(samples.length - winSize, idealInPos + searchRange);
-                    let bestCorr = -Infinity;
-                    for (let cand = minSearch; cand <= maxSearch; cand += 4) {
-                        let corr = 0;
-                        for (let k = 0; k < 160; k += 4) {
-                            corr += samples[naturalNext + k] * samples[cand + k];
-                        }
-                        if (corr > bestCorr) {
-                            bestCorr = corr;
-                            bestInPos = cand;
-                        }
-                    }
-                }
-            }
-            for (let n = 0; n < winSize; n++) {
-                const w = hann[n];
-                out[outPos + n] += samples[bestInPos + n] * w;
-                norm[outPos + n] += w;
-            }
-            prevInPos = bestInPos;
-            outPos += hopOut;
-        }
-        for (let i = 0; i < outLen; i++) {
-            if (norm[i] > 0.05) {
-                out[i] /= norm[i];
-            } else {
-                const srcIdx = Math.min(samples.length - 1, Math.floor(i * rate));
-                out[i] = samples[srcIdx];
-            }
-        }
-        return out;
-    }
-
-    _markLiveStreamDone(sIdx) {
-        if (!this._livePcmChunksByIndex || !this._livePcmChunksByIndex[sIdx]) return;
-        this._livePcmChunksByIndex[sIdx].isDone = true;
-        if (sIdx === this.currentSentenceIndex && this.isPlaying && !this.isPaused) {
-            this._pumpLiveWebAudio(sIdx);
-        }
-    }
-
-    _onLiveSentenceEnded(sIdx) {
-        if (!this.isPlaying || this.isPaused || this._livePlayingSentenceIndex !== sIdx || this.currentSentenceIndex !== sIdx) {
-            return;
-        }
-        if (this._audioCtx && this._audioCtx.currentTime + 0.03 < this._liveNextPlayTime) {
-            const waitMoreMs = Math.max(40, Math.round((this._liveNextPlayTime - this._audioCtx.currentTime) * 1000) + 50);
-            this._liveFinishTimer = setTimeout(() => this._onLiveSentenceEnded(sIdx), waitMoreMs);
-            return;
-        }
-        this.log(`Live WebAudio stream finished for sentence ${sIdx}`);
-        if (this._livePcmChunksByIndex) {
-            delete this._livePcmChunksByIndex[sIdx];
-        }
-        this._stopLiveWebAudio(false);
-        this._playingSentenceIndex = -1;
-        this.currentSentenceIndex++;
-        this.playCurrentSentence();
-        this.startPrefetchQueue();
-    }
-
-    _pumpLiveWebAudio(sIdx) {
-        if (!this.isPlaying || this.isPaused || sIdx !== this.currentSentenceIndex) {
-            return;
-        }
-        if (this._playingSentenceIndex === sIdx && this._livePlayingSentenceIndex !== sIdx) {
-            // Это предложение уже воспроизводится через штатный audioElement из кэша/буфера
-            return;
-        }
-        const entry = this._livePcmChunksByIndex && this._livePcmChunksByIndex[sIdx];
-        if (!entry || entry.totalBytes <= 0) {
-            return;
-        }
-
-        const speed = Math.max(0.5, Math.min(2.0, parseFloat(this.settings.speed) || 1.0));
-        // Начинаем живое воспроизведение, как только накопилось ~1.4 сек PCM (67200 байт при 24 кГц 16-бит моно)
-        // либо сразу, если короткое предложение уже полностью пришло (isDone = true)
-        const minStartBytes = speed <= 1.05 ? 67200 : Math.round(67200 * Math.pow(speed, 1.3));
-        if (this._livePlayingSentenceIndex !== sIdx) {
-            if (!entry.isDone && entry.totalBytes < minStartBytes) {
-                return;
-            }
-            if (!this.ensureAudioBoostGraph() || !this._audioCtx) {
-                return;
-            }
-            this.audioElement.pause();
-            this.audioElement.removeAttribute('src');
-            this.applyEffectiveVolume(this.settings.volume !== undefined ? this.settings.volume : 1.0);
-
-            this._livePlayingSentenceIndex = sIdx;
-            this._playingSentenceIndex = sIdx;
-            this._liveNextPlayTime = this._audioCtx.currentTime + 0.02;
-            this._livePlayStartCtxTime = this._liveNextPlayTime;
-            this._livePausedElapsedSec = 0;
-            this._liveTotalScheduledSec = 0;
-
-            const wasPrebuffering = this.isPrebuffering;
-            this.isPrebuffering = false;
-            this._initialBufferCompleted = true;
-            this._forceBypassBuffer = false;
-            this._rebufferTargetIndex = -1;
-            this.notifyState();
-            if (wasPrebuffering) {
-                this.broadcastState('play', { isPrebuffering: false });
-            }
-            if (window.__TAURI__) {
-                window.__TAURI__.event.emit('tts-playing-started');
-            }
-            if (this.onSentenceActive) {
-                this.onSentenceActive(sIdx);
-            }
-            if (!this._liveProgressTimer) {
-                this._liveProgressTimer = setInterval(() => {
-                    if (this._livePlayingSentenceIndex !== -1 && this.isPlaying && !this.isPaused) {
-                        this.updateProgress();
-                    }
-                }, 140);
-            }
-            this.log(`Started Live WebAudio streaming playback for sentence ${sIdx} (buffered=${(entry.totalBytes / 48000).toFixed(2)}s, isDone=${entry.isDone})`);
-        }
-
-        if (entry.unscheduledChunks.length > 0 && this._audioCtx) {
-            let totalChunkBytes = 0;
-            for (const c of entry.unscheduledChunks) {
-                totalChunkBytes += c.byteLength;
-            }
-            totalChunkBytes &= ~1;
-            if (totalChunkBytes > 0) {
-                const merged = new Uint8Array(totalChunkBytes);
-                let offset = 0;
-                for (const c of entry.unscheduledChunks) {
-                    const copyLen = Math.min(c.byteLength, totalChunkBytes - offset);
-                    if (copyLen > 0) {
-                        merged.set(c.subarray(0, copyLen), offset);
-                        offset += copyLen;
-                    }
-                }
-                entry.unscheduledChunks = [];
-                entry.scheduledBytes += totalChunkBytes;
-
-                const numSamples = totalChunkBytes >> 1;
-                const view = new DataView(merged.buffer, merged.byteOffset, totalChunkBytes);
-                let floatSamples = new Float32Array(numSamples);
-                for (let k = 0; k < numSamples; k++) {
-                    floatSamples[k] = view.getInt16(k * 2, true) / 32768.0;
-                }
-                floatSamples = this._timeStretchPcm24k(floatSamples, speed);
-
-                const audioBuf = this._audioCtx.createBuffer(1, floatSamples.length, 24000);
-                audioBuf.getChannelData(0).set(floatSamples);
-
-                const srcNode = this._audioCtx.createBufferSource();
-                srcNode.buffer = audioBuf;
-                const targetNode = this._compressorNode || this._gainNode || this._audioCtx.destination;
-                srcNode.connect(targetNode);
-
-                const startAt = Math.max(this._audioCtx.currentTime + 0.012, this._liveNextPlayTime);
-                srcNode.start(startAt);
-                this._liveNextPlayTime = startAt + audioBuf.duration;
-                this._liveTotalScheduledSec += audioBuf.duration;
-
-                this._liveActiveNodes.push(srcNode);
-                srcNode.onended = () => {
-                    const idx = this._liveActiveNodes.indexOf(srcNode);
-                    if (idx !== -1) this._liveActiveNodes.splice(idx, 1);
-                };
-            }
-        }
-
-        if (entry.isDone && this._audioCtx) {
-            if (this._liveFinishTimer) {
-                clearTimeout(this._liveFinishTimer);
-                this._liveFinishTimer = null;
-            }
-            const remainingMs = Math.max(0, (this._liveNextPlayTime - this._audioCtx.currentTime) * 1000);
-            const waitMs = Math.round(remainingMs + 320);
-            this._liveFinishTimer = setTimeout(() => {
-                this._onLiveSentenceEnded(sIdx);
-            }, waitMs);
-        }
-    }
-
-    getCurrentSentenceProgress() {
-        if (this._livePlayingSentenceIndex === this.currentSentenceIndex && this._audioCtx) {
-            const elapsed = this.isPaused
-                ? (this._livePausedElapsedSec || 0)
-                : Math.max(0, this._audioCtx.currentTime - (this._livePlayStartCtxTime || this._audioCtx.currentTime));
-            const entry = this._livePcmChunksByIndex && this._livePcmChunksByIndex[this.currentSentenceIndex];
-            const sLen = this.sentences[this.currentSentenceIndex] ? this.sentences[this.currentSentenceIndex].length : 0;
-            const speed = Math.max(0.5, Math.min(2.0, parseFloat(this.settings.speed) || 1.0));
-            const estTotalSec = (entry && entry.isDone && this._liveTotalScheduledSec > 0)
-                ? this._liveTotalScheduledSec
-                : Math.max((this._liveTotalScheduledSec || 0) + 0.5, ((sLen * 3600) / 48000) / speed);
-            return Math.min(0.99, Math.max(0, elapsed / Math.max(0.4, estTotalSec)));
-        }
-        if (this.audioElement && this.audioElement.duration && !isNaN(this.audioElement.duration)) {
-            return Math.min(1, Math.max(0, this.audioElement.currentTime / this.audioElement.duration));
-        }
-        return 0;
-    }
-
     getStartBufferStatus() {
         if (!this.sentences || this.sentences.length === 0 || this.currentSentenceIndex >= this.sentences.length) {
             return { loadedChars: 0, targetChars: 0, allLoaded: true, isReady: true, neededSentencesCount: 0 };
         }
-        const isGemini = this.isGeminiEngine();
         const rawLimit = parseInt(this.settings.startBufferChars, 10);
-        // Для Gemini Live API отключаем предварительную буферизацию по символам (поток сразу после генерации первой фразы)
-        const limitChars = isGemini ? 0 : (isNaN(rawLimit) ? 300 : Math.max(0, rawLimit));
+        const limitChars = isNaN(rawLimit) ? 300 : Math.max(0, rawLimit);
 
         let totalRemainingChars = 0;
         let allRemainingLoaded = true;
@@ -926,10 +644,8 @@ class VoiceCore {
             }
         }
 
-        const isLivePlayingCurrent = (this._livePlayingSentenceIndex === this.currentSentenceIndex);
-        const firstReady = isLivePlayingCurrent || !!(this.audioBuffers[this.currentSentenceIndex] && this.audioBuffers[this.currentSentenceIndex].startsWith('data:'));
+        const firstReady = !!(this.audioBuffers[this.currentSentenceIndex] && this.audioBuffers[this.currentSentenceIndex].startsWith('data:'));
         const isReady = firstReady && (
-            isGemini ||
             this._forceBypassBuffer ||
             this._initialBufferCompleted ||
             targetChars <= 0 ||
@@ -947,13 +663,11 @@ class VoiceCore {
     }
 
     preparePlayback() {
-        this._stopLiveWebAudio(true);
         this.audioElement.pause();
         this.audioElement.removeAttribute('src');
         this._playingSentenceIndex = -1;
         this.isPrefetching = false;
-        const isGemini = this.isGeminiEngine();
-        const limitChars = isGemini ? 0 : Math.max(0, parseInt(this.settings.startBufferChars ?? 300, 10) || 0);
+        const limitChars = Math.max(0, parseInt(this.settings.startBufferChars ?? 300, 10) || 0);
         this.isPrebuffering = limitChars > 0;
         this._prebufferCompleted = false;
         this._initialBufferCompleted = false;
@@ -1004,7 +718,6 @@ class VoiceCore {
         }
 
         if (autoPlay) {
-            this._stopLiveWebAudio(true);
             this.audioElement.pause();
             this.audioElement.removeAttribute('src');
             this.currentlyLoading.clear();
@@ -1137,15 +850,6 @@ class VoiceCore {
                             this._liveStreamSeconds = 0;
                             // Сохраняем в RAM и 3-дневную базу IndexedDB
                             this.cache.set(cacheVoiceKey, this.sentences[i], dataUrl).catch(() => {});
-
-                            if (this._livePlayingSentenceIndex === i) {
-                                // Предложение уже проигрывается вживую через WebAudio — помечаем поток завершённым,
-                                // чтобы по окончании воспроизведения плавно перейти к следующему предложению
-                                this._markLiveStreamDone(i);
-                            } else if (this._livePcmChunksByIndex && this._livePcmChunksByIndex[i]) {
-                                delete this._livePcmChunksByIndex[i];
-                            }
-
                             this.updateProgress();
                             
                             // Проверяем готовность к старту или возобновлению после накопления буфера
@@ -1174,12 +878,6 @@ class VoiceCore {
             }
             this.log(`Prefetch error at index ${i} after all retries: ${err}`);
             if (this.audioBuffers === currentBuffersRef) {
-                if (this._livePlayingSentenceIndex === i) {
-                    this._stopLiveWebAudio(false);
-                }
-                if (this._livePcmChunksByIndex && this._livePcmChunksByIndex[i]) {
-                    delete this._livePcmChunksByIndex[i];
-                }
                 if (!this._retryCountByIndex) this._retryCountByIndex = {};
                 this._retryCountByIndex[i] = (this._retryCountByIndex[i] || 0) + 1;
                 // Если это фоновая предзагрузка и число полных циклов повтора <= 2,
@@ -1293,7 +991,6 @@ class VoiceCore {
     seek(index) {
         if (index >= 0 && index < this.sentences.length) {
             this.log(`seek() called to index ${index}`);
-            this._stopLiveWebAudio(true);
             this.currentSentenceIndex = index;
             this._playingSentenceIndex = -1;
             this._initialBufferCompleted = false;
@@ -1357,31 +1054,6 @@ class VoiceCore {
         this.isPaused = false;
         this._rebufferTargetIndex = -1;
 
-        if (this._livePlayingSentenceIndex === this.currentSentenceIndex && this._audioCtx) {
-            this.isPrebuffering = false;
-            this._initialBufferCompleted = true;
-            this.notifyState();
-            if (window.__TAURI__) {
-                window.__TAURI__.event.emit('tts-playing-started');
-            }
-            if (shouldBroadcast) {
-                this.broadcastState('play', { isPrebuffering: false });
-            }
-            this.log('play() -> resuming Live WebAudio stream');
-            await this._audioCtx.resume().catch(() => {});
-            this._livePlayStartCtxTime = this._audioCtx.currentTime - (this._livePausedElapsedSec || 0);
-            this.applyEffectiveVolume(this.settings.volume !== undefined ? this.settings.volume : 1.0);
-            if (!this._liveProgressTimer) {
-                this._liveProgressTimer = setInterval(() => {
-                    if (this._livePlayingSentenceIndex !== -1 && this.isPlaying && !this.isPaused) {
-                        this.updateProgress();
-                    }
-                }, 140);
-            }
-            this._pumpLiveWebAudio(this.currentSentenceIndex);
-            return;
-        }
-
         const hasSrc = this.audioElement.hasAttribute('src');
         const ended = this.audioElement.ended;
         const paused = this.audioElement.paused;
@@ -1427,18 +1099,6 @@ class VoiceCore {
     }
 
     pause(shouldBroadcast = true) {
-        if (this._livePlayingSentenceIndex !== -1 && this._audioCtx) {
-            if (this._liveFinishTimer) {
-                clearTimeout(this._liveFinishTimer);
-                this._liveFinishTimer = null;
-            }
-            if (this._liveProgressTimer) {
-                clearInterval(this._liveProgressTimer);
-                this._liveProgressTimer = null;
-            }
-            this._livePausedElapsedSec = Math.max(0, this._audioCtx.currentTime - (this._livePlayStartCtxTime || this._audioCtx.currentTime));
-            this._audioCtx.suspend().catch(() => {});
-        }
         this.isPlaying = false;
         this.isPaused = true;
         this.isPrebuffering = false;
@@ -1450,7 +1110,6 @@ class VoiceCore {
     }
 
     stop(shouldBroadcast = true) {
-        this._stopLiveWebAudio(true);
         this.isPlaying = false;
         this.isPaused = false;
         this.isPrebuffering = false;
@@ -1492,26 +1151,9 @@ class VoiceCore {
             this.onSentenceActive(this.currentSentenceIndex);
         }
 
-        if (this._livePlayingSentenceIndex === this.currentSentenceIndex) {
-            this.isPrebuffering = false;
-            this._pumpLiveWebAudio(this.currentSentenceIndex);
-            this.startPrefetchQueue();
-            this.updateProgress();
-            return;
-        }
-
         const currentBuf = this.audioBuffers[this.currentSentenceIndex];
         const bufferState = currentBuf ? (currentBuf === 'ERROR' ? 'ERROR' : 'READY') : 'NULL';
         this.log('playCurrentSentence() bufferState=' + bufferState);
-
-        if ((!currentBuf || !currentBuf.startsWith("data:")) && this.isGeminiEngine()) {
-            this._pumpLiveWebAudio(this.currentSentenceIndex);
-            if (this._livePlayingSentenceIndex === this.currentSentenceIndex) {
-                this.startPrefetchQueue();
-                this.updateProgress();
-                return;
-            }
-        }
 
         if (currentBuf === "ERROR") {
             // Если ошибка произошла только что после всех попыток — переходим дальше;
@@ -1691,7 +1333,6 @@ class VoiceCore {
                     }
                     const nextCacheKey = this.getCacheVoiceKey();
                     if (nextCacheKey !== prevCacheKey && this.sentences.length > 0) {
-                        this._stopLiveWebAudio(true);
                         this.audioBuffers = this.sentences.map(s => this.cache.getSync(nextCacheKey, s) || null);
                         this.currentlyLoading.clear();
                         this.isPrefetching = false;
@@ -1741,59 +1382,15 @@ class VoiceCore {
             if (!p || !p.streamId || !String(p.streamId).startsWith(`${this.instanceId}_${this.currentQueueId}_`)) return;
             const sIdx = typeof p.sentenceIndex === 'number' ? p.sentenceIndex : -1;
             if (sIdx < 0 || sIdx >= this.sentences.length) return;
-            // Если полный WAV для этого предложения уже получен и не играет через Live WebAudio — игнорируем запоздавший чанк
-            if (this.audioBuffers[sIdx] && typeof this.audioBuffers[sIdx] === 'string' && this.audioBuffers[sIdx].startsWith('data:') && this._livePlayingSentenceIndex !== sIdx) {
-                return;
-            }
             if (!this._liveStreamBytesByIndex) this._liveStreamBytesByIndex = {};
-            if (!this._livePcmChunksByIndex) this._livePcmChunksByIndex = {};
-
-            if (p.isFirstChunk || !this._livePcmChunksByIndex[sIdx] || this._livePcmChunksByIndex[sIdx].streamId !== p.streamId) {
-                const prevScheduled = (this._livePlayingSentenceIndex === sIdx && this._livePcmChunksByIndex[sIdx])
-                    ? (this._livePcmChunksByIndex[sIdx].scheduledBytes || 0)
-                    : 0;
+            if (p.isFirstChunk) {
                 this._liveStreamBytesByIndex[sIdx] = 0;
-                this._livePcmChunksByIndex[sIdx] = {
-                    unscheduledChunks: [],
-                    totalBytes: 0,
-                    scheduledBytes: prevScheduled,
-                    isDone: false,
-                    streamId: p.streamId
-                };
             }
-
-            const entry = this._livePcmChunksByIndex[sIdx];
-            if (p.pcmBase64 && p.pcmBase64.length > 0) {
-                try {
-                    const binStr = atob(p.pcmBase64);
-                    const rawLen = binStr.length & ~1;
-                    if (rawLen > 0) {
-                        const prevTotal = entry.totalBytes;
-                        entry.totalBytes += rawLen;
-                        this._liveStreamBytesByIndex[sIdx] = entry.totalBytes;
-                        if (entry.totalBytes > entry.scheduledBytes) {
-                            const skipBytes = Math.max(0, (entry.scheduledBytes - prevTotal) & ~1);
-                            const keepLen = rawLen - skipBytes;
-                            if (keepLen > 0) {
-                                const pcmChunk = new Uint8Array(keepLen);
-                                for (let k = 0; k < keepLen; k++) {
-                                    pcmChunk[k] = binStr.charCodeAt(skipBytes + k);
-                                }
-                                entry.unscheduledChunks.push(pcmChunk);
-                            }
-                        }
-                    }
-                } catch (_) {}
-            }
-
-            if (p.isDone) {
-                entry.isDone = true;
-            }
-
+            const chunkBytes = p.pcmBase64 ? Math.floor((p.pcmBase64.length * 3) / 4) : 0;
+            this._liveStreamBytesByIndex[sIdx] = (this._liveStreamBytesByIndex[sIdx] || 0) + chunkBytes;
             if (sIdx === this.currentSentenceIndex) {
                 // 24 кГц 16-бит моно = 48000 байт/сек
-                this._liveStreamSeconds = (this._liveStreamBytesByIndex[sIdx] || 0) / 48000;
-                this._pumpLiveWebAudio(sIdx);
+                this._liveStreamSeconds = this._liveStreamBytesByIndex[sIdx] / 48000;
             }
             this.updateProgress();
         });
@@ -1835,12 +1432,17 @@ class VoiceCore {
 
         if (totalChars === 0) return;
 
+        const percentBuffered = Math.min(100, (bufferedChars / totalChars) * 100);
+        
         let currentSentenceChars = this.sentences[this.currentSentenceIndex] ? this.sentences[this.currentSentenceIndex].length : 0;
-        const currentAudioProgress = this.getCurrentSentenceProgress();
+        let currentAudioProgress = 0;
+        
+        if (this.audioElement.duration && !isNaN(this.audioElement.duration)) {
+            currentAudioProgress = this.audioElement.currentTime / this.audioElement.duration;
+        }
 
         const playedChars = playedCharsBeforeCurrent + (currentSentenceChars * currentAudioProgress);
         const percentPlayed = Math.min(100, (playedChars / totalChars) * 100);
-        const percentBuffered = Math.min(100, Math.max(percentPlayed, (bufferedChars / totalChars) * 100));
         const bufStatus = this.getStartBufferStatus();
 
         if (this.onProgress) {
