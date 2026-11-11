@@ -855,13 +855,34 @@ fn normalize_text_for_gemini_live(raw_text: &str) -> String {
         }
     }
 
+    // Заменяем все двоеточия (кроме времени вида 12:30 между цифрами) на запятую с паузой,
+    // включая слитные конструкции без пробела ("ключ:значение", "заголовок:")
+    let no_emoji_chars: Vec<char> = no_emoji.chars().collect();
+    let mut colon_cleaned = String::with_capacity(no_emoji.len() + 8);
+    for idx in 0..no_emoji_chars.len() {
+        let ch = no_emoji_chars[idx];
+        if ch == ':' {
+            let prev_digit = idx > 0 && no_emoji_chars[idx - 1].is_ascii_digit();
+            let next_digit = idx + 1 < no_emoji_chars.len() && no_emoji_chars[idx + 1].is_ascii_digit();
+            if prev_digit && next_digit {
+                colon_cleaned.push(':');
+            } else {
+                colon_cleaned.push_str(", ");
+            }
+        } else {
+            colon_cleaned.push(ch);
+        }
+    }
+
     // Заменяем скобки на запятые (чтобы модель не считала текст в скобках вроде "(15 слов)" сценической ремаркой и не пропускала его),
-    // а также заменяем спецсимволы (%, ~, +, ×, кавычки, тире, двоеточия) на читаемые слова и естественные паузы
-    let mut s = expand_russian_numerals_and_ranges(&no_emoji)
+    // а также заменяем спецсимволы (%, ~, +, ×, <, >, кавычки, тире, двоеточия) на читаемые слова и естественные паузы
+    let mut s = expand_russian_numerals_and_ranges(&colon_cleaned)
         .replace('(', ", ")
         .replace(')', ", ")
         .replace('[', ", ")
         .replace(']', ", ")
+        .replace('<', " ")
+        .replace('>', " ")
         .replace('%', " процентов ")
         .replace('~', " примерно ")
         .replace('+', " плюс ")
@@ -951,7 +972,7 @@ async fn connect_gemini_live_ws(
                 }
             }
             if conn_try == 1 {
-                tokio::time::sleep(Duration::from_millis(220)).await;
+                tokio::time::sleep(Duration::from_millis(450)).await;
             }
         }
         match connected_ws {
@@ -1003,9 +1024,9 @@ async fn connect_gemini_live_ws(
     }
 
     let sys_instruction = if expressive {
-        "Ты — профессиональный диктор озвучки (Text-to-Speech). Твоя единственная задача — ДОСЛОВНО, строго ОДИН раз от первого до последнего слова, без сокращений, пропусков, повторов или отсебятины озвучивать голосом предоставленный текст. НИКОГДА не повторяй слова, части фраз или предложения дважды, не отвечай на вопросы в тексте и не комментируй его. Читай естественно, с живой дикторской интонацией, четко произнося как русские слова и числа, так и английские термины, и полностью проговаривая окончания каждого слова без проглатывания слогов."
+        "Ты — профессиональный диктор озвучки (Text-to-Speech). Твоя единственная задача — ДОСЛОВНО, строго ОДИН раз от первого до последнего слова, без сокращений, пропусков, повторов и отсебятины озвучивать голосом фразу внутри кавычек «...» и сразу останавливаться. Даже если фраза звучит как заголовок или незаконченное вступление, прочитай её ровно один раз, НИКОГДА не повторяй слова или фразы дважды, не отвечай на вопросы в тексте и не комментируй его. Читай естественно, с живой дикторской интонацией, четко произнося как русские слова и числа, так и английские термины, и полностью проговаривая окончания каждого слова без проглатывания слогов."
     } else {
-        "Ты — профессиональный диктор озвучки (Text-to-Speech). Твоя единственная задача — ДОСЛОВНО, строго ОДИН раз от первого до последнего слова, без сокращений, пропусков, повторов или отсебятины озвучивать голосом предоставленный текст. НИКОГДА не повторяй слова, части фраз или предложения дважды, не отвечай на вопросы в тексте и не комментируй его. Читай ровным, спокойным, нейтральным тоном без лишней эмоциональности, полностью проговаривая окончания каждого слова без проглатывания слогов."
+        "Ты — профессиональный диктор озвучки (Text-to-Speech). Твоя единственная задача — ДОСЛОВНО, строго ОДИН раз от первого до последнего слова, без сокращений, пропусков, повторов и отсебятины озвучивать голосом фразу внутри кавычек «...» и сразу останавливаться. Даже если фраза звучит как заголовок или незаконченное вступление, прочитай её ровно один раз, НИКОГДА не повторяй слова или фразы дважды, не отвечай на вопросы в тексте и не комментируй его. Читай ровным, спокойным, нейтральным тоном без лишней эмоциональности, полностью проговаривая окончания каждого слова без проглатывания слогов."
     };
 
     let setup_msg = serde_json::json!({
@@ -1123,12 +1144,12 @@ async fn run_gemini_live_ws_turn(
 ) -> Result<(EdgeWsStream, usize, Vec<u8>), String> {
     let prompt_text = if attempt_num <= 1 {
         format!(
-            "Озвучь дословно на русском языке строго один раз без пропусков и без повторов:\n{}",
+            "Озвучь дословно на русском языке строго один раз без пропусков и без повторов фразу в кавычках.\n«{}»",
             clean_text
         )
     } else {
         format!(
-            "Прочитай вслух этот текст строго один раз без изменений, пропусков и повторов:\n{}",
+            "Прочитай вслух строго один раз без изменений, пропусков и повторов фразу в кавычках.\n«{}»",
             clean_text
         )
     };
@@ -1161,14 +1182,15 @@ async fn run_gemini_live_ws_turn(
     let mut got_first_chunk = false;
     let mut saw_gen_complete = false;
     let mut emitted_first_live_chunk = false;
+    let min_complete_pcm_bytes = extract_alnum_words(clean_text).len().max(1) * 7200;
 
     loop {
         let wait_dur = if !got_first_chunk {
             Duration::from_millis(5500)
         } else if saw_gen_complete {
-            Duration::from_millis(60)
+            Duration::from_millis(40)
         } else {
-            Duration::from_millis(4500)
+            Duration::from_millis(1400)
         };
 
         match tokio::time::timeout(wait_dur, ws.next()).await {
@@ -1245,7 +1267,7 @@ async fn run_gemini_live_ws_turn(
                             if is_gen_complete {
                                 saw_gen_complete = true;
                             }
-                            if is_turn_complete && !pcm_bytes.is_empty() {
+                            if (is_gen_complete || is_turn_complete) && !pcm_bytes.is_empty() {
                                 break;
                             }
                             if is_turn_complete && pcm_bytes.is_empty() {
@@ -1268,7 +1290,9 @@ async fn run_gemini_live_ws_turn(
                 return Err(format!("Ошибка потока Gemini Live WebSocket: {}", e));
             }
             Err(_) => {
-                if saw_gen_complete && !pcm_bytes.is_empty() {
+                if (saw_gen_complete && !pcm_bytes.is_empty())
+                    || (got_first_chunk && pcm_bytes.len() >= min_complete_pcm_bytes)
+                {
                     break;
                 }
                 return Err(format!(
@@ -1350,9 +1374,11 @@ async fn speak_gemini_live_tts(
 
     let mut last_err = String::new();
     for (_key_idx, active_key) in keys.iter().enumerate() {
+        let mut prev_was_reused = false;
         for attempt_num in 1..=2 {
             if attempt_num > 1 {
-                tokio::time::sleep(Duration::from_millis(220)).await;
+                let backoff_ms = if prev_was_reused { 120 } else { 450 };
+                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
             }
             let existing_session = if attempt_num == 1 {
                 let mut slot_guard = GEMINI_LIVE_WS_SLOT.lock().await;
@@ -1387,40 +1413,36 @@ async fn speak_gemini_live_tts(
             };
 
             if attempt_num == 1 {
-                // Заранее в фоне открываем и инициализируем (setupComplete) резервный WebSocket-сокет для следующей фразы
-                // (основной сокет к этому моменту уже подключён, поэтому параллельного столкновения TLS нет)
+                prev_was_reused = was_reused;
+                // Заранее в фоне открываем резервный WebSocket-сокет для следующей фразы с безопасной задержкой
+                // (320 мс при переиспользовании / 750 мс после холодного подключения) и без цикла повторов,
+                // чтобы исключить параллельный шторм TLS-рукопожатий (unexpected EOF during handshake).
                 let bg_key = active_key.clone();
                 let bg_model = model.clone();
                 let bg_voice = gemini_voice.clone();
                 let bg_thinking = thinking.clone();
-                let delay_ms = if was_reused { 20 } else { 50 };
+                let delay_ms = if was_reused { 320 } else { 750 };
                 tokio::spawn(async move {
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                    for bg_attempt in 1..=2 {
-                        {
-                            let guard = GEMINI_LIVE_WS_SLOT.lock().await;
-                            if guard.is_some() {
-                                return;
-                            }
-                        }
-                        if let Ok(standby_ws) = connect_gemini_live_ws(&bg_key, &bg_model, &bg_voice, &bg_thinking, expressive).await {
-                            let mut guard = GEMINI_LIVE_WS_SLOT.lock().await;
-                            if guard.is_none() {
-                                *guard = Some(PersistentGeminiLiveWs {
-                                    ws: standby_ws,
-                                    api_key: bg_key,
-                                    model: bg_model,
-                                    voice: bg_voice,
-                                    thinking: bg_thinking,
-                                    expressive,
-                                    last_used: Instant::now(),
-                                    turns_count: 0,
-                                });
-                            }
+                    {
+                        let guard = GEMINI_LIVE_WS_SLOT.lock().await;
+                        if guard.is_some() {
                             return;
                         }
-                        if bg_attempt == 1 {
-                            tokio::time::sleep(Duration::from_millis(250)).await;
+                    }
+                    if let Ok(standby_ws) = connect_gemini_live_ws(&bg_key, &bg_model, &bg_voice, &bg_thinking, expressive).await {
+                        let mut guard = GEMINI_LIVE_WS_SLOT.lock().await;
+                        if guard.is_none() {
+                            *guard = Some(PersistentGeminiLiveWs {
+                                ws: standby_ws,
+                                api_key: bg_key,
+                                model: bg_model,
+                                voice: bg_voice,
+                                thinking: bg_thinking,
+                                expressive,
+                                last_used: Instant::now(),
+                                turns_count: 0,
+                            });
                         }
                     }
                 });

@@ -191,6 +191,7 @@ class VoiceCore {
         this._forceBypassBuffer = false;
         this._endingTransition = false;
         this._endedTimer = null;
+        this._failedSentenceIndices = new Set();
         this.currentlyLoading = new Set(); // Набор индексов предложений, находящихся в процессе загрузки
         this.lastNetworkRequestTime = 0; // Время завершения последнего сетевого запроса к Edge TTS
         this.isNetworkFetching = false; // Флаг активного сетевого запроса к Edge TTS
@@ -462,7 +463,10 @@ class VoiceCore {
                 const dashIdx = Math.max(punctSlice.lastIndexOf(' — '), punctSlice.lastIndexOf(' – '), punctSlice.lastIndexOf(' - '));
                 const colonIdx = punctSlice.lastIndexOf(': ');
                 const commaIdx = punctSlice.lastIndexOf(', ');
-                const punctMatch = Math.max(dashIdx, colonIdx, commaIdx);
+                let punctMatch = Math.max(dashIdx, commaIdx);
+                if (punctMatch < 35) {
+                    punctMatch = colonIdx;
+                }
                 let splitIdx = -1;
                 if (punctMatch >= 35) {
                     splitIdx = punctMatch + (punctSlice[punctMatch] === ' ' ? 3 : 1);
@@ -484,35 +488,6 @@ class VoiceCore {
             return parts;
         };
 
-        const splitByColonIfMultiClause = (sentence) => {
-            if (sentence.length <= 130 || !sentence.includes(': ')) return [sentence];
-            const result = [];
-            let cur = sentence.trim();
-            while (cur.length > 130) {
-                let splitPos = -1;
-                let parenDepth = 0;
-                for (let idx = 0; idx < cur.length - 1; idx++) {
-                    const ch = cur[idx];
-                    if (ch === '(' || ch === '[') parenDepth++;
-                    else if (ch === ')' || ch === ']') parenDepth = Math.max(0, parenDepth - 1);
-                    else if (ch === ':' && cur[idx + 1] === ' ' && parenDepth === 0) {
-                        const beforeLen = idx + 1;
-                        const afterLen = cur.length - (idx + 2);
-                        if (beforeLen >= 24 && afterLen >= 35) {
-                            splitPos = idx + 1; // оставляем двоеточие в конце первой клаузы
-                            break;
-                        }
-                    }
-                }
-                if (splitPos === -1) break;
-                const left = cur.slice(0, splitPos).trim();
-                if (left.length > 0 && /[\p{L}\p{N}]/u.test(left)) result.push(left);
-                cur = cur.slice(splitPos).trim();
-            }
-            if (cur.length > 0 && /[\p{L}\p{N}]/u.test(cur)) result.push(cur);
-            return result;
-        };
-
         const maxChunkLen = 340;
         const rawClean = [];
         for (let s of rawSentences) {
@@ -520,19 +495,25 @@ class VoiceCore {
             s = s.replace(/<ELLIPSIS>/g, "...");
             const trimmed = s.trim();
             if (trimmed.length === 0 || !/[\p{L}\p{N}]/u.test(trimmed)) continue;
-            for (const colonPart of splitByColonIfMultiClause(trimmed)) {
-                for (const sub of splitLongSentence(colonPart, maxChunkLen)) {
-                    rawClean.push(sub);
-                }
+            // Не разрываем обычные предложения по двоеточию (": "), чтобы не создавать искусственные
+            // незавершённые обрывки на ":" и лишние сетевые запросы
+            for (const sub of splitLongSentence(trimmed, maxChunkLen)) {
+                rawClean.push(sub);
             }
         }
 
-        // Не склеиваем полноценные предложения друг с другом (чтобы подсветка всегда шла строго по предложениям),
-        // объединяем только одиночные короткие маркеры списков (< 12 симв., например "1." или "Шаг 1:") со следующим предложением.
+        // Объединяем короткие маркеры списков (< 12 симв., например "1.") и короткие вводные заголовки на ":"
+        // (<= 85 симв.) со следующим основным предложением (если следующее само не является заголовком на ":"),
+        // чтобы диктор читал вступление и суть слитно, без катафорических пауз и зависаний на ":".
         const finalSentences = [];
         for (let i = 0; i < rawClean.length; i++) {
             let cur = rawClean[i];
-            while (cur.length < 12 && i + 1 < rawClean.length) {
+            while (
+                i + 1 < rawClean.length && (
+                    cur.length < 12 ||
+                    (cur.endsWith(':') && cur.length <= 85 && !rawClean[i + 1].endsWith(':') && (cur.length + 1 + rawClean[i + 1].length) <= maxChunkLen)
+                )
+            ) {
                 i++;
                 cur += " " + rawClean[i];
             }
@@ -548,7 +529,7 @@ class VoiceCore {
         const baseVoiceKey = isLocal 
             ? (this.settings.tts_local_voice || 'ru_RU-dmitri-medium.onnx')
             : isGemini
-                ? `${this.settings.voice || 'gemini:Aoede'}_${this.settings.tts_gemini_model || 'gemini-2.5-flash-native-audio-latest'}_${this.settings.tts_gemini_thinking || 'off'}_pad4`
+                ? `${this.settings.voice || 'gemini:Aoede'}_${this.settings.tts_gemini_model || 'gemini-2.5-flash-native-audio-latest'}_${this.settings.tts_gemini_thinking || 'off'}_pad5`
                 : `${this.settings.voice || 'ru-RU-SvetlanaNeural'}_pad3`;
         return `${baseVoiceKey}${this.settings.expressive !== false ? '' : '_flat'}`;
     }
@@ -681,6 +662,7 @@ class VoiceCore {
         this._forceBypassBuffer = false;
         this._liveStreamBytesByIndex = {};
         this._liveStreamSeconds = 0;
+        this._failedSentenceIndices = new Set();
         this.currentQueueId = null;
         this.currentlyLoading.clear();
         this.currentText = "";
@@ -751,6 +733,7 @@ class VoiceCore {
         });
         this.audioDurations = new Array(this.sentences.length).fill(0);
         this._retryCountByIndex = {};
+        this._failedSentenceIndices = new Set();
         this._liveStreamBytesByIndex = {};
         this._liveStreamSeconds = 0;
         this.currentSentenceIndex = 0;
@@ -827,7 +810,7 @@ class VoiceCore {
             }
 
             if (window.__TAURI__) {
-                const maxAttempts = 3;
+                const maxAttempts = 2;
                 let lastErr = null;
 
                 for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -856,6 +839,9 @@ class VoiceCore {
                             const mime = base64Audio.startsWith('UklGR') ? 'audio/wav' : 'audio/mp3';
                             const dataUrl = `data:${mime};base64,${base64Audio}`;
                             this.audioBuffers[i] = dataUrl;
+                            if (this._failedSentenceIndices) {
+                                this._failedSentenceIndices.delete(i);
+                            }
                             if (this._liveStreamBytesByIndex) {
                                 delete this._liveStreamBytesByIndex[i];
                             }
@@ -876,7 +862,7 @@ class VoiceCore {
                         lastErr = err;
                         this.log(`Attempt ${attempt}/${maxAttempts} failed for sentence ${i}: ${err}`);
                         if (attempt < maxAttempts && i >= this.currentSentenceIndex) {
-                            await new Promise(r => setTimeout(r, 150));
+                            await new Promise(r => setTimeout(r, 400 * attempt));
                         }
                     }
                 }
@@ -892,17 +878,17 @@ class VoiceCore {
             if (this.audioBuffers === currentBuffersRef) {
                 if (!this._retryCountByIndex) this._retryCountByIndex = {};
                 this._retryCountByIndex[i] = (this._retryCountByIndex[i] || 0) + 1;
-                // Если это фоновая предзагрузка и число полных циклов повтора <= 2,
-                // НЕ помечаем предложение как "ERROR" и не перепрыгиваем через него,
-                // чтобы строго последовательный воркер докачал именно его без образования «дырок» на шкале.
-                if (i > this.currentSentenceIndex && this._retryCountByIndex[i] <= 2) {
+                // Если это фоновая предзагрузка, делаем не более 1 мягкого повторного цикла с паузой 650 мс,
+                // чтобы не создавать шторм десятков TLS-рукопожатий подряд при кратковременной сетевой просадке.
+                if (i > this.currentSentenceIndex && this._retryCountByIndex[i] <= 1) {
                     this.audioBuffers[i] = null;
-                    await new Promise(r => setTimeout(r, 300));
+                    await new Promise(r => setTimeout(r, 650));
                     return;
                 }
                 if (window.showToast) window.showToast("Ошибка TTS: " + err, true);
                 this.audioBuffers[i] = "ERROR";
-                this._lastFailedSentenceIndex = i;
+                if (!this._failedSentenceIndices) this._failedSentenceIndices = new Set();
+                this._failedSentenceIndices.add(i);
                 this.updateProgress();
                 
                 if (this.isPlaying && this.currentSentenceIndex === i) {
@@ -1014,6 +1000,9 @@ class VoiceCore {
             this._forceBypassBuffer = false;
             this.isPrebuffering = false;
             this._rebufferTargetIndex = -1;
+            if (this._failedSentenceIndices) {
+                this._failedSentenceIndices.delete(index);
+            }
             if (this.audioBuffers[index] === "ERROR") {
                 this.audioBuffers[index] = null;
             }
@@ -1152,6 +1141,9 @@ class VoiceCore {
         this.audioElement.removeAttribute('src'); // Правильное удаление ресурса
         this.currentSentenceIndex = 0; // Сброс позиции к началу, но сохраняем уже скачанные audioBuffers в памяти!
         this.currentlyLoading.clear();
+        if (this._failedSentenceIndices) {
+            this._failedSentenceIndices.clear();
+        }
         this.notifyState();
         if (this.sentences.length > 0) {
             this.updateProgress();
@@ -1187,10 +1179,10 @@ class VoiceCore {
         this.log('playCurrentSentence() bufferState=' + bufferState);
 
         if (currentBuf === "ERROR") {
-            // Если ошибка произошла только что после всех попыток — переходим дальше;
-            // иначе сбрасываем статус ошибки и пробуем догрузить предложение заново
-            if (this._lastFailedSentenceIndex === this.currentSentenceIndex) {
-                this._lastFailedSentenceIndex = -1;
+            // Если предложение уже упало в текущей сессии после всех попыток — переходим дальше,
+            // не застревая в повторном цикле перезагрузки при нескольких упавших фразах подряд
+            if (this._failedSentenceIndices && this._failedSentenceIndices.has(this.currentSentenceIndex)) {
+                this._failedSentenceIndices.delete(this.currentSentenceIndex);
                 this.currentSentenceIndex++;
                 this._playingSentenceIndex = -1;
                 this.playCurrentSentence();
@@ -1375,6 +1367,9 @@ class VoiceCore {
                             this._endedTimer = null;
                         }
                         this._endingTransition = false;
+                        if (this._failedSentenceIndices) {
+                            this._failedSentenceIndices.clear();
+                        }
                         this.audioBuffers = this.sentences.map(s => this.cache.getSync(nextCacheKey, s) || null);
                         this.currentlyLoading.clear();
                         this.isPrefetching = false;
