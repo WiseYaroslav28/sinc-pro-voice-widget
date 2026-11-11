@@ -431,22 +431,35 @@ class VoiceCore {
         processed = processed.replace(/([а-яё]{2,}[.!?])([А-ЯЁ][а-яё])/g, "$1 $2");
         processed = processed.replace(/([а-яё]{2,}[:;])([А-ЯЁ][а-яё])/g, "$1 $2");
 
-        // Защищаем числа (3.3)
+        // Защищаем многоточия в первую очередь, чтобы не спутать их с точками сокращений
+        processed = processed.replace(/\.\.\./g, "<ELLIPSIS>");
+
+        // Защищаем дробные и составные числа (3.3, 10.1, 3.5.51) — в цикле для многоточечных версий
         processed = processed.replace(/(\d)\.(\d)/g, "$1<DOT>$2");
-        // Защищаем нумерацию списков (1., 2., Приём А., Пункт Б.)
+        processed = processed.replace(/(\d)\.(\d)/g, "$1<DOT>$2");
+
+        // Защищаем нумерацию списков (1., 2.)
         processed = processed.replace(/(^\s*\d+)\./gm, "$1<DOT>");
         processed = processed.replace(/(\s\d+)\./g, "$1<DOT>");
-        processed = processed.replace(/(\b[А-ЯЁA-Z])\.\s+/g, "$1<DOT> ");
-        // Защищаем аббревиатуры
-        processed = processed.replace(/т\.к\./gi, "т<DOT>к<DOT>");
-        processed = processed.replace(/т\.д\./gi, "т<DOT>д<DOT>");
-        processed = processed.replace(/т\.е\./gi, "т<DOT>е<DOT>");
-        processed = processed.replace(/т\.п\./gi, "т<DOT>п<DOT>");
-        processed = processed.replace(/г\./gi, "г<DOT>");
-        processed = processed.replace(/ул\./gi, "ул<DOT>");
-        processed = processed.replace(/пр\./gi, "пр<DOT>");
-        // Защищаем многоточия
-        processed = processed.replace(/\.\.\./g, "<ELLIPSIS>");
+
+        // Защищаем двойные/тройные инициалы (С.С., С. С., Ф.И.О.) и одиночные инициалы/литеры списков (А. Пушкин, Пункт Б.)
+        // с проверкой границы слова (?<![\p{L}\p{N}]), чтобы не затрагивать аббревиатуры в конце предложения (РФ., ФИО.)
+        processed = processed.replace(/(?<![\p{L}\p{N}])([А-ЯЁA-Z])\.\s*([А-ЯЁA-Z])\.(?:\s*([А-ЯЁA-Z])\.)?/gu, (_, a, b, c) =>
+            c ? `${a}<DOT> ${b}<DOT> ${c}<DOT>` : `${a}<DOT>${b}<DOT>`
+        );
+        processed = processed.replace(/(?<![\p{L}\p{N}])([А-ЯЁA-Z])\.(?=\s+[\p{L}\p{N}«"(])/gu, "$1<DOT>");
+
+        // Защищаем составные русские сокращения (т.к., т.е., т.д., т.п., в т.ч., т.н.) с учётом границ слов
+        processed = processed.replace(/(?<![\p{L}\p{N}])([тт])\.(\s*)([ккеечн])\./giu, "$1<DOT>$2$3<DOT>");
+        processed = processed.replace(/(?<![\p{L}\p{N}])([тт])\.(\s*)([дп])\.(?!\s+[А-ЯЁ])/giu, "$1<DOT>$2$3<DOT>");
+
+        // Защищаем юридические, документальные и адресные сокращения перед числами/названиями (ст. 12, ст. 10.1, п. 5, ч. 2, гл. 3, ул., пр., им., см., др. и др.)
+        processed = processed.replace(/(?<![\p{L}\p{N}])(ст|п|пп|ч|гл|разд|подразд|абз|прим|прил|рис|табл|стр|кв|корп|д|с|в|вв)\.(?=\s*(?:\d|[№§]))/giu, "$1<DOT>");
+        processed = processed.replace(/(?<![\p{L}\p{N}])(ул|пр|пр-т|пер|пл|обл|р-н|им|см|ср|напр|ок|прибл|мин|макс|сек|руб|коп|тыс|млн|млрд|трлн)\.(?!\s+[А-ЯЁ][а-яё]+\s+[а-яё])/giu, "$1<DOT>");
+        processed = processed.replace(/(?<![\p{L}\p{N}])(др|пр)\.(?!\s+[А-ЯЁ])/giu, "$1<DOT>");
+        // "г." / "гг.": защищаем "г. Москва" и "(2025 г.)", но не склеиваем конец предложения "в 2025 г. Сегодня..."
+        processed = processed.replace(/(?<![\p{L}\p{N}])(г|гг)\.(?!\s+[А-ЯЁ])/giu, "$1<DOT>");
+        processed = processed.replace(/(?<!\d\s*)(?<![\p{L}\p{N}])г\.(?=\s+[А-ЯЁ])/giu, "г<DOT>");
 
         // Разбиваем по концам предложений (. ! ?), по точке с запятой (;), И по всем переносам строк (\n+)
         let rawSentences = processed.split(/(?<=[.!?])\s+|(?<=;)\s+|\n+/u);
@@ -529,7 +542,7 @@ class VoiceCore {
         const baseVoiceKey = isLocal 
             ? (this.settings.tts_local_voice || 'ru_RU-dmitri-medium.onnx')
             : isGemini
-                ? `${this.settings.voice || 'gemini:Aoede'}_${this.settings.tts_gemini_model || 'gemini-2.5-flash-native-audio-latest'}_${this.settings.tts_gemini_thinking || 'off'}_pad5`
+                ? `${this.settings.voice || 'gemini:Aoede'}_${this.settings.tts_gemini_model || 'gemini-2.5-flash-native-audio-latest'}_${this.settings.tts_gemini_thinking || 'off'}_pad6`
                 : `${this.settings.voice || 'ru-RU-SvetlanaNeural'}_pad3`;
         return `${baseVoiceKey}${this.settings.expressive !== false ? '' : '_flat'}`;
     }
