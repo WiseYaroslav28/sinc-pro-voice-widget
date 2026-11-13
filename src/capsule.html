@@ -383,6 +383,25 @@
         opacity: 1 !important;
         transform: scale(1.1) !important;
       }
+
+      /* Активный якорь вставки текста (📌) */
+      #btn-anchor.anchor-active {
+        border-color: #f59e0b !important;
+        color: #fbbf24 !important;
+        box-shadow: 0 0 14px rgba(245, 158, 11, 0.45), 0 4px 12px rgba(0, 0, 0, 0.45) !important;
+      }
+      #btn-anchor.anchor-active .anchor-btn-icon {
+        font-variation-settings: 'FILL' 1 !important;
+        transform: rotate(35deg);
+      }
+      #anchor-active-dot.visible {
+        opacity: 1 !important;
+      }
+      #state-idle.anchor-active > div {
+        background-color: rgba(245, 158, 11, 0.78) !important;
+        border-color: rgba(251, 191, 36, 0.95) !important;
+        box-shadow: 0 0 10px rgba(245, 158, 11, 0.65);
+      }
     </style>
   </head>
 
@@ -423,6 +442,14 @@
               <span class="material-symbols-outlined text-[18px]" style="font-variation-settings: 'FILL' 0;">history</span>
             </button>
             <div class="absolute -bottom-2 w-1 h-1 rounded-full bg-[#3b82f6] opacity-0 group-hover:opacity-100 transition-opacity" style="box-shadow: 0 0 5px #3b82f6;"></div>
+          </div>
+
+          <!-- Кнопка Якоря вставки (перетаскивание или клик / Alt+A) -->
+          <div class="relative group flex flex-col items-center">
+            <button class="w-10 h-10 rounded-full bg-[#1b1b25] border border-[#35343a] flex items-center justify-center text-[#e4e1e9] hover:text-[#fbbf24] hover:border-[#f59e0b] transition-all shadow-lg active:scale-90 gpu-layer" id="btn-anchor" style="background-color: #1b1b25; border: 1px solid #35343a; cursor: grab;" title="Якорь вставки текста (Alt+A)&#10;Перетащите на поле ввода или нажмите для закрепления">
+              <span class="material-symbols-outlined text-[18px] anchor-btn-icon" style="font-variation-settings: 'FILL' 0; transition: transform 0.2s ease;">push_pin</span>
+            </button>
+            <div class="absolute -bottom-2 w-1 h-1 rounded-full bg-[#f59e0b] opacity-0 group-hover:opacity-100 transition-opacity" id="anchor-active-dot" style="box-shadow: 0 0 6px #f59e0b;"></div>
           </div>
         </div>
       </div>
@@ -564,6 +591,8 @@
       const btnHoverPresets = document.getElementById('btn-hover-presets');
       const hoverPresetsMenu = document.getElementById('hover-presets-menu');
       const btnOpenJournal = document.getElementById('btn-open-journal');
+      const btnAnchor = document.getElementById('btn-anchor');
+      const anchorActiveDot = document.getElementById('anchor-active-dot');
       
       const btnActiveSend = document.getElementById('btn-active-send');
       const btnActiveCancel = document.getElementById('btn-active-cancel');
@@ -1282,11 +1311,11 @@
             // Тонкая полоска покоя (w-16 h-1.5) с небольшим запасом для удобного наведения
             addBottomCenteredRect(76, 18, 4, 9);
           } else if (st === 'hover') {
-            // 3 круглые кнопки в ряд (без внешней тени)
-            addBottomCenteredRect(156, 48, 6, 24);
+            // 4 круглые кнопки в ряд (без внешней тени)
+            addBottomCenteredRect(208, 48, 6, 24);
           } else if (st === 'hover-fan') {
-            // 3 круглые кнопки + веер пресетов над ними
-            addBottomCenteredRect(156, 48, 6, 24);
+            // 4 круглые кнопки + веер пресетов над ними
+            addBottomCenteredRect(208, 48, 6, 24);
             addBottomCenteredRect(188, 102, 46, 16);
           } else if (st === 'sending') {
             // Компактный Orb (48x48) + крестик отмены сверху справа
@@ -1700,14 +1729,15 @@
         customPromptText = "";
         isSending = false;
 
-        // Пробуем авто-вставить в предыдущий фокус ДО звука успеха
+        // Пробуем авто-вставить в закреплённый якорь / окно старта записи / текущий курсор ДО звука успеха
         let pasted = false;
+        let invokeThrew = false;
         try {
           if (invoke) {
-            await invoke('paste_text', { text: resultText });
-            pasted = true;
+            pasted = !!(await invoke('paste_text', { text: resultText }));
           }
         } catch (e) {
+          invokeThrew = true;
           console.warn('Авто-вставка не удалась:', e);
         }
 
@@ -1718,9 +1748,11 @@
         setTimeout(() => {
           switchState('idle');
           if (pasted) {
-            showToast('Готово! Текст вставлен.', false);
+            showToast(anchorActive ? '📌 Вставлено в закреплённый якорь!' : 'Готово! Текст вставлен.', false);
+          } else if (!invokeThrew && invoke) {
+            showToast('Окно ввода недоступно — результат открыт в отдельном окне.', false);
           } else {
-            // Показываем popup для ручного копирования/редактирования
+            // Фоллбэк-popup внутри капсулы при исключении IPC
             showResultPopup(resultText);
           }
         }, 1500);
@@ -1901,8 +1933,53 @@
       // TAURI — инициализация и события
       // ======================================================================
 
+      // ======================================================================
+      // ЯКОРЬ ВСТАВКИ ТЕКСТА (📌)
+      // ======================================================================
+      let anchorActive = false;
+
+      function syncAnchorCapsuleUI(state) {
+        anchorActive = !!(state && state.active);
+        const label = state && (state.window_title || state.app_name)
+          ? (state.window_title || state.app_name)
+          : '';
+        if (btnAnchor) {
+          btnAnchor.classList.toggle('anchor-active', anchorActive);
+          btnAnchor.title = anchorActive
+            ? `📌 Якорь активен: ${label}\nНажмите, чтобы снять | Перетащите, чтобы перенести`
+            : 'Якорь вставки текста (Alt+A)\nПеретащите на поле ввода или нажмите для закрепления';
+        }
+        if (anchorActiveDot) {
+          anchorActiveDot.classList.toggle('visible', anchorActive);
+        }
+        if (stateIdle) {
+          stateIdle.classList.toggle('anchor-active', anchorActive);
+        }
+      }
+
+      if (btnAnchor) {
+        btnAnchor.addEventListener('mousedown', (e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          e.stopPropagation();
+          if (invoke) {
+            invoke('start_anchor_pin_drag', { fromBeacon: false }).catch(() => {});
+          }
+        });
+      }
+
       if (window.__TAURI__) {
         const { invoke } = window.__TAURI__.core;
+        invoke('get_anchor_state').then(syncAnchorCapsuleUI).catch(() => {});
+        window.__TAURI__.event.listen('anchor-state-changed', (event) => {
+          syncAnchorCapsuleUI(event.payload || {});
+        });
+        window.__TAURI__.event.listen('anchor-toast', (event) => {
+          const payload = event.payload || {};
+          if (payload.message) {
+            showToast(payload.message, !!payload.is_error);
+          }
+        });
         
         function syncPersistentCapsuleState(config) {
           if (config.capsule_preset) {

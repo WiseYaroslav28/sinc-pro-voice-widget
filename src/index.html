@@ -770,6 +770,14 @@
 
                 <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
                   <div>
+                    <div class="text-[#e4e1e9] font-medium">Якорь вставки текста (закрепить / снять поле ввода)</div>
+                    <div class="text-[11px] text-[#ccc3d8]/60">Фиксирует окно ввода замочком 📌 — диктовка вставляется туда даже при работе в других окнах</div>
+                  </div>
+                  <button data-hotkey-field="hotkey_anchor" class="hotkey-recorder-btn bg-[#1b1b20] hover:bg-[#25232d] border border-[#4a4455]/40 hover:border-[#d2bbff] text-[#d2bbff] px-3 py-1.5 rounded-lg font-mono font-semibold text-[11px] transition-all cursor-pointer min-w-[140px] text-center">Alt+A</button>
+                </div>
+
+                <div class="flex justify-between items-center py-2 border-b border-[#4a4455]/10">
+                  <div>
                     <div class="text-[#e4e1e9] font-medium">Озвучить выделенный текст (TTS)</div>
                     <div class="text-[11px] text-[#ccc3d8]/60">Скопировать выделенный текст и сразу начать чтение вслух</div>
                   </div>
@@ -1150,6 +1158,7 @@
       const DEFAULT_HOTKEYS = {
         hotkey_record: 'Ctrl+Win',
         hotkey_force_send: 'Ctrl+Shift+Space',
+        hotkey_anchor: 'Alt+A',
         hotkey_tts_read: 'Ctrl+Shift',
         hotkey_tts_translate: 'Ctrl+Alt',
         hotkey_tts_append: 'Ctrl+Tab',
@@ -1197,13 +1206,14 @@
 
         // 3. Тултипы тумблеров в шапке дашборда
         const recKey = currentHotkeys.hotkey_record || 'Ctrl+Win';
+        const anchorKey = currentHotkeys.hotkey_anchor || 'Alt+A';
         const ttsReadKey = currentHotkeys.hotkey_tts_read || 'Ctrl+Shift';
         const ttsTransKey = currentHotkeys.hotkey_tts_translate || 'Ctrl+Alt';
         const ttsAppKey = currentHotkeys.hotkey_tts_append || 'Ctrl+Tab';
         const ocrKey = currentHotkeys.hotkey_ocr || 'Alt+Q';
         const layKey = currentHotkeys.hotkey_layout_convert || 'Ctrl+Pause';
 
-        const capTip = `Голосовой ввод и транскрибация\nУдерживайте ${recKey} для диктовки\n${recKey}+Alt — ввод с ИИ-промптом`;
+        const capTip = `Голосовой ввод и транскрибация\nУдерживайте ${recKey} для диктовки\n${recKey}+Alt — ввод с ИИ-промптом\n${anchorKey} — закрепить якорь вставки`;
         const widTip = `Озвучка выделенного текста\n${ttsReadKey} — озвучить выделенное\n${ttsTransKey} — перевести и озвучить\n${ttsAppKey} — добавить в очередь`;
         const ocrTip = `Перевод и захват текста с экрана\n${ocrKey} — выделить область экрана`;
         const layTip = `Автоматическая смена раскладки (${layKey})\n0: Выключено\n1: Только хоткеи\n2: Автозамена на лету`;
@@ -1258,6 +1268,7 @@
             currentHotkeys = {
               hotkey_record: config.hotkey_record || DEFAULT_HOTKEYS.hotkey_record,
               hotkey_force_send: config.hotkey_force_send || DEFAULT_HOTKEYS.hotkey_force_send,
+              hotkey_anchor: config.hotkey_anchor || DEFAULT_HOTKEYS.hotkey_anchor,
               hotkey_tts_read: config.hotkey_tts_read || DEFAULT_HOTKEYS.hotkey_tts_read,
               hotkey_tts_translate: config.hotkey_tts_translate || DEFAULT_HOTKEYS.hotkey_tts_translate,
               hotkey_tts_append: config.hotkey_tts_append || DEFAULT_HOTKEYS.hotkey_tts_append,
@@ -1430,6 +1441,7 @@
             layout_hotkey_key: legacyKey,
             hotkey_record: currentHotkeys.hotkey_record,
             hotkey_force_send: currentHotkeys.hotkey_force_send,
+            hotkey_anchor: currentHotkeys.hotkey_anchor,
             hotkey_tts_read: currentHotkeys.hotkey_tts_read,
             hotkey_tts_translate: currentHotkeys.hotkey_tts_translate,
             hotkey_tts_append: currentHotkeys.hotkey_tts_append,
@@ -3985,13 +3997,13 @@
             console.error("Failed to load app version:", err);
             const versionDisplay = document.getElementById('app-version-display');
             if (versionDisplay) {
-              versionDisplay.textContent = `Текущая версия: 3.5.51`;
+              versionDisplay.textContent = `Текущая версия: 3.5.52`;
             }
           });
         } else {
           const versionDisplay = document.getElementById('app-version-display');
           if (versionDisplay) {
-            versionDisplay.textContent = `Текущая версия: 3.5.51 (Mock)`;
+            versionDisplay.textContent = `Текущая версия: 3.5.52 (Mock)`;
           }
         }
 

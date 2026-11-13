@@ -2323,6 +2323,7 @@ static SHIFT_PRESSED: AtomicBool = AtomicBool::new(false);
 static SHORTCUT_ACTIVE: AtomicBool = AtomicBool::new(false);
 static RECORD_HOTKEY_ACTIVE: AtomicBool = AtomicBool::new(false);
 static FORCE_SEND_ACTIVE: AtomicBool = AtomicBool::new(false);
+static ANCHOR_HOTKEY_ACTIVE: AtomicBool = AtomicBool::new(false);
 static RECORDING_OR_PAUSED: AtomicBool = AtomicBool::new(false);
 static CAPSULE_ENABLED: AtomicU8 = AtomicU8::new(2);
 static WIDGET_ENABLED: AtomicU8 = AtomicU8::new(2);
@@ -2353,6 +2354,7 @@ static HOTKEY_OCR_SPEC: std::sync::atomic::AtomicU32 = std::sync::atomic::Atomic
 static HOTKEY_LAYOUT_CONVERT_SPEC: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(MOD_BIT_CTRL | 0x13); // Ctrl+Pause
 static HOTKEY_LAYOUT_UNDO_SPEC: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(MOD_BIT_SHIFT | 0x08); // Shift+Backspace
 static HOTKEY_LAYOUT_EXCLUDE_SPEC: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(MOD_BIT_CTRL | MOD_BIT_ALT | MOD_BIT_SHIFT | 0x58); // Ctrl+Alt+Shift+X
+static HOTKEY_ANCHOR_SPEC: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(MOD_BIT_ALT | 0x41); // Alt+A
 
 lazy_static::lazy_static! {
     static ref CACHED_FG_PROCESS: Mutex<(isize, Option<String>)> = Mutex::new((0, None));
@@ -4198,10 +4200,35 @@ unsafe extern "system" fn low_level_keyboard_proc(
             }
         }
 
-        // 6. Обработка хоткеев Капсулы (Запись: Ctrl+Win, Принудительная отправка: Win+Alt)
+        // 6. Обработка хоткеев Капсулы (Запись: Ctrl+Win, Принудительная отправка: Win+Alt, Якорь: Alt+A)
         if CAPSULE_ENABLED.load(Ordering::Relaxed) > 0 {
             let record_spec = HOTKEY_RECORD_SPEC.load(Ordering::Relaxed);
             let force_send_spec = HOTKEY_FORCE_SEND_SPEC.load(Ordering::Relaxed);
+            let anchor_spec = HOTKEY_ANCHOR_SPEC.load(Ordering::Relaxed);
+
+            if matches_any_hotkey(anchor_spec, mods, vk, is_key_down, state_changed) {
+                // Не перехватываем хоткей в окне настроек (чтобы его можно было перезаписать), если якорь сейчас не стоит
+                let skip_for_settings = is_own_process_foreground() && !is_anchor_currently_active();
+                if !skip_for_settings {
+                    if !ANCHOR_HOTKEY_ACTIVE.swap(true, Ordering::SeqCst) {
+                        if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                            let app_clone = app.clone();
+                            std::thread::spawn(move || {
+                                let _ = toggle_anchor_hotkey(app_clone);
+                            });
+                        }
+                    }
+                    if (anchor_spec & 0xFFFF) != 0 {
+                        return 1;
+                    }
+                }
+            } else if ANCHOR_HOTKEY_ACTIVE.load(Ordering::Relaxed) {
+                let req_mods = anchor_spec & MOD_MASK;
+                let req_vk = anchor_spec & 0xFFFF;
+                if (mods & req_mods) != req_mods || (!is_key_down && req_vk != 0 && vk == req_vk) {
+                    ANCHOR_HOTKEY_ACTIVE.store(false, Ordering::SeqCst);
+                }
+            }
 
             if matches_any_hotkey(force_send_spec, mods, vk, is_key_down, state_changed) {
                 if !FORCE_SEND_ACTIVE.swap(true, Ordering::SeqCst) {
@@ -4219,6 +4246,9 @@ unsafe extern "system" fn low_level_keyboard_proc(
 
             if matches_any_hotkey(record_spec, mods, vk, is_key_down, state_changed) {
                 if !RECORD_HOTKEY_ACTIVE.swap(true, Ordering::SeqCst) {
+                    if !RECORDING_OR_PAUSED.load(Ordering::Relaxed) {
+                        capture_recording_start_target_now();
+                    }
                     if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
                         let _ = app.emit("global-shortcut-pressed", ());
                     }
@@ -4621,11 +4651,13 @@ pub struct AppConfig {
     #[serde(default = "default_layout_hotkey_key")]
     pub layout_hotkey_key: String,
 
-    // Все 9 настраиваемых глобальных комбинаций клавиш
+    // Настраиваемые глобальные комбинации клавиш
     #[serde(default = "default_hotkey_record")]
     pub hotkey_record: String,
     #[serde(default = "default_hotkey_force_send")]
     pub hotkey_force_send: String,
+    #[serde(default = "default_hotkey_anchor")]
+    pub hotkey_anchor: String,
     #[serde(default = "default_hotkey_tts_read")]
     pub hotkey_tts_read: String,
     #[serde(default = "default_hotkey_tts_translate")]
@@ -4694,6 +4726,7 @@ impl Default for AppConfig {
             layout_hotkey_key: "Pause".to_string(),
             hotkey_record: default_hotkey_record(),
             hotkey_force_send: default_hotkey_force_send(),
+            hotkey_anchor: default_hotkey_anchor(),
             hotkey_tts_read: default_hotkey_tts_read(),
             hotkey_tts_translate: default_hotkey_tts_translate(),
             hotkey_tts_append: default_hotkey_tts_append(),
@@ -4827,6 +4860,9 @@ fn default_hotkey_record() -> String {
 fn default_hotkey_force_send() -> String {
     "Win+Alt".to_string()
 }
+fn default_hotkey_anchor() -> String {
+    "Alt+A".to_string()
+}
 fn default_hotkey_tts_read() -> String {
     "Ctrl+Shift".to_string()
 }
@@ -4949,6 +4985,9 @@ fn sync_layout_config(config: &AppConfig) {
 
     let send_spec = parse_hotkey_spec(&config.hotkey_force_send);
     if send_spec != 0 { HOTKEY_FORCE_SEND_SPEC.store(send_spec, Ordering::SeqCst); }
+
+    let anchor_spec = parse_hotkey_spec(&config.hotkey_anchor);
+    if anchor_spec != 0 { HOTKEY_ANCHOR_SPEC.store(anchor_spec, Ordering::SeqCst); }
 
     let read_spec = parse_hotkey_spec(&config.hotkey_tts_read);
     if read_spec != 0 { HOTKEY_TTS_READ_SPEC.store(read_spec, Ordering::SeqCst); }
@@ -5201,6 +5240,9 @@ async fn update_config_fields(app_handle: tauri::AppHandle, fields: serde_json::
         }
         if let Some(val) = obj.get("hotkey_force_send") {
             if let Some(s) = val.as_str() { config.hotkey_force_send = s.to_string(); }
+        }
+        if let Some(val) = obj.get("hotkey_anchor") {
+            if let Some(s) = val.as_str() { config.hotkey_anchor = s.to_string(); }
         }
         if let Some(val) = obj.get("hotkey_tts_read") {
             if let Some(s) = val.as_str() { config.hotkey_tts_read = s.to_string(); }
@@ -5981,6 +6023,9 @@ static RECORDING_FILE: std::sync::LazyLock<Mutex<Option<String>>> =
 
 #[tauri::command]
 fn start_recording_session(app_handle: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    capture_recording_start_target_if_needed();
+
     let app_data_dir = app_handle
         .path()
         .app_data_dir()
@@ -10751,7 +10796,7 @@ fn set_ignore_cursor_events(window: tauri::Window, ignore: bool) -> Result<(), S
     #[cfg(target_os = "windows")]
     {
         let label = window.label();
-        if label == "widget" || label == "capsule" {
+        if label == "widget" || label == "capsule" || label == "anchor" {
             use raw_window_handle::{HasWindowHandle, RawWindowHandle};
             if let Ok(handle) = window.window_handle() {
                 if let RawWindowHandle::Win32(win_handle) = handle.as_raw() {
@@ -11004,33 +11049,1148 @@ async fn start_custom_drag(
     Ok(())
 }
 
+// ============================================================================
+// УМНЫЙ ЗАХВАТ ОКНА СТАРТА ЗАПИСИ И ЯКОРЬ ВСТАВКИ (📌)
+// ============================================================================
+
+#[derive(Clone, Debug)]
+struct TargetWindowInfo {
+    root_hwnd: isize,
+    focus_hwnd: isize,
+    process_id: u32,
+    app_name: String,
+    window_title: String,
+    badge_offset_x: i32,
+    badge_offset_y: i32,
+    badge_from_right: bool,
+    badge_from_bottom: bool,
+    drop_click_offset: Option<(i32, i32, bool, bool)>,
+    captured_at: std::time::Instant,
+}
+
+static ANCHOR_DRAG_ACTIVE: AtomicBool = AtomicBool::new(false);
+static ANCHOR_NEEDS_REFOCUS_CLICK: AtomicBool = AtomicBool::new(false);
+
+lazy_static::lazy_static! {
+    static ref ANCHOR_STATE: Mutex<Option<TargetWindowInfo>> = Mutex::new(None);
+    static ref RECORDING_START_TARGET: Mutex<Option<TargetWindowInfo>> = Mutex::new(None);
+    static ref LAST_EXTERNAL_FG: Mutex<Option<(isize, isize, u32)>> = Mutex::new(None);
+    // (win_x, win_y, w_phys, h_phys, visible, occluded)
+    static ref ANCHOR_LAST_GEOM: Mutex<(i32, i32, i32, i32, bool, bool)> = Mutex::new((0, 0, 0, 0, false, false));
+}
+
+fn compute_edge_offset(
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+    pt_x: i32,
+    pt_y: i32,
+) -> (i32, i32, bool, bool) {
+    let w = (right - left).max(1);
+    let h = (bottom - top).max(1);
+    let from_right = (pt_x - left) > (w / 2);
+    let from_bottom = (pt_y - top) > (h / 2);
+    let off_x = if from_right { right - pt_x } else { pt_x - left };
+    let off_y = if from_bottom { bottom - pt_y } else { pt_y - top };
+    (off_x, off_y, from_right, from_bottom)
+}
+
+fn resolve_edge_offset(
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+    off_x: i32,
+    off_y: i32,
+    from_right: bool,
+    from_bottom: bool,
+    margin: i32,
+) -> (i32, i32) {
+    let raw_x = if from_right { right - off_x } else { left + off_x };
+    let raw_y = if from_bottom { bottom - off_y } else { top + off_y };
+    let min_x = left + margin;
+    let max_x = right - margin;
+    let min_y = top + margin;
+    let max_y = bottom - margin;
+    let x = if min_x <= max_x { raw_x.clamp(min_x, max_x) } else { left + (right - left) / 2 };
+    let y = if min_y <= max_y { raw_y.clamp(min_y, max_y) } else { top + (bottom - top) / 2 };
+    (x, y)
+}
+
+fn is_anchor_currently_active() -> bool {
+    ANCHOR_STATE.lock().map(|g| g.is_some()).unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn is_own_process_hwnd(hwnd: isize) -> bool {
+    if hwnd == 0 {
+        return false;
+    }
+    use winapi::um::processthreadsapi::GetCurrentProcessId;
+    use winapi::um::winuser::GetWindowThreadProcessId;
+    unsafe {
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd as _, &mut pid);
+        pid != 0 && pid == GetCurrentProcessId()
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_own_process_hwnd(_hwnd: isize) -> bool {
+    false
+}
+
+#[cfg(target_os = "windows")]
+fn is_own_process_foreground() -> bool {
+    use winapi::um::winuser::GetForegroundWindow;
+    let fg = unsafe { GetForegroundWindow() as isize };
+    is_own_process_hwnd(fg)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_own_process_foreground() -> bool {
+    false
+}
+
+#[cfg(target_os = "windows")]
+fn get_hwnd_pid(hwnd: isize) -> u32 {
+    if hwnd == 0 {
+        return 0;
+    }
+    use winapi::um::winuser::GetWindowThreadProcessId;
+    unsafe {
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd as _, &mut pid);
+        pid
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn get_hwnd_class_lower(hwnd: isize) -> String {
+    if hwnd == 0 {
+        return String::new();
+    }
+    use winapi::um::winuser::GetClassNameW;
+    let mut buf = [0u16; 256];
+    let len = unsafe { GetClassNameW(hwnd as _, buf.as_mut_ptr(), 256) };
+    if len > 0 {
+        String::from_utf16_lossy(&buf[..len as usize]).to_lowercase()
+    } else {
+        String::new()
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn is_shell_or_desktop_class(class_lower: &str) -> bool {
+    class_lower.contains("progman")
+        || class_lower.contains("workerw")
+        || class_lower.contains("shell_traywnd")
+        || class_lower.contains("shell_secondarytraywnd")
+        || class_lower.contains("notifyiconoverflowwindow")
+        || class_lower.contains("multitaskingviewframe")
+}
+
+#[cfg(target_os = "windows")]
+fn is_hwnd_insertable(hwnd: isize) -> bool {
+    if hwnd == 0 {
+        return false;
+    }
+    use winapi::um::winuser::{GetAncestor, IsWindow};
+    unsafe {
+        if IsWindow(hwnd as _) == 0 {
+            return false;
+        }
+        if is_own_process_hwnd(hwnd) {
+            return false;
+        }
+        let class_self = get_hwnd_class_lower(hwnd);
+        if is_shell_or_desktop_class(&class_self) {
+            return false;
+        }
+        let root = GetAncestor(hwnd as _, 2) as isize; // GA_ROOT
+        if root != 0 && root != hwnd {
+            if is_own_process_hwnd(root) {
+                return false;
+            }
+            let class_root = get_hwnd_class_lower(root);
+            if is_shell_or_desktop_class(&class_root) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn get_hwnd_identity(root_hwnd: isize) -> (u32, String, String) {
+    use winapi::um::handleapi::CloseHandle;
+    use winapi::um::processthreadsapi::OpenProcess;
+    use winapi::um::winuser::{GetWindowTextW, GetWindowThreadProcessId};
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn QueryFullProcessImageNameW(
+            hProcess: *mut std::ffi::c_void,
+            dwFlags: u32,
+            lpExeName: *mut u16,
+            lpdwSize: *mut u32,
+        ) -> i32;
+    }
+
+    let mut pid: u32 = 0;
+    let mut title = String::new();
+    let mut app_name = "Окно ввода".to_string();
+
+    unsafe {
+        GetWindowThreadProcessId(root_hwnd as _, &mut pid);
+        let mut tbuf = [0u16; 512];
+        let tlen = GetWindowTextW(root_hwnd as _, tbuf.as_mut_ptr(), tbuf.len() as i32);
+        if tlen > 0 {
+            title = String::from_utf16_lossy(&tbuf[..tlen as usize]).trim().to_string();
+        }
+        if pid != 0 {
+            // PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            let hproc = OpenProcess(0x1000, 0, pid);
+            if !hproc.is_null() {
+                let mut pbuf = [0u16; 512];
+                let mut plen: u32 = pbuf.len() as u32;
+                if QueryFullProcessImageNameW(hproc as _, 0, pbuf.as_mut_ptr(), &mut plen) != 0 && plen > 0 {
+                    let full = String::from_utf16_lossy(&pbuf[..plen as usize]);
+                    if let Some(base) = full.rsplit(&['\\', '/'][..]).next() {
+                        let clean = base.strip_suffix(".exe").or_else(|| base.strip_suffix(".EXE")).unwrap_or(base);
+                        if !clean.is_empty() {
+                            app_name = clean.to_string();
+                        }
+                    }
+                }
+                CloseHandle(hproc);
+            }
+        }
+    }
+    if title.is_empty() {
+        title = app_name.clone();
+    }
+    (pid, app_name, title)
+}
+
+#[cfg(target_os = "windows")]
+fn get_thread_focus_and_caret(root_hwnd: isize) -> (isize, Option<(i32, i32)>) {
+    use winapi::shared::windef::POINT;
+    use winapi::um::winuser::{ClientToScreen, GetGUIThreadInfo, GetWindowThreadProcessId, GUITHREADINFO};
+    unsafe {
+        let mut pid = 0;
+        let tid = GetWindowThreadProcessId(root_hwnd as _, &mut pid);
+        if tid == 0 {
+            return (0, None);
+        }
+        let mut gti: GUITHREADINFO = std::mem::zeroed();
+        gti.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+        if GetGUIThreadInfo(tid, &mut gti) == 0 {
+            return (0, None);
+        }
+        let focus_hwnd = gti.hwndFocus as isize;
+        let caret_pos = if !gti.hwndCaret.is_null()
+            && (gti.rcCaret.right > gti.rcCaret.left || gti.rcCaret.bottom > gti.rcCaret.top)
+        {
+            let mut pt = POINT {
+                x: gti.rcCaret.left,
+                y: gti.rcCaret.top,
+            };
+            if ClientToScreen(gti.hwndCaret, &mut pt) != 0 {
+                Some((pt.x, pt.y))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        (focus_hwnd, caret_pos)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn get_monitor_scale_at_point(x: i32, y: i32) -> f64 {
+    use winapi::shared::windef::POINT;
+    use winapi::um::winuser::{MonitorFromPoint, MONITOR_DEFAULTTONEAREST};
+    unsafe {
+        let hmon = MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST) as isize;
+        if hmon != 0 {
+            let mut dpi_x: u32 = 96;
+            let mut dpi_y: u32 = 96;
+            if GetDpiForMonitor(hmon, 0, &mut dpi_x, &mut dpi_y) == 0 && dpi_x > 0 {
+                return (dpi_x as f64 / 96.0).clamp(0.75, 4.0);
+            }
+        }
+    }
+    1.0
+}
+
+#[cfg(target_os = "windows")]
+fn build_target_info(
+    root_hwnd: isize,
+    focus_hwnd: isize,
+    badge_pt: (i32, i32),
+    drop_pt: Option<(i32, i32)>,
+) -> Option<TargetWindowInfo> {
+    use winapi::shared::windef::RECT;
+    use winapi::um::winuser::{GetWindowRect, IsWindow};
+    if !is_hwnd_insertable(root_hwnd) {
+        return None;
+    }
+    let mut wr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    unsafe {
+        if IsWindow(root_hwnd as _) == 0 || GetWindowRect(root_hwnd as _, &mut wr) == 0 {
+            return None;
+        }
+    }
+    let (pid, app_name, window_title) = get_hwnd_identity(root_hwnd);
+    if pid == 0 {
+        return None;
+    }
+    let (bx_off, by_off, b_right, b_bot) =
+        compute_edge_offset(wr.left, wr.top, wr.right, wr.bottom, badge_pt.0, badge_pt.1);
+    let drop_click_offset = drop_pt.map(|(dx, dy)| {
+        compute_edge_offset(wr.left, wr.top, wr.right, wr.bottom, dx, dy)
+    });
+    Some(TargetWindowInfo {
+        root_hwnd,
+        focus_hwnd,
+        process_id: pid,
+        app_name,
+        window_title,
+        badge_offset_x: bx_off,
+        badge_offset_y: by_off,
+        badge_from_right: b_right,
+        badge_from_bottom: b_bot,
+        drop_click_offset,
+        captured_at: std::time::Instant::now(),
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn capture_recording_start_target_now() {
+    use winapi::shared::windef::RECT;
+    use winapi::um::winuser::{GetAncestor, GetForegroundWindow, GetWindowRect, IsWindow};
+    let fg = unsafe { GetForegroundWindow() as isize };
+    let (root_hwnd, focus_hwnd) = if is_hwnd_insertable(fg) {
+        let root = unsafe {
+            let r = GetAncestor(fg as _, 2) as isize;
+            if r != 0 { r } else { fg }
+        };
+        let (f_hwnd, _) = get_thread_focus_and_caret(root);
+        (root, f_hwnd)
+    } else if let Ok(guard) = LAST_EXTERNAL_FG.lock() {
+        match *guard {
+            Some((r, f, pid)) if unsafe { IsWindow(r as _) != 0 } && get_hwnd_pid(r) == pid && is_hwnd_insertable(r) => (r, f),
+            _ => return,
+        }
+    } else {
+        return;
+    };
+
+    let mut wr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    unsafe {
+        if GetWindowRect(root_hwnd as _, &mut wr) == 0 {
+            return;
+        }
+    }
+    let badge_pt = (wr.right - 36, wr.bottom - 52);
+    if let Some(info) = build_target_info(root_hwnd, focus_hwnd, badge_pt, None) {
+        if let Ok(mut guard) = RECORDING_START_TARGET.lock() {
+            *guard = Some(info);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn capture_recording_start_target_if_needed() {
+    let should_capture = RECORDING_START_TARGET
+        .lock()
+        .map(|g| match g.as_ref() {
+            Some(t) => t.captured_at.elapsed() > std::time::Duration::from_millis(1500),
+            None => true,
+        })
+        .unwrap_or(true);
+    if should_capture {
+        capture_recording_start_target_now();
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn activate_window_reliably(root_hwnd: isize, focus_hwnd: isize) -> bool {
+    use winapi::um::processthreadsapi::GetCurrentThreadId;
+    use winapi::um::winuser::{
+        AttachThreadInput, BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId,
+        IsIconic, IsWindow, SetFocus, SetForegroundWindow, ShowWindow, SW_RESTORE,
+    };
+    unsafe {
+        if root_hwnd == 0 || IsWindow(root_hwnd as _) == 0 {
+            return false;
+        }
+        if IsIconic(root_hwnd as _) != 0 {
+            ShowWindow(root_hwnd as _, SW_RESTORE);
+            std::thread::sleep(std::time::Duration::from_millis(120));
+        }
+
+        let cur_fg = GetForegroundWindow() as isize;
+        if cur_fg != root_hwnd {
+            let my_tid = GetCurrentThreadId();
+            let cur_fg_tid = if cur_fg != 0 {
+                GetWindowThreadProcessId(cur_fg as _, std::ptr::null_mut())
+            } else {
+                0
+            };
+            let target_tid = GetWindowThreadProcessId(root_hwnd as _, std::ptr::null_mut());
+
+            let attached_cur = if cur_fg_tid != 0 && cur_fg_tid != my_tid {
+                AttachThreadInput(my_tid, cur_fg_tid, 1) != 0
+            } else {
+                false
+            };
+            let attached_tgt = if target_tid != 0 && target_tid != my_tid && target_tid != cur_fg_tid {
+                AttachThreadInput(my_tid, target_tid, 1) != 0
+            } else {
+                false
+            };
+
+            BringWindowToTop(root_hwnd as _);
+            SetForegroundWindow(root_hwnd as _);
+
+            if focus_hwnd != 0 && focus_hwnd != root_hwnd && IsWindow(focus_hwnd as _) != 0 {
+                SetFocus(focus_hwnd as _);
+            }
+
+            if attached_tgt {
+                AttachThreadInput(my_tid, target_tid, 0);
+            }
+            if attached_cur {
+                AttachThreadInput(my_tid, cur_fg_tid, 0);
+            }
+
+            // Fallback-трюк через собственное окно при редкой блокировке Foreground Lock в Windows
+            if (GetForegroundWindow() as isize) != root_hwnd {
+                if let Some(app) = APP_HANDLE.lock().unwrap().as_ref() {
+                    if let Some(w) = app.get_webview_window("capsule") {
+                        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                        if let Ok(handle) = w.window_handle() {
+                            if let RawWindowHandle::Win32(wh) = handle.as_raw() {
+                                let cap_hwnd = wh.hwnd.get() as isize;
+                                if cap_hwnd != 0 {
+                                    SetForegroundWindow(cap_hwnd as _);
+                                    SetForegroundWindow(root_hwnd as _);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        true
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn simulate_left_click_at(screen_x: i32, screen_y: i32, restore_cursor: bool) {
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct MOUSEINPUT_RAW {
+        dx: i32,
+        dy: i32,
+        mouseData: u32,
+        dwFlags: u32,
+        time: u32,
+        dwExtraInfo: usize,
+    }
+    #[repr(C)]
+    union INPUT_UNION_MOUSE {
+        mi: MOUSEINPUT_RAW,
+        _pad: [u8; 32],
+    }
+    #[repr(C)]
+    struct INPUT_MOUSE_WRAPPER {
+        type_: u32,
+        u: INPUT_UNION_MOUSE,
+    }
+
+    use winapi::shared::windef::POINT;
+    use winapi::um::winuser::{GetCursorPos, SetCursorPos};
+    #[link(name = "user32")]
+    extern "system" {
+        fn SendInput(cInputs: u32, pInputs: *const INPUT_MOUSE_WRAPPER, cbSize: i32) -> u32;
+    }
+
+    const INPUT_MOUSE: u32 = 0;
+    const MOUSEEVENTF_LEFTDOWN: u32 = 0x0002;
+    const MOUSEEVENTF_LEFTUP: u32 = 0x0004;
+
+    unsafe {
+        let mut orig = POINT { x: 0, y: 0 };
+        let has_orig = restore_cursor && GetCursorPos(&mut orig) != 0;
+
+        SetCursorPos(screen_x, screen_y);
+        std::thread::sleep(std::time::Duration::from_millis(12));
+
+        let down = INPUT_MOUSE_WRAPPER {
+            type_: INPUT_MOUSE,
+            u: INPUT_UNION_MOUSE {
+                mi: MOUSEINPUT_RAW {
+                    dx: 0,
+                    dy: 0,
+                    mouseData: 0,
+                    dwFlags: MOUSEEVENTF_LEFTDOWN,
+                    time: 0,
+                    dwExtraInfo: 0x53494E43,
+                },
+            },
+        };
+        let up = INPUT_MOUSE_WRAPPER {
+            type_: INPUT_MOUSE,
+            u: INPUT_UNION_MOUSE {
+                mi: MOUSEINPUT_RAW {
+                    dx: 0,
+                    dy: 0,
+                    mouseData: 0,
+                    dwFlags: MOUSEEVENTF_LEFTUP,
+                    time: 0,
+                    dwExtraInfo: 0x53494E43,
+                },
+            },
+        };
+        let inputs = [down, up];
+        SendInput(2, inputs.as_ptr(), std::mem::size_of::<INPUT_MOUSE_WRAPPER>() as i32);
+
+        if has_orig {
+            std::thread::sleep(std::time::Duration::from_millis(18));
+            SetCursorPos(orig.x, orig.y);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn update_anchor_hit_rect_phys(scale: f64) {
+    let rect = PhysicalHitRect {
+        x: (13.0 * scale).round() as i32,
+        y: (13.0 * scale).round() as i32,
+        width: (30.0 * scale).round() as i32,
+        height: (30.0 * scale).round() as i32,
+        radius: (15.0 * scale).round() as i32,
+    };
+    if let Ok(mut guard) = WINDOW_HIT_RECTS.lock() {
+        guard.insert("anchor".to_string(), vec![rect]);
+    }
+}
+
+fn emit_anchor_state(app: &tauri::AppHandle) {
+    let payload = if let Ok(guard) = ANCHOR_STATE.lock() {
+        if let Some(info) = guard.as_ref() {
+            serde_json::json!({
+                "active": true,
+                "app_name": info.app_name,
+                "window_title": info.window_title,
+            })
+        } else {
+            serde_json::json!({
+                "active": false,
+                "app_name": "",
+                "window_title": "",
+            })
+        }
+    } else {
+        serde_json::json!({ "active": false, "app_name": "", "window_title": "" })
+    };
+    let _ = app.emit("anchor-state-changed", payload);
+}
+
+#[cfg(target_os = "windows")]
+fn get_anchor_hwnd(app: &tauri::AppHandle) -> Option<isize> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let w = app.get_webview_window("anchor")?;
+    let handle = w.window_handle().ok()?;
+    match handle.as_raw() {
+        RawWindowHandle::Win32(wh) => Some(wh.hwnd.get() as isize),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn clear_anchor_internal(app: &tauri::AppHandle, show_toast: bool) {
+    if let Ok(mut guard) = ANCHOR_STATE.lock() {
+        *guard = None;
+    }
+    ANCHOR_NEEDS_REFOCUS_CLICK.store(false, Ordering::SeqCst);
+    if let Ok(mut geom) = ANCHOR_LAST_GEOM.lock() {
+        *geom = (0, 0, 0, 0, false, false);
+    }
+    if let Some(anchor_hwnd) = get_anchor_hwnd(app) {
+        use winapi::um::winuser::{ShowWindow, SW_HIDE};
+        unsafe {
+            ShowWindow(anchor_hwnd as _, SW_HIDE);
+        }
+    }
+    emit_anchor_state(app);
+    if show_toast {
+        let _ = app.emit(
+            "anchor-toast",
+            serde_json::json!({ "message": "🔓 Якорь вставки снят", "is_error": false }),
+        );
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn clear_anchor_internal(app: &tauri::AppHandle, show_toast: bool) {
+    if let Ok(mut guard) = ANCHOR_STATE.lock() {
+        *guard = None;
+    }
+    emit_anchor_state(app);
+    if show_toast {
+        let _ = app.emit(
+            "anchor-toast",
+            serde_json::json!({ "message": "🔓 Якорь вставки снят", "is_error": false }),
+        );
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn pin_window_from_focus(app: &tauri::AppHandle, target_root: isize, target_focus: isize) -> bool {
+    use winapi::shared::windef::{POINT, RECT};
+    use winapi::um::winuser::{GetCursorPos, GetWindowRect};
+
+    if !is_hwnd_insertable(target_root) {
+        return false;
+    }
+    let mut wr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    if unsafe { GetWindowRect(target_root as _, &mut wr) } == 0 {
+        return false;
+    }
+    let (auto_focus, caret_opt) = get_thread_focus_and_caret(target_root);
+    let eff_focus = if target_focus != 0 { target_focus } else { auto_focus };
+    let mut cur = POINT { x: 0, y: 0 };
+    let has_cur = unsafe { GetCursorPos(&mut cur) != 0 };
+
+    let scale = get_monitor_scale_at_point(
+        (wr.left + wr.right) / 2,
+        (wr.top + wr.bottom) / 2,
+    );
+
+    let raw_badge = if let Some((cx, cy)) = caret_opt {
+        (cx + (20.0 * scale) as i32, cy - (14.0 * scale) as i32)
+    } else if has_cur
+        && cur.x >= wr.left + 16
+        && cur.x <= wr.right - 16
+        && cur.y >= wr.top + 16
+        && cur.y <= wr.bottom - 16
+    {
+        (cur.x + (20.0 * scale) as i32, cur.y - (16.0 * scale) as i32)
+    } else {
+        (wr.right - (42.0 * scale) as i32, wr.bottom - (58.0 * scale) as i32)
+    };
+
+    let margin = (20.0 * scale).round() as i32;
+    let clamped_x = if wr.left + margin <= wr.right - margin {
+        raw_badge.0.clamp(wr.left + margin, wr.right - margin)
+    } else {
+        (wr.left + wr.right) / 2
+    };
+    let clamped_y = if wr.top + margin <= wr.bottom - margin {
+        raw_badge.1.clamp(wr.top + margin, wr.bottom - margin)
+    } else {
+        (wr.top + wr.bottom) / 2
+    };
+
+    let Some(info) = build_target_info(target_root, eff_focus, (clamped_x, clamped_y), None) else {
+        return false;
+    };
+    let label_name = if !info.window_title.is_empty() && info.window_title != info.app_name {
+        let short: String = info.window_title.chars().take(34).collect();
+        if info.window_title.chars().count() > 34 {
+            format!("{}…", short)
+        } else {
+            short
+        }
+    } else {
+        info.app_name.clone()
+    };
+
+    if let Ok(mut guard) = ANCHOR_STATE.lock() {
+        *guard = Some(info);
+    }
+    ANCHOR_NEEDS_REFOCUS_CLICK.store(false, Ordering::SeqCst);
+    if let Ok(mut geom) = ANCHOR_LAST_GEOM.lock() {
+        *geom = (0, 0, 0, 0, false, false);
+    }
+    sync_anchor_beacon_position(app);
+    emit_anchor_state(app);
+    let _ = app.emit(
+        "anchor-toast",
+        serde_json::json!({
+            "message": format!("📌 Якорь закреплён: {}", label_name),
+            "is_error": false
+        }),
+    );
+    true
+}
+
+#[cfg(target_os = "windows")]
+fn update_last_external_fg_and_click_state(lbutton_down: bool) {
+    use winapi::shared::windef::{POINT, RECT};
+    use winapi::um::winuser::{GetAncestor, GetCursorPos, GetForegroundWindow, GetWindowRect};
+
+    let fg = unsafe { GetForegroundWindow() as isize };
+    if fg != 0 && !is_own_process_hwnd(fg) {
+        if is_hwnd_insertable(fg) {
+            let root = unsafe {
+                let r = GetAncestor(fg as _, 2) as isize;
+                if r != 0 { r } else { fg }
+            };
+            let pid = get_hwnd_pid(root);
+            let (focus_hwnd, _) = get_thread_focus_and_caret(root);
+            if let Ok(mut guard) = LAST_EXTERNAL_FG.lock() {
+                *guard = Some((root, focus_hwnd, pid));
+            }
+        } else {
+            // Рабочий стол / панель задач — сбрасываем, чтобы клик по капсуле не вставлял в закрытое/неактуальное окно
+            if let Ok(mut guard) = LAST_EXTERNAL_FG.lock() {
+                *guard = None;
+            }
+        }
+    }
+
+    if lbutton_down && !ANCHOR_DRAG_ACTIVE.load(Ordering::Relaxed) {
+        let check_info = ANCHOR_STATE
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().and_then(|a| a.drop_click_offset.map(|d| (a.root_hwnd, d))));
+        if let Some((root_hwnd, (dx_off, dy_off, from_right, from_bottom))) = check_info {
+            if fg == root_hwnd {
+                let mut pt = POINT { x: 0, y: 0 };
+                let mut wr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                unsafe {
+                    if GetCursorPos(&mut pt) != 0 && GetWindowRect(root_hwnd as _, &mut wr) != 0 {
+                        let (tx, ty) = resolve_edge_offset(
+                            wr.left, wr.top, wr.right, wr.bottom,
+                            dx_off, dy_off, from_right, from_bottom, 8,
+                        );
+                        let dx = (pt.x - tx) as f64;
+                        let dy = (pt.y - ty) as f64;
+                        if (dx * dx + dy * dy).sqrt() > 55.0 {
+                            ANCHOR_NEEDS_REFOCUS_CLICK.store(true, Ordering::Relaxed);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn sync_anchor_beacon_position(app: &tauri::AppHandle) {
+    if ANCHOR_DRAG_ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+
+    let anchor_opt = ANCHOR_STATE.lock().ok().and_then(|g| g.clone());
+    let Some(anchor) = anchor_opt else {
+        return;
+    };
+
+    use winapi::shared::windef::{POINT, RECT};
+    use winapi::um::winuser::{
+        GetAncestor, GetWindowRect, IsIconic, IsWindow, IsWindowVisible, SetWindowPos, ShowWindow,
+        WindowFromPoint, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_SHOWWINDOW, SW_HIDE,
+    };
+
+    let alive = unsafe { IsWindow(anchor.root_hwnd as _) != 0 } && get_hwnd_pid(anchor.root_hwnd) == anchor.process_id;
+    if !alive {
+        clear_anchor_internal(app, false);
+        return;
+    }
+
+    let Some(anchor_hwnd) = get_anchor_hwnd(app) else {
+        return;
+    };
+
+    let minimized_or_hidden = unsafe {
+        IsIconic(anchor.root_hwnd as _) != 0 || IsWindowVisible(anchor.root_hwnd as _) == 0
+    };
+    if minimized_or_hidden {
+        let should_hide = ANCHOR_LAST_GEOM.lock().map(|g| g.4).unwrap_or(true);
+        if should_hide {
+            unsafe {
+                ShowWindow(anchor_hwnd as _, SW_HIDE);
+            }
+            if let Ok(mut g) = ANCHOR_LAST_GEOM.lock() {
+                g.4 = false;
+            }
+        }
+        return;
+    }
+
+    let mut wr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    if unsafe { GetWindowRect(anchor.root_hwnd as _, &mut wr) } == 0 {
+        return;
+    }
+
+    let approx_scale = get_monitor_scale_at_point((wr.left + wr.right) / 2, (wr.top + wr.bottom) / 2);
+    let margin = (18.0 * approx_scale).round() as i32;
+    let (bx, by) = resolve_edge_offset(
+        wr.left,
+        wr.top,
+        wr.right,
+        wr.bottom,
+        anchor.badge_offset_x,
+        anchor.badge_offset_y,
+        anchor.badge_from_right,
+        anchor.badge_from_bottom,
+        margin,
+    );
+
+    let scale = get_monitor_scale_at_point(bx, by);
+    let w_phys = (56.0 * scale).round() as i32;
+    let h_phys = (56.0 * scale).round() as i32;
+    let win_x = bx - w_phys / 2;
+    let win_y = by - h_phys / 2;
+
+    // Если клики сейчас проходят сквозь прозрачный бейдж (мышь не над ним), проверяем, перекрыто ли окно другим окном
+    let ignore_active = WINDOW_IGNORE_STATE
+        .lock()
+        .ok()
+        .and_then(|g| g.get("anchor").copied())
+        .unwrap_or(false);
+    let occluded = if ignore_active {
+        unsafe {
+            let under = WindowFromPoint(POINT { x: bx, y: by }) as isize;
+            if under == 0 {
+                false
+            } else {
+                let under_root = GetAncestor(under as _, 2) as isize;
+                under_root != 0 && under_root != anchor.root_hwnd && !is_own_process_hwnd(under_root)
+            }
+        }
+    } else {
+        false
+    };
+
+    let (prev_x, prev_y, prev_w, prev_h, prev_vis, prev_occ) = ANCHOR_LAST_GEOM
+        .lock()
+        .map(|g| *g)
+        .unwrap_or((0, 0, 0, 0, false, false));
+
+    if prev_x != win_x || prev_y != win_y || prev_w != w_phys || prev_h != h_phys || !prev_vis {
+        make_overlay_borderless(anchor_hwnd);
+        update_anchor_hit_rect_phys(scale);
+        unsafe {
+            SetWindowPos(
+                anchor_hwnd as _,
+                HWND_TOPMOST,
+                win_x,
+                win_y,
+                w_phys,
+                h_phys,
+                SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
+            );
+        }
+        make_overlay_borderless(anchor_hwnd);
+    }
+
+    if prev_occ != occluded || !prev_vis {
+        if let Some(w) = app.get_webview_window("anchor") {
+            let _ = w.emit("anchor-occluded", serde_json::json!({ "occluded": occluded }));
+        }
+    }
+
+    if let Ok(mut g) = ANCHOR_LAST_GEOM.lock() {
+        *g = (win_x, win_y, w_phys, h_phys, true, occluded);
+    }
+}
+
+#[tauri::command]
+fn get_anchor_state() -> serde_json::Value {
+    if let Ok(guard) = ANCHOR_STATE.lock() {
+        if let Some(info) = guard.as_ref() {
+            return serde_json::json!({
+                "active": true,
+                "app_name": info.app_name,
+                "window_title": info.window_title,
+            });
+        }
+    }
+    serde_json::json!({ "active": false, "app_name": "", "window_title": "" })
+}
+
+#[tauri::command]
+fn clear_anchor(app_handle: tauri::AppHandle) -> Result<(), String> {
+    clear_anchor_internal(&app_handle, true);
+    Ok(())
+}
+
+#[tauri::command]
+fn toggle_anchor_hotkey(app_handle: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        if is_anchor_currently_active() {
+            clear_anchor_internal(&app_handle, true);
+            return Ok(());
+        }
+        use winapi::um::winuser::{GetAncestor, GetForegroundWindow, IsWindow};
+        let fg = unsafe { GetForegroundWindow() as isize };
+        let pinned = if is_hwnd_insertable(fg) {
+            let root = unsafe {
+                let r = GetAncestor(fg as _, 2) as isize;
+                if r != 0 { r } else { fg }
+            };
+            pin_window_from_focus(&app_handle, root, 0)
+        } else if let Ok(guard) = LAST_EXTERNAL_FG.lock() {
+            match *guard {
+                Some((root, focus, pid))
+                    if unsafe { IsWindow(root as _) != 0 } && get_hwnd_pid(root) == pid && is_hwnd_insertable(root) =>
+                {
+                    pin_window_from_focus(&app_handle, root, focus)
+                }
+                _ => false,
+            }
+        } else {
+            false
+        };
+        if !pinned {
+            let _ = app_handle.emit(
+                "anchor-toast",
+                serde_json::json!({
+                    "message": "Поставьте курсор в нужное окно ввода или перетащите 📌 мышкой",
+                    "is_error": true
+                }),
+            );
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn start_anchor_pin_drag(app_handle: tauri::AppHandle, from_beacon: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        if ANCHOR_DRAG_ACTIVE.swap(true, Ordering::SeqCst) {
+            return Ok(());
+        }
+        let app_clone = app_handle.clone();
+        std::thread::spawn(move || {
+            use winapi::shared::windef::{POINT, RECT};
+            use winapi::um::winuser::{
+                GetAncestor, GetAsyncKeyState, GetCursorPos, GetWindowRect, IsWindow,
+                SetWindowPos, ShowWindow, WindowFromPoint, HWND_TOPMOST, SWP_NOACTIVATE,
+                SWP_NOOWNERZORDER, SWP_SHOWWINDOW, SW_HIDE,
+            };
+
+            let Some(anchor_hwnd) = get_anchor_hwnd(&app_clone) else {
+                ANCHOR_DRAG_ACTIVE.store(false, Ordering::SeqCst);
+                return;
+            };
+
+            make_overlay_borderless(anchor_hwnd);
+            // Пропускаем клики сквозь перетаскиваемый бейдж, чтобы WindowFromPoint видел целевое окно под курсором
+            set_ignore_cursor_events_hwnd(anchor_hwnd, true);
+
+            let mut start_pt = POINT { x: 0, y: 0 };
+            unsafe {
+                GetCursorPos(&mut start_pt);
+            }
+
+            let mut dragged = false;
+            let mut cancelled = false;
+            let mut end_pt = start_pt;
+
+            loop {
+                unsafe {
+                    if (GetAsyncKeyState(0x1B) as u16 & 0x8000) != 0 {
+                        cancelled = true;
+                        break;
+                    }
+                    if (GetAsyncKeyState(0x01) as u16 & 0x8000) == 0 {
+                        break;
+                    }
+                    let mut cur = POINT { x: 0, y: 0 };
+                    if GetCursorPos(&mut cur) != 0 {
+                        end_pt = cur;
+                        let dx = (cur.x - start_pt.x) as f64;
+                        let dy = (cur.y - start_pt.y) as f64;
+                        let dist = (dx * dx + dy * dy).sqrt();
+                        if !dragged && dist >= 6.0 {
+                            dragged = true;
+                            let _ = app_clone.emit("anchor-drag-state", serde_json::json!({ "dragging": true }));
+                        }
+                        if dragged {
+                            let scale = get_monitor_scale_at_point(cur.x, cur.y);
+                            let w_phys = (56.0 * scale).round() as i32;
+                            let h_phys = (56.0 * scale).round() as i32;
+                            update_anchor_hit_rect_phys(scale);
+                            SetWindowPos(
+                                anchor_hwnd as _,
+                                HWND_TOPMOST,
+                                cur.x - w_phys / 2,
+                                cur.y - h_phys / 2,
+                                w_phys,
+                                h_phys,
+                                SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
+                            );
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(8));
+            }
+
+            let _ = app_clone.emit("anchor-drag-state", serde_json::json!({ "dragging": false }));
+
+            if cancelled {
+                if !from_beacon && !is_anchor_currently_active() {
+                    unsafe {
+                        ShowWindow(anchor_hwnd as _, SW_HIDE);
+                    }
+                }
+                if let Ok(mut g) = ANCHOR_LAST_GEOM.lock() {
+                    *g = (0, 0, 0, 0, false, false);
+                }
+            } else if !dragged {
+                if from_beacon {
+                    clear_anchor_internal(&app_clone, true);
+                } else if is_anchor_currently_active() {
+                    clear_anchor_internal(&app_clone, true);
+                } else {
+                    let prev_ext = LAST_EXTERNAL_FG.lock().ok().and_then(|g| *g);
+                    let pinned = match prev_ext {
+                        Some((root, focus, pid))
+                            if unsafe { IsWindow(root as _) != 0 }
+                                && get_hwnd_pid(root) == pid
+                                && is_hwnd_insertable(root) =>
+                        {
+                            pin_window_from_focus(&app_clone, root, focus)
+                        }
+                        _ => false,
+                    };
+                    if !pinned {
+                        let _ = app_clone.emit(
+                            "anchor-toast",
+                            serde_json::json!({
+                                "message": "Перетащите 📌 на нужное поле ввода или нажмите Alt+A внутри окна",
+                                "is_error": false
+                            }),
+                        );
+                    }
+                }
+            } else {
+                // Пользователь отпустил перетаскиваемый 📌 в точке end_pt
+                let hwnd_at = unsafe { WindowFromPoint(end_pt) as isize };
+                let root_hwnd = unsafe {
+                    if hwnd_at != 0 {
+                        let r = GetAncestor(hwnd_at as _, 2) as isize;
+                        if r != 0 { r } else { hwnd_at }
+                    } else {
+                        0
+                    }
+                };
+
+                if is_own_process_hwnd(root_hwnd) {
+                    if from_beacon {
+                        clear_anchor_internal(&app_clone, true);
+                    } else {
+                        unsafe {
+                            ShowWindow(anchor_hwnd as _, SW_HIDE);
+                        }
+                        if let Ok(mut g) = ANCHOR_LAST_GEOM.lock() {
+                            *g = (0, 0, 0, 0, false, false);
+                        }
+                    }
+                } else if !is_hwnd_insertable(root_hwnd) {
+                    if !from_beacon && !is_anchor_currently_active() {
+                        unsafe {
+                            ShowWindow(anchor_hwnd as _, SW_HIDE);
+                        }
+                    }
+                    if let Ok(mut g) = ANCHOR_LAST_GEOM.lock() {
+                        *g = (0, 0, 0, 0, false, false);
+                    }
+                    let _ = app_clone.emit(
+                        "anchor-toast",
+                        serde_json::json!({
+                            "message": "Нельзя закрепить на рабочем столе — перетащите 📌 на окно ввода",
+                            "is_error": true
+                        }),
+                    );
+                } else {
+                    // Активируем целевое окно и ставим каретку кликом точно в точку броска 📌
+                    let _ = activate_window_reliably(root_hwnd, hwnd_at);
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                    simulate_left_click_at(end_pt.x, end_pt.y, false);
+                    std::thread::sleep(std::time::Duration::from_millis(45));
+
+                    let (focus_hwnd, _) = get_thread_focus_and_caret(root_hwnd);
+                    let mut wr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                    let rect_ok = unsafe { GetWindowRect(root_hwnd as _, &mut wr) != 0 };
+                    let scale = get_monitor_scale_at_point(end_pt.x, end_pt.y);
+                    let raw_bx = end_pt.x + (22.0 * scale).round() as i32;
+                    let raw_by = end_pt.y - (18.0 * scale).round() as i32;
+                    let (bx, by) = if rect_ok {
+                        let margin = (20.0 * scale).round() as i32;
+                        let cx = if wr.left + margin <= wr.right - margin {
+                            raw_bx.clamp(wr.left + margin, wr.right - margin)
+                        } else {
+                            raw_bx
+                        };
+                        let cy = if wr.top + margin <= wr.bottom - margin {
+                            raw_by.clamp(wr.top + margin, wr.bottom - margin)
+                        } else {
+                            raw_by
+                        };
+                        (cx, cy)
+                    } else {
+                        (raw_bx, raw_by)
+                    };
+
+                    if let Some(info) = build_target_info(root_hwnd, focus_hwnd, (bx, by), Some((end_pt.x, end_pt.y))) {
+                        let label_name = if !info.window_title.is_empty() && info.window_title != info.app_name {
+                            let short: String = info.window_title.chars().take(34).collect();
+                            if info.window_title.chars().count() > 34 {
+                                format!("{}…", short)
+                            } else {
+                                short
+                            }
+                        } else {
+                            info.app_name.clone()
+                        };
+                        if let Ok(mut guard) = ANCHOR_STATE.lock() {
+                            *guard = Some(info);
+                        }
+                        ANCHOR_NEEDS_REFOCUS_CLICK.store(false, Ordering::SeqCst);
+                        if let Ok(mut g) = ANCHOR_LAST_GEOM.lock() {
+                            *g = (0, 0, 0, 0, false, false);
+                        }
+                        emit_anchor_state(&app_clone);
+                        let _ = app_clone.emit(
+                            "anchor-toast",
+                            serde_json::json!({
+                                "message": format!("📌 Якорь закреплён: {}", label_name),
+                                "is_error": false
+                            }),
+                        );
+                    }
+                }
+            }
+
+            // Возвращаем кликабельность бейджа (следующий цикл hit-test точнее выставит регион)
+            set_ignore_cursor_events_hwnd(anchor_hwnd, false);
+            ANCHOR_DRAG_ACTIVE.store(false, Ordering::SeqCst);
+            sync_anchor_beacon_position(&app_clone);
+        });
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "windows")]
 fn is_insertion_possible() -> bool {
     #[link(name = "user32")]
     extern "system" {
         fn GetForegroundWindow() -> isize;
-        fn GetClassNameW(hWnd: isize, lpClassName: *mut u16, nMaxCount: i32) -> i32;
     }
-
     let hwnd = unsafe { GetForegroundWindow() };
-    if hwnd == 0 {
-        return false;
-    }
-
-    let mut class_name = [0u16; 256];
-    let len = unsafe { GetClassNameW(hwnd, class_name.as_mut_ptr(), 256) };
-    if len > 0 {
-        let class_str = String::from_utf16_lossy(&class_name[..len as usize]);
-        let class_lower = class_str.to_lowercase();
-        // Классы окон рабочего стола и панели задач
-        if class_lower.contains("progman")
-            || class_lower.contains("workerw")
-            || class_lower.contains("shell_traywnd")
-        {
-            return false;
-        }
-    }
-    true
+    is_hwnd_insertable(hwnd)
 }
 
 #[cfg(target_os = "windows")]
@@ -11131,6 +12291,124 @@ fn show_result_window(app_handle: &tauri::AppHandle, text: String) {
 async fn paste_text(app_handle: tauri::AppHandle, text: String) -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
+        use winapi::shared::windef::RECT;
+        use winapi::um::winuser::{GetAncestor, GetForegroundWindow, GetWindowRect, IsWindow};
+
+        // Всегда забираем и сбрасываем снимок окна старта записи, чтобы не протух для будущих сессий
+        let start_target_opt = RECORDING_START_TARGET.lock().ok().and_then(|mut g| g.take());
+        let anchor_opt = ANCHOR_STATE.lock().ok().and_then(|g| g.clone());
+
+        let cur_fg_raw = unsafe { GetForegroundWindow() as isize };
+        let cur_fg_root = if cur_fg_raw != 0 {
+            unsafe {
+                let r = GetAncestor(cur_fg_raw as _, 2) as isize;
+                if r != 0 { r } else { cur_fg_raw }
+            }
+        } else {
+            0
+        };
+        let prev_external_fg = if cur_fg_root != 0 && !is_own_process_hwnd(cur_fg_root) {
+            cur_fg_root
+        } else {
+            0
+        };
+
+        // Приоритет 1: Активный постоянный Якорь вставки 📌
+        if let Some(anchor) = anchor_opt {
+            let alive = unsafe { IsWindow(anchor.root_hwnd as _) != 0 }
+                && get_hwnd_pid(anchor.root_hwnd) == anchor.process_id;
+            if !alive {
+                clear_anchor_internal(&app_handle, false);
+                let _ = app_handle.emit(
+                    "anchor-toast",
+                    serde_json::json!({
+                        "message": "Закреплённое окно было закрыто — якорь снят",
+                        "is_error": true
+                    }),
+                );
+            } else {
+                log_to_file(&format!(
+                    "paste_text: Inserting into pinned anchor '{}' (hwnd=0x{:X})",
+                    anchor.window_title, anchor.root_hwnd
+                ));
+                let backup = backup_clipboard().unwrap_or_default();
+                let _ = set_clipboard_text(&text);
+
+                let need_restore_focus = prev_external_fg != 0 && prev_external_fg != anchor.root_hwnd;
+                activate_window_reliably(anchor.root_hwnd, anchor.focus_hwnd);
+                tokio::time::sleep(std::time::Duration::from_millis(90)).await;
+
+                if ANCHOR_NEEDS_REFOCUS_CLICK.swap(false, Ordering::SeqCst) {
+                    if let Some((dx_off, dy_off, from_right, from_bottom)) = anchor.drop_click_offset {
+                        let mut wr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                        if unsafe { GetWindowRect(anchor.root_hwnd as _, &mut wr) } != 0 {
+                            let (tx, ty) = resolve_edge_offset(
+                                wr.left, wr.top, wr.right, wr.bottom,
+                                dx_off, dy_off, from_right, from_bottom, 8,
+                            );
+                            simulate_left_click_at(tx, ty, true);
+                            tokio::time::sleep(std::time::Duration::from_millis(70)).await;
+                        }
+                    }
+                }
+
+                simulate_ctrl_v();
+                if let Some(w) = app_handle.get_webview_window("anchor") {
+                    let _ = w.emit("anchor-paste-pulse", ());
+                }
+
+                tokio::time::sleep(std::time::Duration::from_millis(240)).await;
+                if need_restore_focus && unsafe { IsWindow(prev_external_fg as _) != 0 } {
+                    activate_window_reliably(prev_external_fg, 0);
+                    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+                }
+                let _ = restore_clipboard(backup);
+                return Ok(true);
+            }
+        }
+
+        // Приоритет 2: Окно, активное на момент старта записи (если пользователь переключился пока шёл анализ)
+        if let Some(start_target) = start_target_opt {
+            let alive = unsafe { IsWindow(start_target.root_hwnd as _) != 0 }
+                && get_hwnd_pid(start_target.root_hwnd) == start_target.process_id;
+            if alive {
+                let backup = backup_clipboard().unwrap_or_default();
+                let _ = set_clipboard_text(&text);
+
+                let switched_away = prev_external_fg != 0 && prev_external_fg != start_target.root_hwnd;
+                if cur_fg_root != start_target.root_hwnd {
+                    log_to_file(&format!(
+                        "paste_text: Restoring recording-start target '{}' (hwnd=0x{:X})",
+                        start_target.window_title, start_target.root_hwnd
+                    ));
+                    activate_window_reliably(start_target.root_hwnd, start_target.focus_hwnd);
+                    tokio::time::sleep(std::time::Duration::from_millis(90)).await;
+                } else {
+                    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                }
+
+                simulate_ctrl_v();
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+
+                if switched_away && unsafe { IsWindow(prev_external_fg as _) != 0 } {
+                    activate_window_reliably(prev_external_fg, 0);
+                    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+                }
+                let _ = restore_clipboard(backup);
+                return Ok(true);
+            }
+        }
+
+        // Приоритет 3: Текущее окно ввода (или последнее внешнее окно, если фокус был на капсуле)
+        if is_own_process_hwnd(cur_fg_raw) {
+            if let Some((ext_root, ext_focus, ext_pid)) = LAST_EXTERNAL_FG.lock().ok().and_then(|g| *g) {
+                if unsafe { IsWindow(ext_root as _) != 0 } && get_hwnd_pid(ext_root) == ext_pid && is_hwnd_insertable(ext_root) {
+                    activate_window_reliably(ext_root, ext_focus);
+                    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+                }
+            }
+        }
+
         let possible = is_insertion_possible();
         log_to_file(&format!("paste_text: Started. Text length = {}, insertion possible = {}", text.len(), possible));
         if possible {
@@ -11141,23 +12419,12 @@ async fn paste_text(app_handle: tauri::AppHandle, text: String) -> Result<bool, 
                     Vec::new()
                 }
             };
-            
-            log_to_file("paste_text: Setting new clipboard text");
+
             let _ = set_clipboard_text(&text);
-            
-            log_to_file("paste_text: Sleeping 150ms before Ctrl+V");
             tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-            
-            log_to_file("paste_text: Simulating Ctrl+V");
             simulate_ctrl_v();
-            
-            log_to_file("paste_text: Sleeping 300ms before restoring clipboard");
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-            
-            log_to_file("paste_text: Restoring clipboard");
             let _ = restore_clipboard(backup);
-            
-            log_to_file("paste_text: Finished successfully");
             Ok(true)
         } else {
             show_result_window(&app_handle, text);
@@ -11184,7 +12451,7 @@ fn resize_window(window: tauri::Window, width: i32, height: i32) -> Result<(), S
         _ => return Err("Текущее окно не является Win32 HWND".into()),
     };
     let label = window.label();
-    if label == "widget" || label == "capsule" {
+    if label == "widget" || label == "capsule" || label == "anchor" {
         make_overlay_borderless(hwnd);
     }
     #[link(name = "user32")]
@@ -11222,7 +12489,7 @@ fn resize_bottom_up_phys(
     };
 
     let label = window.label();
-    if label == "widget" || label == "capsule" {
+    if label == "widget" || label == "capsule" || label == "anchor" {
         make_overlay_borderless(hwnd);
     }
 
@@ -11269,10 +12536,10 @@ fn resize_bottom_up_phys(
         }
     }
     
-    // Важно: НЕ вызываем window.set_always_on_top(true) для widget и capsule,
+    // Важно: НЕ вызываем window.set_always_on_top(true) для widget, capsule и anchor,
     // т.к. в tao-0.35.3 это принудительно выставляет WS_CAPTION обратно!
     // Флаг HWND_TOPMOST уже выставлен напрямую через SetWindowPos выше.
-    if label != "widget" && label != "capsule" {
+    if label != "widget" && label != "capsule" && label != "anchor" {
         let _ = window.set_always_on_top(true);
     } else {
         make_overlay_borderless(hwnd);
@@ -11632,7 +12899,7 @@ pub fn run() {
             // Устанавливаем Win32 subclass и безрамочный POPUP-стиль ДО показа окон
             #[cfg(target_os = "windows")]
             {
-                for label in &["widget", "capsule"] {
+                for label in &["widget", "capsule", "anchor"] {
                     if let Some(w) = app.get_webview_window(label) {
                         ensure_webview_window_borderless(&w);
                     }
@@ -11658,13 +12925,13 @@ pub fn run() {
 
             #[cfg(target_os = "windows")]
             {
-                for label in &["widget", "capsule"] {
+                for label in &["widget", "capsule", "anchor"] {
                     if let Some(w) = app.get_webview_window(label) {
                         ensure_webview_window_borderless(&w);
                     }
                 }
 
-                // Легковесный нативный поток hit-test для плавающих оверлеев (widget и capsule).
+                // Легковесный нативный поток hit-test для плавающих оверлеев (widget, capsule и anchor).
                 // Заменяет JS-поллинг по IPC, гарантирует 0.0% нагрузки на CPU в простое,
                 // мгновенную кликабельность сквозь тень без мерцания и отсутствие белой плашки заголовка.
                 let hit_app_handle = app.handle().clone();
@@ -11674,15 +12941,26 @@ pub fn run() {
 
                     loop {
                         std::thread::sleep(std::time::Duration::from_millis(25));
+                        let lbutton_down = unsafe { (GetAsyncKeyState(0x01) as u16 & 0x8000) != 0 };
                         unsafe {
-                            if (GetAsyncKeyState(0x01) as u16 & 0x8000) != 0
+                            if lbutton_down
                                 || (GetAsyncKeyState(0x02) as u16 & 0x8000) != 0
                                 || (GetAsyncKeyState(0x04) as u16 & 0x8000) != 0
                             {
                                 MOUSE_CLICKED_SINCE_KEY.store(true, Ordering::Relaxed);
                             }
                         }
-                        for label in &["widget", "capsule"] {
+
+                        // Отслеживаем последнее внешнее окно ввода и возможный клик мимо якоря внутри того же окна
+                        update_last_external_fg_and_click_state(lbutton_down);
+
+                        // Синхронизируем позицию визуального замочка-якоря с привязанным окном
+                        sync_anchor_beacon_position(&hit_app_handle);
+
+                        for label in &["widget", "capsule", "anchor"] {
+                            if *label == "anchor" && ANCHOR_DRAG_ACTIVE.load(Ordering::Relaxed) {
+                                continue;
+                            }
                             if let Some(w) = hit_app_handle.get_webview_window(label) {
                                 if let Ok(handle) = w.window_handle() {
                                     if let RawWindowHandle::Win32(win_handle) = handle.as_raw() {
@@ -11822,6 +13100,10 @@ pub fn run() {
             set_autostart_enabled,
             is_autostart_enabled,
             paste_text,
+            get_anchor_state,
+            clear_anchor,
+            toggle_anchor_hotkey,
+            start_anchor_pin_drag,
             set_capsule_active,
             show_capsule_window,
             hide_capsule_window,
@@ -12061,5 +13343,20 @@ mod layout_tests {
         let (ssml_edge, _, _) = build_expressive_ssml_params("В 5-м блоке 6–7 карточек для gemini-3.5-flash.", 1.0, true);
         assert!(ssml_edge.contains("В пятом блоке 6, 7 карточек"), "ssml_edge was: {}", ssml_edge);
         assert!(ssml_edge.contains("gemini 3.5 flash"), "ssml_edge was: {}", ssml_edge);
+
+        // 7. Insertion anchor edge-aware coordinate tracking across window moves and resizes
+        let (ox1, oy1, r1, b1) = compute_edge_offset(100, 100, 900, 700, 820, 650);
+        assert!(r1 && b1);
+        assert_eq!((ox1, oy1), (80, 50));
+        // Move + resize larger: bottom-right chat input stays 80px from right and 50px from bottom
+        assert_eq!(resolve_edge_offset(200, 150, 1200, 950, ox1, oy1, r1, b1, 18), (1120, 900));
+
+        // Top-left field anchored
+        let (ox2, oy2, r2, b2) = compute_edge_offset(100, 100, 900, 700, 160, 140);
+        assert!(!r2 && !b2);
+        assert_eq!(resolve_edge_offset(50, 80, 500, 400, ox2, oy2, r2, b2, 18), (110, 120));
+
+        // Clamping when window shrinks very small
+        assert_eq!(resolve_edge_offset(10, 20, 50, 60, 200, 200, false, false, 18), (32, 42));
     }
 }
