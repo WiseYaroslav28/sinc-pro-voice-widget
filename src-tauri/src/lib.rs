@@ -11566,14 +11566,20 @@ fn simulate_left_click_at(screen_x: i32, screen_y: i32, restore_cursor: bool) {
     }
 }
 
+const ANCHOR_WIN_SIZE_LOGICAL: f64 = 128.0;
+const ANCHOR_BADGE_SIZE_LOGICAL: f64 = 30.0;
+const ANCHOR_HIT_SIZE_LOGICAL: f64 = 32.0;
+
 #[cfg(target_os = "windows")]
 fn update_anchor_hit_rect_phys(scale: f64) {
+    let offset = (ANCHOR_WIN_SIZE_LOGICAL - ANCHOR_HIT_SIZE_LOGICAL) * 0.5;
+    let radius = ANCHOR_HIT_SIZE_LOGICAL * 0.5;
     let rect = PhysicalHitRect {
-        x: (13.0 * scale).round() as i32,
-        y: (13.0 * scale).round() as i32,
-        width: (30.0 * scale).round() as i32,
-        height: (30.0 * scale).round() as i32,
-        radius: (15.0 * scale).round() as i32,
+        x: (offset * scale).round() as i32,
+        y: (offset * scale).round() as i32,
+        width: (ANCHOR_HIT_SIZE_LOGICAL * scale).round() as i32,
+        height: (ANCHOR_HIT_SIZE_LOGICAL * scale).round() as i32,
+        radius: (radius * scale).round() as i32,
     };
     if let Ok(mut guard) = WINDOW_HIT_RECTS.lock() {
         guard.insert("anchor".to_string(), vec![rect]);
@@ -11845,8 +11851,8 @@ fn sync_anchor_beacon_position(app: &tauri::AppHandle) {
     );
 
     let scale = get_monitor_scale_at_point(bx, by);
-    let w_phys = (56.0 * scale).round() as i32;
-    let h_phys = (56.0 * scale).round() as i32;
+    let w_phys = (ANCHOR_WIN_SIZE_LOGICAL * scale).round() as i32;
+    let h_phys = (ANCHOR_WIN_SIZE_LOGICAL * scale).round() as i32;
     let win_x = bx - w_phys / 2;
     let win_y = by - h_phys / 2;
 
@@ -12019,8 +12025,8 @@ async fn start_anchor_pin_drag(app_handle: tauri::AppHandle, from_beacon: bool) 
                         }
                         if dragged {
                             let scale = get_monitor_scale_at_point(cur.x, cur.y);
-                            let w_phys = (56.0 * scale).round() as i32;
-                            let h_phys = (56.0 * scale).round() as i32;
+                            let w_phys = (ANCHOR_WIN_SIZE_LOGICAL * scale).round() as i32;
+                            let h_phys = (ANCHOR_WIN_SIZE_LOGICAL * scale).round() as i32;
                             update_anchor_hit_rect_phys(scale);
                             SetWindowPos(
                                 anchor_hwnd as _,
@@ -13358,5 +13364,9 @@ mod layout_tests {
 
         // Clamping when window shrinks very small
         assert_eq!(resolve_edge_offset(10, 20, 50, 60, 200, 200, false, false, 18), (32, 42));
+
+        // 8. Anchor transparent canvas provides >= 45px unclipped glow margin around max-scaled badge
+        let anchor_bleed_margin = (ANCHOR_WIN_SIZE_LOGICAL - ANCHOR_BADGE_SIZE_LOGICAL * 1.14) * 0.5;
+        assert!(anchor_bleed_margin >= 45.0, "Anchor glow bleed margin too small: {}", anchor_bleed_margin);
     }
 }

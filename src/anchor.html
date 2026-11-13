@@ -26,6 +26,73 @@
         justify-content: center;
       }
 
+      #anchor-stage {
+        position: relative;
+        width: 30px;
+        height: 30px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: visible;
+        transition: opacity 0.2s ease;
+      }
+
+      #anchor-stage.occluded:not(.hovered):not(.dragging) {
+        opacity: 0.35;
+      }
+
+      #anchor-glow {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 84px;
+        height: 84px;
+        margin-left: -42px;
+        margin-top: -42px;
+        border-radius: 9999px;
+        pointer-events: none;
+        background: radial-gradient(
+          circle,
+          rgba(251, 191, 36, 0.48) 0%,
+          rgba(245, 158, 11, 0.22) 38%,
+          rgba(245, 158, 11, 0.05) 66%,
+          rgba(245, 158, 11, 0) 100%
+        );
+        opacity: 0.55;
+        transform: scale(0.78);
+        transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+        will-change: transform, opacity;
+      }
+
+      #anchor-stage.hovered #anchor-glow {
+        opacity: 1;
+        transform: scale(1.06);
+      }
+
+      #anchor-stage.dragging #anchor-glow {
+        opacity: 1;
+        transform: scale(1.14);
+        background: radial-gradient(
+          circle,
+          rgba(251, 191, 36, 0.55) 0%,
+          rgba(142, 82, 255, 0.32) 42%,
+          rgba(142, 82, 255, 0.07) 68%,
+          rgba(142, 82, 255, 0) 100%
+        );
+      }
+
+      #anchor-stage.pulse-paste #anchor-glow {
+        opacity: 1;
+        transform: scale(1.15);
+        background: radial-gradient(
+          circle,
+          rgba(123, 214, 209, 0.62) 0%,
+          rgba(69, 162, 158, 0.28) 42%,
+          rgba(69, 162, 158, 0.06) 68%,
+          rgba(69, 162, 158, 0) 100%
+        );
+      }
+
       #anchor-badge {
         position: relative;
         width: 30px;
@@ -33,33 +100,28 @@
         border-radius: 9999px;
         background: rgba(24, 23, 34, 0.92);
         border: 1.5px solid rgba(245, 158, 11, 0.9);
-        box-shadow: 0 0 12px rgba(245, 158, 11, 0.45), 0 3px 8px rgba(0, 0, 0, 0.6);
+        box-shadow: 0 3px 8px rgba(0, 0, 0, 0.55), 0 0 8px rgba(245, 158, 11, 0.32);
         display: flex;
         align-items: center;
         justify-content: center;
+        overflow: visible;
         cursor: grab;
         transition: opacity 0.2s ease, transform 0.16s ease, border-color 0.2s ease, box-shadow 0.2s ease;
         -webkit-backface-visibility: hidden;
         backface-visibility: hidden;
       }
 
-      #anchor-badge:hover {
-        opacity: 1 !important;
+      #anchor-stage.hovered #anchor-badge {
         transform: scale(1.1);
         border-color: #fbbf24;
-        box-shadow: 0 0 16px rgba(251, 191, 36, 0.72), 0 4px 10px rgba(0, 0, 0, 0.65);
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.6), 0 0 10px rgba(251, 191, 36, 0.55);
       }
 
-      #anchor-badge.occluded {
-        opacity: 0.35;
-      }
-
-      #anchor-badge.dragging {
-        opacity: 1 !important;
+      #anchor-stage.dragging #anchor-badge {
         cursor: grabbing;
         transform: scale(1.14);
         border-color: #8e52ff;
-        box-shadow: 0 0 0 4px rgba(142, 82, 255, 0.28), 0 0 18px rgba(251, 191, 36, 0.75);
+        box-shadow: 0 0 0 3.5px rgba(142, 82, 255, 0.28), 0 4px 10px rgba(0, 0, 0, 0.6), 0 0 12px rgba(251, 191, 36, 0.55);
       }
 
       #anchor-pin-icon {
@@ -71,7 +133,7 @@
         pointer-events: none;
       }
 
-      #anchor-badge.dragging #anchor-pin-icon {
+      #anchor-stage.dragging #anchor-pin-icon {
         transform: rotate(0deg);
         color: #eaddff;
       }
@@ -85,16 +147,16 @@
         pointer-events: none;
       }
 
-      #anchor-badge.pulse-paste {
+      #anchor-stage.pulse-paste #anchor-badge {
         border-color: #45a29e;
-        box-shadow: 0 0 18px rgba(69, 162, 158, 0.85), 0 3px 8px rgba(0, 0, 0, 0.6);
+        box-shadow: 0 3px 8px rgba(0, 0, 0, 0.55), 0 0 12px rgba(69, 162, 158, 0.65);
       }
 
-      #anchor-badge.pulse-paste #anchor-pin-icon {
+      #anchor-stage.pulse-paste #anchor-pin-icon {
         color: #7bd6d1;
       }
 
-      #anchor-badge.pulse-paste #anchor-ring {
+      #anchor-stage.pulse-paste #anchor-ring {
         animation: anchor-ring-pulse 0.6s ease-out forwards;
       }
 
@@ -104,26 +166,41 @@
           opacity: 0.9;
         }
         100% {
-          transform: scale(1.55);
+          transform: scale(1.75);
           opacity: 0;
         }
       }
     </style>
   </head>
   <body>
-    <div id="anchor-badge" title="📌 Якорь вставки текста&#10;Клик — снять якорь&#10;Перетащите — перенести в другое окно">
-      <div id="anchor-ring"></div>
-      <span class="material-symbols-outlined" id="anchor-pin-icon">push_pin</span>
+    <div id="anchor-stage">
+      <div id="anchor-glow" aria-hidden="true"></div>
+      <div id="anchor-badge" title="📌 Якорь вставки текста&#10;Клик — снять якорь&#10;Перетащите — перенести в другое окно">
+        <div id="anchor-ring"></div>
+        <span class="material-symbols-outlined" id="anchor-pin-icon">push_pin</span>
+      </div>
     </div>
 
     <script>
+      const stage = document.getElementById('anchor-stage');
       const badge = document.getElementById('anchor-badge');
+
+      function setHoveredState(hovered) {
+        if (stage) {
+          stage.classList.toggle('hovered', !!hovered);
+        }
+      }
 
       function registerAnchorHitRegion() {
         if (!window.__TAURI__ || !window.__TAURI__.core) return;
         const sf = window.devicePixelRatio || 1;
+        const vw = window.innerWidth || 128;
+        const vh = window.innerHeight || 128;
+        const hitSize = 32;
+        const rx = Math.round((vw - hitSize) / 2);
+        const ry = Math.round((vh - hitSize) / 2);
         window.__TAURI__.core.invoke('set_click_region', {
-          rects: [{ x: 13, y: 13, width: 30, height: 30, radius: 15 }],
+          rects: [{ x: rx, y: ry, width: hitSize, height: hitSize, radius: hitSize / 2 }],
           scaleFactor: sf
         }).catch(() => {});
       }
@@ -137,6 +214,8 @@
       }
 
       if (badge) {
+        badge.addEventListener('mouseenter', () => setHoveredState(true));
+        badge.addEventListener('mouseleave', () => setHoveredState(false));
         badge.addEventListener('mousedown', (e) => {
           if (e.button !== 0) return;
           e.preventDefault();
@@ -156,6 +235,9 @@
 
         invoke('get_anchor_state').then(updateBadgeTooltip).catch(() => {});
 
+        listen('cursor-entered-region', () => setHoveredState(true));
+        listen('cursor-left-region', () => setHoveredState(false));
+
         listen('anchor-state-changed', (event) => {
           updateBadgeTooltip(event.payload || {});
           registerAnchorHitRegion();
@@ -163,27 +245,30 @@
 
         listen('anchor-drag-state', (event) => {
           const dragging = !!(event.payload && event.payload.dragging);
-          if (badge) {
-            badge.classList.toggle('dragging', dragging);
+          if (stage) {
+            stage.classList.toggle('dragging', dragging);
+            if (!dragging) {
+              stage.classList.remove('hovered');
+            }
           }
         });
 
         listen('anchor-occluded', (event) => {
           const occluded = !!(event.payload && event.payload.occluded);
-          if (badge) {
-            badge.classList.toggle('occluded', occluded);
+          if (stage) {
+            stage.classList.toggle('occluded', occluded);
           }
         });
 
         let pulseTimer = null;
         listen('anchor-paste-pulse', () => {
-          if (!badge) return;
-          badge.classList.remove('pulse-paste');
-          void badge.offsetWidth;
-          badge.classList.add('pulse-paste');
+          if (!stage) return;
+          stage.classList.remove('pulse-paste');
+          void stage.offsetWidth;
+          stage.classList.add('pulse-paste');
           if (pulseTimer) clearTimeout(pulseTimer);
           pulseTimer = setTimeout(() => {
-            badge.classList.remove('pulse-paste');
+            stage.classList.remove('pulse-paste');
           }, 620);
         });
       }
