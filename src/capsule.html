@@ -234,7 +234,7 @@
       }
       
       #active-pill.expanded {
-        width: 240px;
+        width: 264px;
         height: 48px;
         padding: 0 12px;
         border-color: rgba(142, 82, 255, 0.6);
@@ -291,7 +291,7 @@
 
       #active-pill.expanded .active-right-sec {
         opacity: 1;
-        max-width: 115px;
+        max-width: 144px;
         visibility: visible;
         border-left: 1px solid rgba(74, 68, 85, 0.4);
         padding-left: 8px;
@@ -320,7 +320,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        width: 240px;
+        width: 268px;
         height: 100px;
         pointer-events: none;
       }
@@ -382,6 +382,53 @@
       #btn-cancel-sending.visible:hover {
         opacity: 1 !important;
         transform: scale(1.1) !important;
+      }
+
+      /* Мини-скрепка якоря вставки во время отправки/обработки ИИ */
+      #btn-sending-anchor {
+        opacity: 0;
+        pointer-events: none;
+        cursor: grab;
+      }
+      #btn-sending-anchor.visible {
+        opacity: 0.78;
+        pointer-events: auto;
+      }
+      .active-pill-wrapper:hover #btn-sending-anchor.visible {
+        opacity: 0.95;
+      }
+      #btn-sending-anchor.visible:hover {
+        opacity: 1 !important;
+        transform: scale(1.12) !important;
+        border-color: #f59e0b !important;
+        color: #fbbf24 !important;
+      }
+      #btn-sending-anchor.anchor-active {
+        border-color: #f59e0b !important;
+        color: #fbbf24 !important;
+        box-shadow: 0 0 10px rgba(245, 158, 11, 0.5) !important;
+      }
+      #btn-sending-anchor.anchor-active .anchor-btn-icon {
+        font-variation-settings: 'FILL' 1 !important;
+        transform: rotate(35deg);
+      }
+
+      /* Кнопка якоря вставки внутри раскрытой пилюли записи/паузы */
+      #btn-active-anchor {
+        color: #ccc3d8;
+        cursor: grab;
+        transition: color 0.18s ease, transform 0.18s ease;
+      }
+      #btn-active-anchor:hover {
+        color: #fbbf24;
+      }
+      #btn-active-anchor.anchor-active {
+        color: #fbbf24 !important;
+        filter: drop-shadow(0 0 5px rgba(245, 158, 11, 0.55));
+      }
+      #btn-active-anchor.anchor-active .anchor-btn-icon {
+        font-variation-settings: 'FILL' 1 !important;
+        transform: rotate(35deg);
       }
 
       /* Активный якорь вставки текста (📌) */
@@ -528,6 +575,9 @@
               <div class="font-mono text-[11px] text-[#45a29e] tracking-wider pr-1 transition-colors" id="active-timer">
                 00:00
               </div>
+              <button class="bg-transparent border-0 flex items-center justify-center active:scale-90 p-0 gpu-layer mr-1" id="btn-active-anchor" title="Якорь вставки текста (Alt+A)&#10;Перетащите на поле ввода или нажмите">
+                <span class="material-symbols-outlined text-[15px] anchor-btn-icon" style="font-variation-settings: 'FILL' 0; transition: transform 0.2s ease;">push_pin</span>
+              </button>
               <button class="text-[#ccc3d8] hover:text-[#8e52ff] bg-transparent border-0 flex items-center justify-center active:scale-90 cursor-pointer p-0 gpu-layer" id="btn-active-send" title="Отправить в Gemini 🚀">
                 <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
               </button>
@@ -536,6 +586,11 @@
               </button>
             </div>
           </div>
+
+          <!-- Мини-скрепка якоря вставки (доступна во время отправки/размышлений ИИ) -->
+          <button class="absolute bg-[#1b1b25]/95 hover:bg-[#25201b] border border-[#f59e0b]/45 text-[#e4e1e9] rounded-full flex items-center justify-center shadow-lg transition-all duration-200 opacity-0 pointer-events-none z-50 active:scale-90" id="btn-sending-anchor" title="Якорь вставки текста (Alt+A)&#10;Перетащите на нужное окно пока ИИ распознаёт речь" style="width: 22px; height: 22px; left: calc(50% - 40px); top: calc(50% - 33px);">
+            <span class="material-symbols-outlined anchor-btn-icon" style="font-size: 12px; font-variation-settings: 'FILL' 0; transition: transform 0.2s ease;">push_pin</span>
+          </button>
 
           <!-- Кнопка отмены ИИ (маленький аккуратный крестик над пилюлей) -->
           <button class="absolute bg-[#1b1b25]/95 hover:bg-[#251b25] border border-[#f05454]/40 hover:border-[#f05454] text-[#ccc3d8] hover:text-[#f05454] rounded-full w-5 h-5 flex items-center justify-center shadow-lg transition-all duration-300 opacity-0 pointer-events-none z-50 cursor-pointer active:scale-90" id="btn-cancel-sending" title="Отменить запрос ИИ" style="left: calc(50% + 18px); top: calc(50% - 32px); pointer-events: auto;">
@@ -583,6 +638,8 @@
       const activeCancelBanner = document.getElementById('active-cancel-banner');
       const activeErrorBanner = document.getElementById('active-error-banner');
       const btnCancelSending = document.getElementById('btn-cancel-sending');
+      const btnSendingAnchor = document.getElementById('btn-sending-anchor');
+      const btnActiveAnchor = document.getElementById('btn-active-anchor');
       const activeMiniTimer = document.getElementById('active-mini-timer');
       const cancelCountdownText = document.getElementById('cancel-countdown-text');
       const btnKeepRecording = document.getElementById('btn-keep-recording');
@@ -630,6 +687,9 @@
       let mediaRecorder = null;
       let audioStream = null;
       let audioChunks = [];
+      let recordedAudioChunks = [];
+      let recordedMimeType = 'audio/webm';
+      let lastRecordedPcm16kBase64 = null;
       let globalAudioStream = null;
       let maxRecordedVolume = 0;
       let maxRecordedRms = 0;
@@ -1069,6 +1129,9 @@
         if (btnCancelSending) {
           btnCancelSending.classList.remove('visible');
         }
+        if (btnSendingAnchor) {
+          btnSendingAnchor.classList.remove('visible');
+        }
 
         // Сбрасываем классы состояний и баннеры по умолчанию
         if (activePill) {
@@ -1151,6 +1214,9 @@
           activePill.classList.add('state-sending');
           if (btnCancelSending) {
             btnCancelSending.classList.add('visible');
+          }
+          if (btnSendingAnchor) {
+            btnSendingAnchor.classList.add('visible');
           }
           
           activeIcon.textContent = 'progress_activity';
@@ -1318,20 +1384,20 @@
             addBottomCenteredRect(208, 48, 6, 24);
             addBottomCenteredRect(188, 102, 46, 16);
           } else if (st === 'sending') {
-            // Компактный Orb (48x48) + крестик отмены сверху справа
-            addBottomCenteredRect(68, 66, 6, 26);
+            // Компактный Orb (56x56) + мини-скрепка 📌 и крестик отмены сверху
+            addBottomCenteredRect(94, 72, 24, 24);
           } else if (st === 'send-success') {
-            addBottomCenteredRect(54, 54, 6, 27);
+            addBottomCenteredRect(60, 60, 28, 30);
           } else if (st === 'recording-idle' || st === 'pause-idle') {
-            // Компактный пульсирующий Orb (48x48)
-            addBottomCenteredRect(56, 56, 6, 28);
+            // Компактный пульсирующий Orb (56x56)
+            addBottomCenteredRect(60, 60, 28, 30);
           } else if (st === 'recording-hover' || st === 'pause-hover') {
-            // Раскрытая пилюля (220x48) без внешней тени
-            addBottomCenteredRect(224, 52, 6, 26);
+            // Раскрытая пилюля (264x48) с кнопкой 📌 без внешней тени
+            addBottomCenteredRect(270, 56, 30, 28);
           } else if (st === 'recording-fan' || st === 'pause-fan') {
             // Раскрытая пилюля + веер пресетов над ней
-            addBottomCenteredRect(224, 52, 6, 26);
-            addBottomCenteredRect(190, 96, 52, 16);
+            addBottomCenteredRect(270, 56, 30, 28);
+            addBottomCenteredRect(196, 104, 76, 16);
           } else if (st === 'send-error' || st === 'cancel-confirm') {
             // Пилюля + баннер подтверждения/ошибки над ней
             addBottomCenteredRect(266, 186, 6, 18);
@@ -1468,6 +1534,8 @@
           maxRecordedRms = 0;
           speechFramesCount = 0;
           micTrackBroken = false;
+          recordedAudioChunks = [];
+          lastRecordedPcm16kBase64 = null;
           activeTimer.textContent = '00:00';
 
           // Получаем поток микрофона строго при старте записи
@@ -1512,6 +1580,7 @@
           if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
             mimeType = 'audio/webm;codecs=opus';
           }
+          recordedMimeType = mimeType;
 
           mediaRecorder = new MediaRecorder(audioStream, { 
             mimeType, 
@@ -1520,6 +1589,7 @@
           
           mediaRecorder.ondataavailable = async (event) => {
             if (event.data && event.data.size > 0) {
+              recordedAudioChunks.push(event.data);
               const arrayBuffer = await event.data.arrayBuffer();
               const uint8Array = new Uint8Array(arrayBuffer);
               const bytesArray = Array.from(uint8Array);
@@ -1663,16 +1733,59 @@
         switchState('idle');
       }
 
+      async function extractPcm16kBase64FromBlob(blob) {
+        if (!blob || blob.size === 0) return null;
+        let decodeCtx = null;
+        try {
+          const arrayBuf = await blob.arrayBuffer();
+          decodeCtx = new (window.AudioContext || window.webkitAudioContext)();
+          const audioBuf = await decodeCtx.decodeAudioData(arrayBuf.slice(0));
+          const targetRate = 16000;
+          const targetLen = Math.max(1, Math.ceil(audioBuf.duration * targetRate));
+          const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, targetLen, targetRate);
+          const src = offlineCtx.createBufferSource();
+          src.buffer = audioBuf;
+          src.connect(offlineCtx.destination);
+          src.start(0);
+          const rendered = await offlineCtx.startRendering();
+          const ch = rendered.getChannelData(0);
+          const pcmBytes = new Uint8Array(ch.length * 2);
+          const view = new DataView(pcmBytes.buffer);
+          for (let i = 0; i < ch.length; i++) {
+            const clamped = Math.max(-1, Math.min(1, ch[i]));
+            view.setInt16(i * 2, clamped < 0 ? clamped * 0x8000 : clamped * 0x7FFF, true);
+          }
+          let binStr = '';
+          const chunkSize = 0x4000;
+          for (let i = 0; i < pcmBytes.length; i += chunkSize) {
+            binStr += String.fromCharCode.apply(null, pcmBytes.subarray(i, i + chunkSize));
+          }
+          return btoa(binStr);
+        } catch (err) {
+          console.warn('[Capsule] PCM16k extract skipped:', err);
+          return null;
+        } finally {
+          if (decodeCtx && typeof decodeCtx.close === 'function') {
+            try { await decodeCtx.close(); } catch (_) {}
+          }
+        }
+      }
+
       async function sendAudioData(durationSecs) {
         currentRequestCancelled = false;
         switchState('sending');
         try {
+          if (!lastRecordedPcm16kBase64 && recordedAudioChunks.length > 0) {
+            const fullBlob = new Blob(recordedAudioChunks, { type: recordedMimeType });
+            lastRecordedPcm16kBase64 = await extractPcm16kBase64FromBlob(fullBlob);
+          }
           const promptToSend = customPromptText || "";
           if (invoke) {
             const entry = await invoke('save_audio', {
               durationSecs: durationSecs,
               preset: currentPreset,
-              customPrompt: promptToSend.trim().length > 0 ? promptToSend : null
+              customPrompt: promptToSend.trim().length > 0 ? promptToSend : null,
+              pcm16kBase64: lastRecordedPcm16kBase64
             });
 
             if (currentRequestCancelled) return;
@@ -1873,7 +1986,7 @@
       
       if (activePill) {
         activePill.addEventListener('click', (e) => {
-          if (e.target.closest('#btn-active-send') || e.target.closest('#btn-active-cancel') || e.target.closest('#btn-active-presets-inside')) return;
+          if (e.target.closest('#btn-active-anchor') || e.target.closest('#btn-active-send') || e.target.closest('#btn-active-cancel') || e.target.closest('#btn-active-presets-inside')) return;
           if (currentState === 'recording') {
             pauseRecordingProcess();
           } else if (currentState === 'pause') {
@@ -1943,11 +2056,27 @@
         const label = state && (state.window_title || state.app_name)
           ? (state.window_title || state.app_name)
           : '';
-        if (btnAnchor) {
-          btnAnchor.classList.toggle('anchor-active', anchorActive);
-          btnAnchor.title = anchorActive
-            ? `📌 Якорь активен: ${label}\nНажмите, чтобы снять | Перетащите, чтобы перенести`
-            : 'Якорь вставки текста (Alt+A)\nПеретащите на поле ввода или нажмите для закрепления';
+        const anchorButtons = [
+          {
+            el: btnAnchor,
+            activeTitle: `📌 Якорь активен: ${label}\nНажмите, чтобы снять | Перетащите, чтобы перенести`,
+            idleTitle: 'Якорь вставки текста (Alt+A)\nПеретащите на поле ввода или нажмите для закрепления'
+          },
+          {
+            el: btnSendingAnchor,
+            activeTitle: `📌 Якорь активен: ${label}\nНажмите, чтобы снять | Перетащите, чтобы перенести`,
+            idleTitle: 'Якорь вставки текста (Alt+A)\nПеретащите на нужное окно пока ИИ распознаёт речь'
+          },
+          {
+            el: btnActiveAnchor,
+            activeTitle: `📌 Якорь активен: ${label}\nНажмите, чтобы снять | Перетащите, чтобы перенести`,
+            idleTitle: 'Якорь вставки текста (Alt+A)\nПеретащите на поле ввода или нажмите'
+          }
+        ];
+        for (const item of anchorButtons) {
+          if (!item.el) continue;
+          item.el.classList.toggle('anchor-active', anchorActive);
+          item.el.title = anchorActive ? item.activeTitle : item.idleTitle;
         }
         if (anchorActiveDot) {
           anchorActiveDot.classList.toggle('visible', anchorActive);
@@ -1957,8 +2086,9 @@
         }
       }
 
-      if (btnAnchor) {
-        btnAnchor.addEventListener('mousedown', (e) => {
+      function bindAnchorPinButton(el) {
+        if (!el) return;
+        el.addEventListener('mousedown', (e) => {
           if (e.button !== 0) return;
           e.preventDefault();
           e.stopPropagation();
@@ -1966,7 +2096,15 @@
             invoke('start_anchor_pin_drag', { fromBeacon: false }).catch(() => {});
           }
         });
+        el.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        });
       }
+
+      bindAnchorPinButton(btnAnchor);
+      bindAnchorPinButton(btnSendingAnchor);
+      bindAnchorPinButton(btnActiveAnchor);
 
       if (window.__TAURI__) {
         const { invoke } = window.__TAURI__.core;

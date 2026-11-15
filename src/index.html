@@ -1665,20 +1665,38 @@
 
       // Известные лимиты Free Tier (обновляется из документации)
       const MODEL_LIMITS_KNOWN = {
-        'gemini-3.5-flash':       { rpm: 15,  rpd: 1500, tpm: 1000000, note: 'Рекомендуется, высокая квота ✓' },
-        'gemini-3.5-flash-lite':  { rpm: 30,  rpd: 1500, tpm: 1000000, note: 'Макс. скорость, Free Tier ✓' },
-        'gemini-3.6-flash':       { rpm: 15,  rpd: 1500, tpm: 1000000, note: 'Новейшая мультимодальная ✓' },
-        'gemini-2.5-flash':       { rpm: 10,  rpd: 500,  tpm: 1000000, note: 'Баланс скорость/качество ✓' },
-        'gemini-2.5-flash-lite':  { rpm: 30,  rpd: 1500, tpm: 1000000, note: 'Быстрая и экономная' },
-        'gemini-3-flash-preview': { rpm: 15,  rpd: 1500, tpm: 1000000, note: 'Быстрая мультимодальная' },
-        'gemini-2.5-pro':         { rpm: 5,   rpd: 25,   tpm: 1000000, note: 'Самая мощная, малый лимит' },
+        'gemini-3.5-flash':                    { rpm: 15,  rpd: 1500, tpm: 1000000, note: 'Рекомендуется, высокая квота ✓' },
+        'gemini-3.5-flash-lite':               { rpm: 30,  rpd: 1500, tpm: 1000000, note: 'Макс. скорость, Free Tier ✓' },
+        'gemini-3.6-flash':                    { rpm: 15,  rpd: 1500, tpm: 1000000, note: 'Новейшая мультимодальная ✓' },
+        'gemini-2.5-flash':                    { rpm: 10,  rpd: 500,  tpm: 1000000, note: 'Баланс скорость/качество ✓' },
+        'gemini-2.5-flash-lite':               { rpm: 30,  rpd: 1500, tpm: 1000000, note: 'Быстрая и экономная' },
+        'gemini-3-flash-preview':              { rpm: 15,  rpd: 1500, tpm: 1000000, note: 'Быстрая мультимодальная' },
+        'gemini-2.5-pro':                      { rpm: 5,   rpd: 25,   tpm: 1000000, note: 'Самая мощная, малый лимит' },
+        'gemini-2.5-flash-native-audio-latest': { rpm: '∞ (Live)', rpd: 'Безлимит', tpm: 1000000, note: '⚡ Live WebSocket в режиме «Только текст» (без озвучки): нет дневного лимита RPD! Быстро для диктовки, ответы ИИ идут со скоростью речи.' },
+        'gemini-3.1-flash-live-preview':        { rpm: '∞ (Live)', rpd: 'Безлимит', tpm: 65000,   note: '⚡ Gemini 3.1 Live WebSocket в режиме «Только текст»: без дневного лимита RPD.' },
       };
+
+      function isLiveTextModelId(id) {
+        const m = (id || '').replace('models/', '').trim().toLowerCase();
+        return m.startsWith('gemini-') && (m.includes('native-audio') || m.includes('-live'));
+      }
 
       async function fetchAndPopulateModels(apiKey, savedModel) {
         const select = document.getElementById('setting-ai-model');
         const loadingBadge = document.getElementById('models-loading-badge');
         const refreshBtn = document.getElementById('btn-refresh-models');
         const infoBox = document.getElementById('model-info-box');
+
+        const LIVE_TEXT_PRESETS = [
+          {
+            id: 'gemini-2.5-flash-native-audio-latest',
+            label: '⚡ Gemini 2.5 Flash Live — Без лимита RPD (только текст, 1M TPM)'
+          },
+          {
+            id: 'gemini-3.1-flash-live-preview',
+            label: '⚡ Gemini 3.1 Flash Live — Без лимита RPD (только текст)'
+          }
+        ];
 
         let models = [];
 
@@ -1728,7 +1746,8 @@
               'gemini-2.5-pro'
             ];
 
-            models = (data.models || []).filter(m => {
+            const allFetched = data.models || [];
+            const restModels = allFetched.filter(m => {
               const id = (m.name || '').replace('models/', '');
               return m.supportedGenerationMethods?.includes('generateContent') && isValidMultimodalModel(id);
             }).map(m => {
@@ -1741,7 +1760,7 @@
             });
 
             // Сортируем: сначала рекомендуемые мультимодальные модели с высокой квотой
-            models.sort((a, b) => {
+            restModels.sort((a, b) => {
               const idxA = priorityOrder.indexOf(a.id);
               const idxB = priorityOrder.indexOf(b.id);
               if (idxA !== -1 && idxB !== -1) return idxA - idxB;
@@ -1749,13 +1768,37 @@
               if (idxB !== -1) return 1;
               return b.label.localeCompare(a.label);
             });
+
+            // Добавляем Live WebSocket модели (в тихом текстовом режиме через input/outputAudioTranscription)
+            const seenIds = new Set(restModels.map(m => m.id));
+            const liveModels = [];
+            for (const preset of LIVE_TEXT_PRESETS) {
+              if (!seenIds.has(preset.id)) {
+                seenIds.add(preset.id);
+                liveModels.push(preset);
+              }
+            }
+            for (const m of allFetched) {
+              const id = (m.name || '').replace('models/', '');
+              if (m.supportedGenerationMethods?.includes('bidiGenerateContent') && isLiveTextModelId(id) && !seenIds.has(id)) {
+                seenIds.add(id);
+                const display = m.displayName || id;
+                liveModels.push({
+                  id,
+                  label: `⚡ ${display} — Без лимита RPD (только текст)`
+                });
+              }
+            }
+
+            models = [...restModels, ...liveModels];
           } catch (err) {
             console.error('Ошибка загрузки моделей Gemini:', err);
             models = [
               { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash (офлайн-фолбек)' },
               { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite (офлайн-фолбек)' },
               { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (офлайн-фолбек)' },
-              { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite (офлайн-фолбек)' }
+              { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite (офлайн-фолбек)' },
+              ...LIVE_TEXT_PRESETS
             ];
           }
         }
@@ -1807,8 +1850,19 @@
       function updateModelInfo(modelId) {
         const infoBox = document.getElementById('model-info-box');
         if (!infoBox) return;
-        const limits = MODEL_LIMITS_KNOWN[modelId];
+        let limits = MODEL_LIMITS_KNOWN[modelId];
+        if (!limits && isLiveTextModelId(modelId)) {
+          limits = {
+            rpm: '∞ (Live)',
+            rpd: 'Безлимит',
+            tpm: 1000000,
+            note: '⚡ Live WebSocket в режиме «Только текст» (без озвучки): без дневного лимита RPD.'
+          };
+        }
         if (limits) {
+          const tpmLabel = limits.tpm >= 1000000
+            ? `${(limits.tpm / 1000000).toFixed(0)}M`
+            : `${(limits.tpm / 1000).toFixed(0)}K`;
           infoBox.innerHTML = `
             <div class="flex flex-wrap gap-2">
               <span class="bg-[#2a292f] px-2 py-0.5 rounded text-[10px] border border-[#4a4455]/30">
@@ -1818,7 +1872,7 @@
                 <span class="text-[#d2bbff] font-semibold">${limits.rpd}</span> запросов/день
               </span>
               <span class="bg-[#2a292f] px-2 py-0.5 rounded text-[10px] border border-[#4a4455]/30">
-                <span class="text-[#7bd6d1] font-semibold">${(limits.tpm/1000).toFixed(0)}K</span> токенов/мин
+                <span class="text-[#7bd6d1] font-semibold">${tpmLabel}</span> токенов/мин
               </span>
             </div>
             <p class="text-[10px] text-[#ccc3d8] mt-1">${limits.note}</p>
@@ -3789,6 +3843,44 @@
         if (cancelBtn) cancelBtn.disabled = disabled;
       }
 
+      async function extractPcm16kBase64FromDataUri(dataUri) {
+        if (!dataUri || typeof dataUri !== 'string') return null;
+        let decodeCtx = null;
+        try {
+          const resp = await fetch(dataUri);
+          const arrayBuf = await resp.arrayBuffer();
+          decodeCtx = new (window.AudioContext || window.webkitAudioContext)();
+          const audioBuf = await decodeCtx.decodeAudioData(arrayBuf.slice(0));
+          const targetRate = 16000;
+          const targetLen = Math.max(1, Math.ceil(audioBuf.duration * targetRate));
+          const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, targetLen, targetRate);
+          const src = offlineCtx.createBufferSource();
+          src.buffer = audioBuf;
+          src.connect(offlineCtx.destination);
+          src.start(0);
+          const rendered = await offlineCtx.startRendering();
+          const ch = rendered.getChannelData(0);
+          const pcmBytes = new Uint8Array(ch.length * 2);
+          const view = new DataView(pcmBytes.buffer);
+          for (let i = 0; i < ch.length; i++) {
+            const clamped = Math.max(-1, Math.min(1, ch[i]));
+            view.setInt16(i * 2, clamped < 0 ? clamped * 0x8000 : clamped * 0x7FFF, true);
+          }
+          let binStr = '';
+          const chunkSize = 0x4000;
+          for (let i = 0; i < pcmBytes.length; i += chunkSize) {
+            binStr += String.fromCharCode.apply(null, pcmBytes.subarray(i, i + chunkSize));
+          }
+          return btoa(binStr);
+        } catch (_) {
+          return null;
+        } finally {
+          if (decodeCtx && typeof decodeCtx.close === 'function') {
+            try { await decodeCtx.close(); } catch (_) {}
+          }
+        }
+      }
+
       async function submitNewRequest() {
         if (!currentActiveEntry) return;
 
@@ -3852,6 +3944,15 @@
 
         if (window.__TAURI__) {
           try {
+            let pcm16kBase64 = null;
+            if (sourceType === 'audio' && currentActiveEntry && currentActiveEntry.audio_path) {
+              try {
+                const dataUri = await window.__TAURI__.core.invoke('get_audio_base64', { path: currentActiveEntry.audio_path });
+                pcm16kBase64 = await extractPcm16kBase64FromDataUri(dataUri);
+              } catch (pcmErr) {
+                console.warn('PCM16k conversion for process_ai_request skipped:', pcmErr);
+              }
+            }
             // Вызов команды Tauri
             const updatedHistory = await window.__TAURI__.core.invoke('process_ai_request', {
               entryId: currentActiveEntry.id,
@@ -3859,7 +3960,8 @@
               sourceText: sourceText,
               preset: presetVal,
               customPrompt: presetVal === 'custom' ? customPrompt : null,
-              resultLabel: resultLabel
+              resultLabel: resultLabel,
+              pcm16kBase64: pcm16kBase64
             });
 
             currentHistory = updatedHistory;
@@ -3997,13 +4099,13 @@
             console.error("Failed to load app version:", err);
             const versionDisplay = document.getElementById('app-version-display');
             if (versionDisplay) {
-              versionDisplay.textContent = `Текущая версия: 3.5.53`;
+              versionDisplay.textContent = `Текущая версия: 3.5.54`;
             }
           });
         } else {
           const versionDisplay = document.getElementById('app-version-display');
           if (versionDisplay) {
-            versionDisplay.textContent = `Текущая версия: 3.5.53 (Mock)`;
+            versionDisplay.textContent = `Текущая версия: 3.5.54 (Mock)`;
           }
         }
 

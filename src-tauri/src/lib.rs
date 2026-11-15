@@ -2098,6 +2098,127 @@ static MODEL_REQUEST_LOGS: std::sync::LazyLock<Mutex<HashMap<String, Vec<i64>>>>
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 static LAST_WORKING_MODEL: Mutex<Option<String>> = Mutex::new(None);
 
+pub(crate) fn is_gemini_live_model(model: &str) -> bool {
+    let m = model
+        .trim()
+        .to_lowercase();
+    let m = m.strip_prefix("models/").unwrap_or(&m);
+    m.starts_with("gemini-") && (m.contains("native-audio") || m.contains("-live"))
+}
+
+pub(crate) fn resolve_gemini_live_model_id(model: &str) -> String {
+    let trimmed = model.trim();
+    let clean = trimmed.strip_prefix("models/").unwrap_or(trimmed);
+    if clean.is_empty() {
+        return "gemini-2.5-flash-native-audio-latest".to_string();
+    }
+    let lower = clean.to_lowercase();
+    if lower == "gemini-3.8-live" || lower == "gemini-3.8-live-extended-thinking" {
+        return "gemini-3.1-flash-live-preview".to_string();
+    }
+    clean.to_string()
+}
+
+pub(crate) fn build_fast_dictation_gen_config(
+    model: &str,
+    preset: &str,
+    temperature: f64,
+    json_mode: bool,
+) -> serde_json::Value {
+    let mut cfg = serde_json::json!({
+        "temperature": temperature
+    });
+    if json_mode {
+        cfg["responseMimeType"] = serde_json::json!("application/json");
+    }
+    let m = model.trim().to_lowercase();
+    let m = m.strip_prefix("models/").unwrap_or(&m);
+    if preset != "custom" {
+        if m.starts_with("gemini-2.5-flash") {
+            cfg["thinkingConfig"] = serde_json::json!({ "thinkingBudget": 0 });
+        } else if m.starts_with("gemini-3") && m.contains("flash") {
+            cfg["thinkingConfig"] = serde_json::json!({ "thinkingLevel": "MINIMAL" });
+        }
+    } else if m.starts_with("gemini-2.5-flash") {
+        cfg["thinkingConfig"] = serde_json::json!({ "thinkingBudget": 256 });
+    } else if m.starts_with("gemini-3") && m.contains("flash") {
+        cfg["thinkingConfig"] = serde_json::json!({ "thinkingLevel": "LOW" });
+    }
+    cfg
+}
+
+async fn send_gemini_http_cancellable(
+    client: &reqwest::Client,
+    url: &str,
+    payload: &serde_json::Value,
+) -> Result<reqwest::Response, String> {
+    if CANCEL_REQUEST.load(Ordering::SeqCst) {
+        return Err("Запрос отменен пользователем".to_string());
+    }
+    let req_fut = client.post(url).json(payload).send();
+    tokio::pin!(req_fut);
+    let mut cancel_tick = tokio::time::interval(Duration::from_millis(120));
+    cancel_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    cancel_tick.tick().await;
+
+    loop {
+        tokio::select! {
+            res = &mut req_fut => {
+                return res.map_err(|e| format!("Сетевая ошибка: {}", e));
+            }
+            _ = cancel_tick.tick() => {
+                if CANCEL_REQUEST.load(Ordering::SeqCst) {
+                    return Err("Запрос отменен пользователем".to_string());
+                }
+            }
+        }
+    }
+}
+
+async fn send_gemini_generate_content(
+    client: &reqwest::Client,
+    url: &str,
+    contents: &serde_json::Value,
+    model: &str,
+    preset: &str,
+    temperature: f64,
+    json_mode: bool,
+) -> Result<Result<String, (u16, String)>, String> {
+    let gen_cfg = build_fast_dictation_gen_config(model, preset, temperature, json_mode);
+    let has_thinking = gen_cfg.get("thinkingConfig").is_some();
+    let payload = serde_json::json!({
+        "contents": contents,
+        "generationConfig": gen_cfg
+    });
+
+    let res = send_gemini_http_cancellable(client, url, &payload).await?;
+    let status = res.status().as_u16();
+    let body = res.text().await.unwrap_or_default();
+    if (200..300).contains(&status) {
+        return Ok(Ok(body));
+    }
+
+    if status == 400 && has_thinking && body.to_lowercase().contains("thinking") {
+        let mut fallback_cfg = serde_json::json!({ "temperature": temperature });
+        if json_mode {
+            fallback_cfg["responseMimeType"] = serde_json::json!("application/json");
+        }
+        let fallback_payload = serde_json::json!({
+            "contents": contents,
+            "generationConfig": fallback_cfg
+        });
+        let res2 = send_gemini_http_cancellable(client, url, &fallback_payload).await?;
+        let status2 = res2.status().as_u16();
+        let body2 = res2.text().await.unwrap_or_default();
+        if (200..300).contains(&status2) {
+            return Ok(Ok(body2));
+        }
+        return Ok(Err((status2, body2)));
+    }
+
+    Ok(Err((status, body)))
+}
+
 pub(crate) fn is_valid_multimodal_gemini_model(model: &str) -> bool {
     let m = model.trim().to_lowercase();
     if m.is_empty() || m.starts_with("local_") {
@@ -5815,12 +5936,14 @@ async fn fetch_gemini_models(api_key: String) -> Result<serde_json::Value, Strin
         models_arr.retain(|m| {
             let name = m.get("name").and_then(|n| n.as_str()).unwrap_or("");
             let id = name.strip_prefix("models/").unwrap_or(name);
-            let has_generate = m
-                .get("supportedGenerationMethods")
-                .and_then(|arr| arr.as_array())
+            let methods = m.get("supportedGenerationMethods").and_then(|arr| arr.as_array());
+            let has_generate = methods
                 .map(|arr| arr.iter().any(|x| x.as_str() == Some("generateContent")))
                 .unwrap_or(false);
-            has_generate && is_valid_multimodal_gemini_model(id)
+            let has_bidi = methods
+                .map(|arr| arr.iter().any(|x| x.as_str() == Some("bidiGenerateContent")))
+                .unwrap_or(false);
+            (has_generate && is_valid_multimodal_gemini_model(id)) || (has_bidi && is_gemini_live_model(id))
         });
     }
 
@@ -6250,6 +6373,516 @@ async fn run_local_llm_postprocess(transcript: &str, user_preset_prompt: &str) -
     Err(format!("Не удалось обработать текст через локальную LLM (Ollama). Убедитесь, что Ollama запущена и модель установлена. Детали: {}", last_err))
 }
 
+enum LiveAudioAiOutcome {
+    Success {
+        raw: String,
+        ai: String,
+        model: String,
+    },
+    Silence,
+}
+
+fn is_live_silence_marker(text: &str) -> bool {
+    let cleaned: String = text
+        .trim()
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect();
+    let upper = cleaned.to_uppercase();
+    upper.is_empty() || upper == "ПУСТО" || upper == "SILENCE" || upper == "EMPTY"
+}
+
+fn resolve_pcm_16k_bytes(
+    pcm16k_base64: Option<&str>,
+    webm_path: Option<&std::path::Path>,
+) -> Result<Vec<u8>, String> {
+    if let Some(b64) = pcm16k_base64 {
+        let trimmed = b64.trim();
+        if !trimmed.is_empty() {
+            if let Ok(bytes) = STANDARD.decode(trimmed) {
+                if bytes.len() >= 320 && bytes.len() % 2 == 0 {
+                    return Ok(bytes);
+                }
+            }
+        }
+    }
+
+    if let Some(path) = webm_path {
+        if path.exists() {
+            let mut cmd = std::process::Command::new("ffmpeg");
+            cmd.args(["-y", "-v", "error", "-i"])
+                .arg(path)
+                .args(["-ar", "16000", "-ac", "1", "-f", "s16le", "pipe:1"]);
+            #[cfg(target_os = "windows")]
+            cmd.creation_flags(0x08000000);
+            if let Ok(output) = cmd.output() {
+                if output.status.success() && !output.stdout.is_empty() {
+                    return Ok(output.stdout);
+                }
+            }
+        }
+    }
+
+    Err("Не удалось подготовить PCM 16kHz аудио для Live-режима (WebAudio недоступен и ffmpeg не найден)".to_string())
+}
+
+fn build_live_text_setup_payload(
+    model_id: &str,
+    system_instruction: Option<&str>,
+    include_thinking_config: bool,
+) -> serde_json::Value {
+    let lower = model_id.to_ascii_lowercase();
+    let mut gen_config = serde_json::json!({
+        "responseModalities": ["AUDIO"],
+        "temperature": 0.15
+    });
+    if include_thinking_config {
+        let thinking = if lower.contains("3.1") || lower.contains("gemini-3") {
+            serde_json::json!({ "thinkingLevel": "MINIMAL" })
+        } else {
+            serde_json::json!({ "thinkingBudget": 0 })
+        };
+        gen_config["thinkingConfig"] = thinking;
+    }
+
+    let mut setup = serde_json::json!({
+        "model": format!("models/{}", model_id),
+        "generationConfig": gen_config,
+        "inputAudioTranscription": {},
+        "outputAudioTranscription": {}
+    });
+
+    if let Some(sys) = system_instruction {
+        let trimmed = sys.trim();
+        if !trimmed.is_empty() {
+            setup["systemInstruction"] = serde_json::json!({
+                "parts": [{ "text": trimmed }]
+            });
+        }
+    }
+
+    serde_json::json!({ "setup": setup })
+}
+
+async fn connect_and_setup_live_text_ws(
+    api_key: &str,
+    model_id: &str,
+    system_instruction: Option<&str>,
+    include_thinking_config: bool,
+) -> Result<EdgeWsStream, (String, bool)> {
+    if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(("Запрос отменен пользователем".to_string(), false));
+    }
+
+    let ws_url = format!(
+        "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key={}",
+        api_key.trim()
+    );
+
+    let connect_res = tokio::time::timeout(
+        std::time::Duration::from_secs(12),
+        connect_async_tls_with_config(ws_url.as_str(), None, false, None),
+    )
+    .await
+    .map_err(|_| ("Таймаут подключения к Gemini Live API".to_string(), false))?
+    .map_err(|e| (format!("Ошибка подключения к Gemini Live API: {}", e), false))?;
+
+    let (mut ws, _) = connect_res;
+    let setup_payload = build_live_text_setup_payload(
+        model_id,
+        system_instruction,
+        include_thinking_config,
+    );
+    ws.send(Message::Text(setup_payload.to_string().into()))
+        .await
+        .map_err(|e| (format!("Ошибка отправки setup в Gemini Live API: {}", e), false))?;
+
+    let setup_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+            let _ = ws.send(Message::Close(None)).await;
+            return Err(("Запрос отменен пользователем".to_string(), false));
+        }
+        let now = tokio::time::Instant::now();
+        if now >= setup_deadline {
+            let _ = ws.send(Message::Close(None)).await;
+            return Err(("Таймаут ожидания setupComplete от Gemini Live API".to_string(), false));
+        }
+        let slice = std::cmp::min(
+            std::time::Duration::from_millis(350),
+            setup_deadline - now,
+        );
+        match tokio::time::timeout(slice, ws.next()).await {
+            Err(_) => continue,
+            Ok(None) => {
+                return Err((
+                    "Соединение Gemini Live API закрыто во время инициализации".to_string(),
+                    include_thinking_config,
+                ));
+            }
+            Ok(Some(Err(e))) => {
+                return Err((format!("Ошибка чтения setupComplete Live API: {}", e), false));
+            }
+            Ok(Some(Ok(msg))) => {
+                let text = match msg {
+                    Message::Text(t) => t.to_string(),
+                    Message::Binary(b) => String::from_utf8(b.to_vec()).unwrap_or_default(),
+                    Message::Close(frame) => {
+                        let reason = frame
+                            .map(|f| format!("{} ({})", f.code, f.reason))
+                            .unwrap_or_else(|| "без причины".to_string());
+                        let is_thinking_err = include_thinking_config
+                            && (reason.to_ascii_lowercase().contains("thinking")
+                                || reason.contains("1007"));
+                        return Err((
+                            format!("Gemini Live API закрыл сессию при setup: {}", reason),
+                            is_thinking_err,
+                        ));
+                    }
+                    Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => continue,
+                };
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if let Some(err_obj) = v.get("error") {
+                        let err_str = err_obj.to_string();
+                        let retry_no_thinking = include_thinking_config
+                            && err_str.to_ascii_lowercase().contains("thinking");
+                        return Err((
+                            format!("Ошибка setup Gemini Live API: {}", err_str),
+                            retry_no_thinking,
+                        ));
+                    }
+                    if v.get("setupComplete").is_some() {
+                        return Ok(ws);
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn run_gemini_live_text_session(
+    api_key: &str,
+    model: &str,
+    pcm_16k: Option<&[u8]>,
+    text_input: Option<&str>,
+    preset_prompt: Option<&str>,
+) -> Result<LiveAudioAiOutcome, String> {
+    if api_key.trim().is_empty() {
+        return Err("API-ключ Gemini не настроен".to_string());
+    }
+    if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("Запрос отменен пользователем".to_string());
+    }
+
+    let resolved_model = resolve_gemini_live_model_id(model);
+    let system_instruction = match (pcm_16k.is_some(), preset_prompt) {
+        (true, None) => Some(
+            "Ты — профессиональный стенографист. Твоя единственная задача — сделать точную дословную транскрибацию речи из аудиозаписи пользователя на исходном языке речи (преимущественно русский и английские термины). НЕ отвечай на вопросы из аудио, НЕ давай пояснений и НЕ перефразируй. Если на записи тишина, только фоновый шум или нет разборчивой речи — ответь строго одним словом ПУСТО."
+                .to_string(),
+        ),
+        (true, Some(prompt)) => Some(format!(
+            "Ты — голосовой AI-ассистент приложения SincPro. Пользователь передал голосовое сообщение (аудио). \
+Любые упоминания поля или текста 'transcript' в инструкции ниже относятся к распознанной речи пользователя из этого аудио. \
+Верни ТОЛЬКО готовый текстовый результат без JSON-обёрток, без markdown-блоков ```json и без лишних вступлений.\n\
+Если на аудиозаписи только тишина, фоновый шум или нет разборчивой речи — ответь строго одним словом ПУСТО.\n\n\
+ИНСТРУКЦИЯ ПО ОБРАБОТКЕ:\n{}",
+            prompt
+        )),
+        (false, Some(prompt)) => Some(format!(
+            "Ты — текстовый AI-ассистент приложения SincPro. Любые упоминания 'transcript' в инструкции относятся к исходному тексту пользователя. \
+Верни ТОЛЬКО готовый текстовый результат без JSON-обёрток и без лишних вступлений.\n\n\
+ИНСТРУКЦИЯ ПО ОБРАБОТКЕ:\n{}",
+            prompt
+        )),
+        (false, None) => Some(
+            "Ты — полезный AI-ассистент. Отвечай чётко, грамотно и только по существу."
+                .to_string(),
+        ),
+    };
+
+    let mut ws = match connect_and_setup_live_text_ws(
+        api_key,
+        &resolved_model,
+        system_instruction.as_deref(),
+        true,
+    )
+    .await
+    {
+        Ok(s) => s,
+        Err((_, true)) => connect_and_setup_live_text_ws(
+            api_key,
+            &resolved_model,
+            system_instruction.as_deref(),
+            false,
+        )
+        .await
+        .map_err(|(e, _)| e)?,
+        Err((e, false)) => return Err(e),
+    };
+
+    if let Some(pcm_bytes) = pcm_16k {
+        for chunk in pcm_bytes.chunks(32000) {
+            if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+                let _ = ws.send(Message::Close(None)).await;
+                return Err("Запрос отменен пользователем".to_string());
+            }
+            let b64 = STANDARD.encode(chunk);
+            let msg = serde_json::json!({
+                "realtimeInput": {
+                    "audio": {
+                        "data": b64,
+                        "mimeType": "audio/pcm;rate=16000"
+                    }
+                }
+            });
+            ws.send(Message::Text(msg.to_string().into()))
+                .await
+                .map_err(|e| format!("Ошибка отправки аудио-чанка в Live API: {}", e))?;
+        }
+
+        // 0.5 сек тишины (16000 байт s16le @ 16kHz mono) для гарантированного срабатывания server VAD
+        let silence_pad = STANDARD.encode(vec![0u8; 16000]);
+        let pad_msg = serde_json::json!({
+            "realtimeInput": {
+                "audio": {
+                    "data": silence_pad,
+                    "mimeType": "audio/pcm;rate=16000"
+                }
+            }
+        });
+        ws.send(Message::Text(pad_msg.to_string().into()))
+            .await
+            .map_err(|e| format!("Ошибка отправки tail-тишины в Live API: {}", e))?;
+
+        let end_msg = serde_json::json!({
+            "realtimeInput": {
+                "audioStreamEnd": true
+            }
+        });
+        ws.send(Message::Text(end_msg.to_string().into()))
+            .await
+            .map_err(|e| format!("Ошибка отправки audioStreamEnd в Live API: {}", e))?;
+    } else if let Some(text) = text_input {
+        let client_msg = serde_json::json!({
+            "clientContent": {
+                "turns": [{
+                    "role": "user",
+                    "parts": [{ "text": text }]
+                }],
+                "turnComplete": true
+            }
+        });
+        ws.send(Message::Text(client_msg.to_string().into()))
+            .await
+            .map_err(|e| format!("Ошибка отправки текста в Live API: {}", e))?;
+    }
+
+    let mut input_buf = String::new();
+    let mut output_buf = String::new();
+    let mut model_text_buf = String::new();
+    let total_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+    let mut generation_done_deadline: Option<tokio::time::Instant> = None;
+
+    loop {
+        if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+            let _ = ws.send(Message::Close(None)).await;
+            return Err("Запрос отменен пользователем".to_string());
+        }
+
+        let now = tokio::time::Instant::now();
+        let active_deadline = match generation_done_deadline {
+            Some(gd) if gd < total_deadline => gd,
+            _ => total_deadline,
+        };
+        if now >= active_deadline {
+            break;
+        }
+        let wait_dur = std::cmp::min(
+            std::time::Duration::from_millis(350),
+            active_deadline - now,
+        );
+
+        match tokio::time::timeout(wait_dur, ws.next()).await {
+            Err(_) => continue,
+            Ok(None) => break,
+            Ok(Some(Err(e))) => {
+                if output_buf.is_empty() && input_buf.is_empty() && model_text_buf.is_empty() {
+                    return Err(format!("Ошибка чтения ответа Gemini Live API: {}", e));
+                }
+                break;
+            }
+            Ok(Some(Ok(msg))) => {
+                let text = match msg {
+                    Message::Text(t) => t.to_string(),
+                    Message::Binary(b) => String::from_utf8(b.to_vec()).unwrap_or_default(),
+                    Message::Close(_) => break,
+                    Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => continue,
+                };
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if let Some(err_obj) = v.get("error") {
+                        let err_str = err_obj.to_string();
+                        let _ = ws.send(Message::Close(None)).await;
+                        return Err(format!("Ошибка Gemini Live API: {}", err_str));
+                    }
+                    if let Some(sc) = v.get("serverContent") {
+                        if let Some(in_tr) = sc.get("inputTranscription").and_then(|x| x.get("text")).and_then(|x| x.as_str()) {
+                            input_buf.push_str(in_tr);
+                        }
+                        if let Some(out_tr) = sc.get("outputTranscription").and_then(|x| x.get("text")).and_then(|x| x.as_str()) {
+                            output_buf.push_str(out_tr);
+                        }
+                        if let Some(parts) = sc.get("modelTurn").and_then(|m| m.get("parts")).and_then(|p| p.as_array()) {
+                            for part in parts {
+                                // Игнорируем inlineData (аудиобайты) и thought-размышления
+                                if part.get("thought").and_then(|b| b.as_bool()).unwrap_or(false) {
+                                    continue;
+                                }
+                                if let Some(t) = part.get("text").and_then(|x| x.as_str()) {
+                                    model_text_buf.push_str(t);
+                                }
+                            }
+                        }
+                        if sc.get("generationComplete").and_then(|b| b.as_bool()).unwrap_or(false)
+                            && generation_done_deadline.is_none()
+                        {
+                            generation_done_deadline = Some(
+                                tokio::time::Instant::now() + std::time::Duration::from_millis(200),
+                            );
+                        }
+                        if sc.get("turnComplete").and_then(|b| b.as_bool()).unwrap_or(false) {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = ws.send(Message::Close(None)).await;
+
+    let in_clean = input_buf.trim().to_string();
+    let out_clean = if !output_buf.trim().is_empty() {
+        output_buf.trim().to_string()
+    } else {
+        model_text_buf.trim().to_string()
+    };
+
+    if pcm_16k.is_some() {
+        let model_said_silence = !out_clean.is_empty() && is_live_silence_marker(&out_clean);
+        if (model_said_silence && (in_clean.is_empty() || is_live_silence_marker(&in_clean)))
+            || (in_clean.is_empty() && out_clean.is_empty())
+        {
+            return Ok(LiveAudioAiOutcome::Silence);
+        }
+        if model_said_silence && preset_prompt.is_none() {
+            return Ok(LiveAudioAiOutcome::Silence);
+        }
+
+        if preset_prompt.is_none() {
+            let raw = if !in_clean.is_empty() {
+                in_clean.clone()
+            } else {
+                out_clean.clone()
+            };
+            let ai = if !out_clean.is_empty() && !model_said_silence {
+                out_clean
+            } else {
+                raw.clone()
+            };
+            record_model_success(&resolved_model);
+            return Ok(LiveAudioAiOutcome::Success {
+                raw,
+                ai,
+                model: resolved_model,
+            });
+        } else {
+            let ai = if !out_clean.is_empty() && !model_said_silence {
+                out_clean
+            } else {
+                in_clean.clone()
+            };
+            if ai.is_empty() {
+                return Ok(LiveAudioAiOutcome::Silence);
+            }
+            let raw = if !in_clean.is_empty() {
+                in_clean
+            } else {
+                ai.clone()
+            };
+            record_model_success(&resolved_model);
+            return Ok(LiveAudioAiOutcome::Success {
+                raw,
+                ai,
+                model: resolved_model,
+            });
+        }
+    }
+
+    if out_clean.is_empty() {
+        return Err("Gemini Live API не вернул текстовый ответ".to_string());
+    }
+
+    record_model_success(&resolved_model);
+    Ok(LiveAudioAiOutcome::Success {
+        raw: text_input.unwrap_or("").trim().to_string(),
+        ai: out_clean,
+        model: resolved_model,
+    })
+}
+
+const GEMINI_LIVE_FALLBACK_MODEL: &str = "gemini-2.5-flash-native-audio-latest";
+
+fn extract_gemini_response_text(body: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    let parts = v
+        .get("candidates")?
+        .as_array()?
+        .first()?
+        .get("content")?
+        .get("parts")?
+        .as_array()?;
+    let mut out = String::new();
+    let mut has_text_part = false;
+    for p in parts {
+        if p.get("thought").and_then(|b| b.as_bool()).unwrap_or(false) {
+            continue;
+        }
+        if let Some(t) = p.get("text").and_then(|x| x.as_str()) {
+            has_text_part = true;
+            out.push_str(t);
+        }
+    }
+    if has_text_part {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+fn record_and_format_rest_error(model: &str, status: u16, err_text: &str) -> String {
+    if status == 429 {
+        let delay = record_model_failure(model, 429, err_text);
+        let msg = format!("Модель {} заблокирована (429) на {:?}", model, delay);
+        log_tts_error("Gemini rate limit 429", &msg);
+        return msg;
+    }
+    if status == 503 {
+        let msg = format!("Сервис недоступен (503) для {}", model);
+        log_tts_error("Gemini service unavailable 503", &msg);
+        return msg;
+    }
+    let msg = format!("Ошибка {} ({}): {}", status, model, err_text);
+    log_tts_error("Gemini API error status", &msg);
+    if status == 404
+        || status == 400
+        || err_text.contains("RESOURCE_EXHAUSTED")
+        || err_text.contains("quota")
+    {
+        record_model_failure(model, status, err_text);
+    }
+    msg
+}
+
 #[tauri::command]
 async fn save_audio(
     app_handle: tauri::AppHandle,
@@ -6258,6 +6891,7 @@ async fn save_audio(
     custom_prompt: Option<String>,
     is_cancelled: Option<bool>,
     hard_delete: Option<bool>,
+    pcm16k_base64: Option<String>,
 ) -> Result<HistoryEntry, String> {
     CANCEL_REQUEST.store(false, std::sync::atomic::Ordering::SeqCst);
     let temp_file_path = {
@@ -6395,88 +7029,134 @@ async fn save_audio(
             if config.api_key.trim().is_empty() {
                 ("[Ошибка: API-ключ Gemini не настроен]".to_string(), true)
             } else {
-                let combined_prompt = "Сделай точную дословную транскрипцию речи из этой аудиозаписи на русском языке. Запиши речь точно так, как она звучит, без комментариев и постобработки. ВАЖНО: если на записи тишина, только фоновый шум, вздохи или нет разборчивой человеческой речи — верни строго пустую строку (ничего не выдумывай).";
-                let request_payload = serde_json::json!({
-                    "contents": [{
+                let api_key = config.api_key.trim().to_string();
+                let mut gemini_text: Option<String> = None;
+                let mut last_err = String::new();
+
+                if is_gemini_live_model(&config.ai_model) {
+                    match resolve_pcm_16k_bytes(pcm16k_base64.as_deref(), Some(&file_path)) {
+                        Ok(pcm) => {
+                            match run_gemini_live_text_session(&api_key, &config.ai_model, Some(&pcm), None, None).await {
+                                Ok(LiveAudioAiOutcome::Success { raw, model, .. }) => {
+                                    used_stt_model = format!("Gemini Live ({}) (Text-Only)", model);
+                                    gemini_text = Some(raw);
+                                }
+                                Ok(LiveAudioAiOutcome::Silence) => {
+                                    let _ = std::fs::remove_file(&file_path);
+                                    return Err("На записи не обнаружена разборчивая речь (тишина или фоновый шум)".to_string());
+                                }
+                                Err(e) => {
+                                    last_err = e;
+                                    log_tts_error("Gemini Live primary STT failed", &last_err);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            last_err = e;
+                            log_tts_error("Gemini Live PCM prep failed", &last_err);
+                        }
+                    }
+                }
+
+                if gemini_text.is_none() && !CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+                    let combined_prompt = "Сделай точную дословную транскрипцию речи из этой аудиозаписи на русском языке. Запиши речь точно так, как она звучит, без комментариев и постобработки. ВАЖНО: если на записи тишина, только фоновый шум, вздохи или нет разборчивой человеческой речи — верни строго пустую строку (ничего не выдумывай).";
+                    let contents = serde_json::json!([{
                         "parts": [
                             {"inlineData": {"mimeType": "audio/webm", "data": base64_audio}},
                             {"text": combined_prompt}
                         ]
-                    }],
-                    "generationConfig": {
-                        "temperature": 0.1
-                    }
-                });
+                    }]);
 
-                let mut gemini_text: Option<String> = None;
-                let mut last_err = String::new();
-                let fallback_models = build_audio_capable_models(&config.ai_model);
+                    let fallback_models = build_audio_capable_models(&config.ai_model);
+                    let client = reqwest::Client::builder()
+                        .timeout(Duration::from_secs(20))
+                        .build()
+                        .unwrap_or_else(|_| reqwest::Client::new());
 
-                let client = reqwest::Client::builder()
-                    .timeout(Duration::from_secs(20))
-                    .build()
-                    .unwrap_or_else(|_| reqwest::Client::new());
-                let api_key = config.api_key.trim().to_string();
-
-                for model in &fallback_models {
-                    if is_model_locked(model) {
-                        continue;
-                    }
-
-                    // Проверяем локальные лимиты RPM/RPD перед запросом
-                    let (rpm, _rpd) = match check_and_record_rate_limit(model) {
-                        Ok((rpm, rpd)) => (rpm, rpd),
-                        Err(limit_err) => {
-                            last_err = format!("Модель {} пропущена: {}", model, limit_err);
-                            log_tts_error("Gemini local limit skipped", &last_err);
+                    for model in &fallback_models {
+                        if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+                            last_err = "Запрос отменен пользователем".to_string();
+                            break;
+                        }
+                        if is_model_locked(model) {
                             continue;
                         }
-                    };
 
-                    let url = format!(
-                        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-                        model, api_key
-                    );
-                    match client.post(&url).json(&request_payload).send().await {
-                        Ok(res) => {
-                            let status = res.status();
-                            if status.is_success() {
-                                if let Ok(gr) = res.json::<GeminiResponse>().await {
-                                    if let Some(text) = gr.candidates
-                                        .and_then(|c| c.into_iter().next())
-                                        .and_then(|c| c.content)
-                                        .and_then(|c| c.parts)
-                                        .and_then(|p| p.into_iter().next())
-                                        .and_then(|p| p.text)
-                                    {
-                                        if is_stub_transcript(&text) {
-                                            last_err = format!("Модель {} вернула заглушку: {}", model, text);
-                                            continue;
-                                        }
-                                        record_model_success(model);
-                                        gemini_text = Some(text);
-                                        used_stt_model = format!("Gemini Cloud ({}) (RPM: {})", model, rpm);
-                                        break;
+                        // Проверяем локальные лимиты RPM/RPD перед запросом
+                        let (rpm, _rpd) = match check_and_record_rate_limit(model) {
+                            Ok((rpm, rpd)) => (rpm, rpd),
+                            Err(limit_err) => {
+                                last_err = format!("Модель {} пропущена: {}", model, limit_err);
+                                log_tts_error("Gemini local limit skipped", &last_err);
+                                continue;
+                            }
+                        };
+
+                        let url = format!(
+                            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+                            model, api_key
+                        );
+                        match send_gemini_generate_content(&client, &url, &contents, model, "none", 0.1, false).await {
+                            Ok(Ok(body)) => {
+                                if let Some(text) = extract_gemini_response_text(&body) {
+                                    if !text.trim().is_empty() && is_stub_transcript(&text) {
+                                        last_err = format!("Модель {} вернула заглушку: {}", model, text);
+                                        continue;
                                     }
+                                    record_model_success(model);
+                                    gemini_text = Some(text);
+                                    used_stt_model = format!("Gemini Cloud ({}) (RPM: {})", model, rpm);
+                                    break;
+                                } else {
+                                    last_err = format!("Пустой ответ от {}", model);
                                 }
-                            } else {
-                                let err_text = res.text().await.unwrap_or_default();
-                                if status.as_u16() == 429
-                                    || status.as_u16() == 404
-                                    || status.as_u16() == 400
+                            }
+                            Ok(Err((status_code, err_text))) => {
+                                last_err = record_and_format_rest_error(model, status_code, &err_text);
+                                if status_code == 429
+                                    || status_code == 404
+                                    || status_code == 400
                                     || err_text.contains("RESOURCE_EXHAUSTED")
                                     || err_text.contains("quota")
                                 {
-                                    record_model_failure(model, status.as_u16(), &err_text);
                                     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                                 }
-                                last_err = format!("Ошибка {} ({}): {}", status, model, err_text);
-                                log_tts_error("Gemini STT API error status", &last_err);
+                            }
+                            Err(e) => {
+                                if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+                                    last_err = "Запрос отменен пользователем".to_string();
+                                    break;
+                                }
+                                last_err = format!("Сетевая ошибка ({}): {}", model, e);
+                                log_tts_error("Gemini STT network error", &last_err);
                             }
                         }
-                        Err(e) => {
-                            last_err = format!("Сетевая ошибка ({}): {}", model, e);
-                            log_tts_error("Gemini STT network error", &last_err);
+                    }
+                }
+
+                if gemini_text.is_none()
+                    && !CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst)
+                    && last_err != "Запрос отменен пользователем"
+                    && (!is_gemini_live_model(&config.ai_model)
+                        || resolve_gemini_live_model_id(&config.ai_model) != GEMINI_LIVE_FALLBACK_MODEL)
+                {
+                    if let Ok(pcm) = resolve_pcm_16k_bytes(pcm16k_base64.as_deref(), Some(&file_path)) {
+                        match run_gemini_live_text_session(&api_key, GEMINI_LIVE_FALLBACK_MODEL, Some(&pcm), None, None).await {
+                            Ok(LiveAudioAiOutcome::Success { raw, model, .. }) => {
+                                used_stt_model = format!("Gemini Live Fallback ({}) (Text-Only)", model);
+                                gemini_text = Some(raw);
+                            }
+                            Ok(LiveAudioAiOutcome::Silence) => {
+                                let _ = std::fs::remove_file(&file_path);
+                                return Err("На записи не обнаружена разборчивая речь (тишина или фоновый шум)".to_string());
+                            }
+                            Err(e) => {
+                                if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+                                    last_err = "Запрос отменен пользователем".to_string();
+                                } else {
+                                    log_tts_error("Gemini Live STT fallback failed", &e);
+                                }
+                            }
                         }
                     }
                 }
@@ -6484,30 +7164,36 @@ async fn save_audio(
                 match gemini_text {
                     Some(t) => (t, false),
                     None => {
-                        log_tts_error("Gemini failed entirely", &format!("Attempting local STT fallback. Gemini error: {}", last_err));
-                        let friendly_err = clean_gemini_error(&last_err);
-                        let _ = app_handle.emit("stt-fallback", format!("Сбой Gemini ({friendly_err}). Включен локальный Whisper."));
-                        let _ = app_handle.emit(
-                            "api-status-changed",
-                            serde_json::json!({
-                                "status": "warning",
-                                "message": format!("Квота Gemini ({friendly_err}) — локальный Whisper")
-                            }),
-                        );
-                        match run_local_stt(&app_handle, &file_path.to_string_lossy()).await {
-                            Ok(t) => {
-                                used_stt_model = format!("Whisper Local ({}) (Offline Fallback)", config.stt_local_model);
-                                (t, false)
-                            }
-                            Err(local_err) => {
-                                let _ = app_handle.emit(
-                                    "api-status-changed",
-                                    serde_json::json!({
-                                        "status": "error",
-                                        "message": format!("Ошибка ИИ: {friendly_err}")
-                                    }),
-                                );
-                                (format!("[Ошибка распознавания (облако и локально): {}; {}]", clean_gemini_error(&last_err), local_err), true)
+                        if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst)
+                            || last_err == "Запрос отменен пользователем"
+                        {
+                            ("[Запрос отменен пользователем]".to_string(), true)
+                        } else {
+                            log_tts_error("Gemini failed entirely", &format!("Attempting local STT fallback. Gemini error: {}", last_err));
+                            let friendly_err = clean_gemini_error(&last_err);
+                            let _ = app_handle.emit("stt-fallback", format!("Сбой Gemini ({friendly_err}). Включен локальный Whisper."));
+                            let _ = app_handle.emit(
+                                "api-status-changed",
+                                serde_json::json!({
+                                    "status": "warning",
+                                    "message": format!("Квота Gemini ({friendly_err}) — локальный Whisper")
+                                }),
+                            );
+                            match run_local_stt(&app_handle, &file_path.to_string_lossy()).await {
+                                Ok(t) => {
+                                    used_stt_model = format!("Whisper Local ({}) (Offline Fallback)", config.stt_local_model);
+                                    (t, false)
+                                }
+                                Err(local_err) => {
+                                    let _ = app_handle.emit(
+                                        "api-status-changed",
+                                        serde_json::json!({
+                                            "status": "error",
+                                            "message": format!("Ошибка ИИ: {friendly_err}")
+                                        }),
+                                    );
+                                    (format!("[Ошибка распознавания (облако и локально): {}; {}]", clean_gemini_error(&last_err), local_err), true)
+                                }
                             }
                         }
                     }
@@ -6603,8 +7289,38 @@ async fn save_audio(
                 (local_transcript.clone(), local_transcript.clone(), false)
             }
         } else if !config.api_key.trim().is_empty() {
-            let text_prompt = format!(
-                r#"Ответь СТРОГО в формате JSON без markdown, без пояснений, без ```json, только чистый JSON:
+            let api_key = config.api_key.trim().to_string();
+            let mut live_ai_result: Option<String> = None;
+            let mut gemini_text: Option<String> = None;
+            let mut last_err = String::new();
+
+            if is_gemini_live_model(&config.ai_model) {
+                match run_gemini_live_text_session(
+                    &api_key,
+                    &config.ai_model,
+                    None,
+                    Some(&local_transcript),
+                    Some(&user_preset_prompt),
+                )
+                .await
+                {
+                    Ok(LiveAudioAiOutcome::Success { ai, model, .. }) => {
+                        used_llm_model = format!("Gemini Live ({}) (Text-Only)", model);
+                        live_ai_result = Some(ai);
+                    }
+                    Ok(LiveAudioAiOutcome::Silence) => {
+                        live_ai_result = Some(local_transcript.clone());
+                    }
+                    Err(e) => {
+                        last_err = e;
+                        log_tts_error("Gemini Live LLM primary failed", &last_err);
+                    }
+                }
+            }
+
+            if live_ai_result.is_none() && !CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+                let text_prompt = format!(
+                    r#"Ответь СТРОГО в формате JSON без markdown, без пояснений, без ```json, только чистый JSON:
 {{"transcript":"...","ai_result":"..."}}
 
 Правила:
@@ -6612,107 +7328,120 @@ async fn save_audio(
 - В поле "ai_result" выполни следующее задание по отношению к этому тексту: {}
 
 В JSON-строках экранируй кавычки через \" и переносы строк через \n."#,
-                local_transcript.replace('"', "\\\"").replace('\n', "\\n"),
-                user_preset_prompt
-            );
+                    local_transcript.replace('"', "\\\"").replace('\n', "\\n"),
+                    user_preset_prompt
+                );
 
-            let request_payload = serde_json::json!({
-                "contents": [{
+                let contents = serde_json::json!([{
                     "parts": [
                         {"text": text_prompt}
                     ]
-                }],
-                "generationConfig": {
-                    "temperature": 0.2,
-                    "responseMimeType": "application/json"
-                }
-            });
+                }]);
 
-            let mut gemini_text: Option<String> = None;
-            let mut last_err = String::new();
-            
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(20))
-                .build()
-                .unwrap_or_else(|_| reqwest::Client::new());
-            let api_key = config.api_key.trim().to_string();
-            let fallback_models = build_audio_capable_models(&config.ai_model);
+                let client = reqwest::Client::builder()
+                    .timeout(Duration::from_secs(20))
+                    .build()
+                    .unwrap_or_else(|_| reqwest::Client::new());
+                let fallback_models = build_audio_capable_models(&config.ai_model);
 
-            for model in &fallback_models {
-                if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
-                    last_err = "Запрос отменен пользователем".to_string();
-                    break;
-                }
-                if is_model_locked(model) {
-                    last_err = format!("Модель {} временно заблокирована из-за квоты", model);
-                    continue;
-                }
-                let url = format!(
-                    "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-                    model, api_key
-                );
-                match client.post(&url).json(&request_payload).send().await {
-                    Err(e) => {
-                        last_err = e.to_string();
+                for model in &fallback_models {
+                    if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+                        last_err = "Запрос отменен пользователем".to_string();
+                        break;
+                    }
+                    if is_model_locked(model) {
+                        last_err = format!("Модель {} временно заблокирована из-за квоты", model);
                         continue;
                     }
-                    Ok(res) => {
-                        let status = res.status();
-                        if !status.is_success() {
-                            let err_text = res.text().await.unwrap_or_default();
-                            if status.as_u16() == 429
-                                || status.as_u16() == 404
-                                || status.as_u16() == 400
-                                || err_text.contains("RESOURCE_EXHAUSTED")
-                                || err_text.contains("quota")
-                            {
-                                let delay = record_model_failure(model, status.as_u16(), &err_text);
-                                last_err = format!("Модель {} заблокирована ({}) на {:?}", model, status, delay);
-                            } else {
-                                last_err = format!("Status {} ({})", status, model);
+                    let url = format!(
+                        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+                        model, api_key
+                    );
+                    match send_gemini_generate_content(&client, &url, &contents, model, &preset, 0.2, true).await {
+                        Err(e) => {
+                            if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+                                last_err = "Запрос отменен пользователем".to_string();
+                                break;
                             }
+                            last_err = e;
                             continue;
                         }
-                        if let Ok(resp_struct) = res.json::<GeminiResponse>().await {
-                            if let Some(candidates) = resp_struct.candidates {
-                                if let Some(first) = candidates.first() {
-                                    if let Some(ref content) = first.content {
-                                        if let Some(ref parts) = content.parts {
-                                            if let Some(first_part) = parts.first() {
-                                                if let Some(ref text) = first_part.text {
-                                                    record_model_success(model);
-                                                    gemini_text = Some(text.clone());
-                                                    used_llm_model = format!("Gemini Cloud ({})", model);
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                        Ok(Err((status_code, err_text))) => {
+                            last_err = record_and_format_rest_error(model, status_code, &err_text);
+                            continue;
+                        }
+                        Ok(Ok(body)) => {
+                            if let Some(text) = extract_gemini_response_text(&body) {
+                                record_model_success(model);
+                                gemini_text = Some(text);
+                                used_llm_model = format!("Gemini Cloud ({})", model);
+                                break;
                             }
                         }
                     }
                 }
             }
 
-            match gemini_text {
-                Some(text) => {
-                    let cleaned = text.trim_matches(|c| c == '`' || c == ' ' || c == '\n').replace("json", "");
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&cleaned) {
-                        let t = parsed.get("transcript").and_then(|v| v.as_str()).unwrap_or(&local_transcript).to_string();
-                        let a = parsed.get("ai_result").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        (t, a, false)
-                    } else {
-                        (local_transcript.clone(), cleaned, false)
+            if live_ai_result.is_none()
+                && gemini_text.is_none()
+                && !CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst)
+                && last_err != "Запрос отменен пользователем"
+                && (!is_gemini_live_model(&config.ai_model)
+                    || resolve_gemini_live_model_id(&config.ai_model) != GEMINI_LIVE_FALLBACK_MODEL)
+            {
+                match run_gemini_live_text_session(
+                    &api_key,
+                    GEMINI_LIVE_FALLBACK_MODEL,
+                    None,
+                    Some(&local_transcript),
+                    Some(&user_preset_prompt),
+                )
+                .await
+                {
+                    Ok(LiveAudioAiOutcome::Success { ai, model, .. }) => {
+                        used_llm_model = format!("Gemini Live Fallback ({}) (Text-Only)", model);
+                        live_ai_result = Some(ai);
+                    }
+                    Ok(LiveAudioAiOutcome::Silence) => {}
+                    Err(e) => {
+                        if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+                            last_err = "Запрос отменен пользователем".to_string();
+                        } else {
+                            log_tts_error("Gemini Live LLM fallback failed", &e);
+                        }
                     }
                 }
-                None => {
-                    used_llm_model = "Ollama Local (Offline Fallback)".to_string();
-                    match run_local_llm_postprocess(&local_transcript, &user_preset_prompt).await {
-                        Ok(processed) => (local_transcript.clone(), processed, false),
-                        Err(_e) => {
-                            used_llm_model = "Нет (чистая транскрипция Whisper)".to_string();
-                            (local_transcript.clone(), local_transcript.clone(), false)
+            }
+
+            if let Some(ai) = live_ai_result {
+                (local_transcript.clone(), ai, false)
+            } else {
+                match gemini_text {
+                    Some(text) => {
+                        let cleaned = text.trim_matches(|c| c == '`' || c == ' ' || c == '\n').replace("json", "");
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&cleaned) {
+                            let t = parsed.get("transcript").and_then(|v| v.as_str()).unwrap_or(&local_transcript).to_string();
+                            let a = parsed.get("ai_result").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            (t, a, false)
+                        } else {
+                            (local_transcript.clone(), cleaned, false)
+                        }
+                    }
+                    None => {
+                        if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst)
+                            || last_err == "Запрос отменен пользователем"
+                        {
+                            used_llm_model = "Отменено".to_string();
+                            ("[Запрос отменен пользователем]".to_string(), "[Запрос отменен пользователем]".to_string(), true)
+                        } else {
+                            used_llm_model = "Ollama Local (Offline Fallback)".to_string();
+                            match run_local_llm_postprocess(&local_transcript, &user_preset_prompt).await {
+                                Ok(processed) => (local_transcript.clone(), processed, false),
+                                Err(_e) => {
+                                    used_llm_model = "Нет (чистая транскрипция Whisper)".to_string();
+                                    (local_transcript.clone(), local_transcript.clone(), false)
+                                }
+                            }
                         }
                     }
                 }
@@ -6734,11 +7463,11 @@ async fn save_audio(
             duration_secs,
             raw_transcript: raw_transcript.clone(),
             transcript: raw_transcript.clone(),
-            preset: preset.clone(),
-            preset_label: preset_label_str.clone(),
+            preset: if is_error { "error".to_string() } else { preset.clone() },
+            preset_label: if is_error { "Отменено".to_string() } else { preset_label_str.clone() },
             ai_results: vec![AiResult {
-                preset: preset.clone(),
-                preset_label: preset_label_str.clone(),
+                preset: if is_error { "error".to_string() } else { preset.clone() },
+                preset_label: if is_error { "Отменено".to_string() } else { preset_label_str.clone() },
                 text: ai_result_text,
                 timestamp: timestamp.clone(),
             }],
@@ -6752,9 +7481,54 @@ async fn save_audio(
         return Ok(entry);
     }
 
-    // Единый JSON-промпт: транскрипция + AI-результат в одном запросе с жесткой защитой от галлюцинаций на тишине
-    let combined_prompt = format!(
-        r#"Ответь СТРОГО в формате JSON без markdown, без пояснений, без ```json, только чистый JSON:
+    let api_key = config.api_key.trim().to_string();
+    let mut last_err = String::new();
+    let mut gemini_text: Option<String> = None;
+    let mut live_outcome: Option<(String, String)> = None;
+    let mut detected_silence = false;
+
+    if is_gemini_live_model(&config.ai_model) {
+        match resolve_pcm_16k_bytes(pcm16k_base64.as_deref(), Some(&file_path)) {
+            Ok(pcm) => {
+                match run_gemini_live_text_session(
+                    &api_key,
+                    &config.ai_model,
+                    Some(&pcm),
+                    None,
+                    Some(&user_preset_prompt),
+                )
+                .await
+                {
+                    Ok(LiveAudioAiOutcome::Silence) => {
+                        let _ = std::fs::remove_file(&file_path);
+                        return Err("На записи не обнаружена разборчивая речь (тишина или фоновый шум)".to_string());
+                    }
+                    Ok(LiveAudioAiOutcome::Success { raw, ai, model }) => {
+                        if raw.trim().is_empty() || is_stub_transcript(&raw) || is_stub_transcript(&ai) {
+                            let _ = std::fs::remove_file(&file_path);
+                            return Err("На записи не обнаружена разборчивая речь (тишина или фоновый шум)".to_string());
+                        }
+                        used_stt_model = format!("Gemini Live ({}) (Text-Only)", model);
+                        used_llm_model = format!("Gemini Live ({}) (Text-Only)", model);
+                        live_outcome = Some((raw, ai));
+                    }
+                    Err(e) => {
+                        last_err = e;
+                        log_tts_error("Gemini Live primary audio+ai failed", &last_err);
+                    }
+                }
+            }
+            Err(e) => {
+                last_err = e;
+                log_tts_error("Gemini Live PCM prep failed", &last_err);
+            }
+        }
+    }
+
+    if live_outcome.is_none() && !CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+        // Единый JSON-промпт: транскрипция + AI-результат в одном запросе с жесткой защитой от галлюцинаций на тишине
+        let combined_prompt = format!(
+            r#"Ответь СТРОГО в формате JSON без markdown, без пояснений, без ```json, только чистый JSON:
 {{"transcript":"...","ai_result":"..."}}
 
 КРИТИЧЕСКИ ВАЖНОЕ ПРАВИЛО ПРОТИВ ГАЛЛЮЦИНАЦИЙ:
@@ -6767,162 +7541,170 @@ async fn save_audio(
 - "ai_result": примени следующую инструкцию ТОЛЬКО к распознанной речи из поля transcript: {}
 
 В JSON-строках экранируй кавычки через \" и переносы строк через \n."#,
-        user_preset_prompt
-    );
+            user_preset_prompt
+        );
 
-    let request_payload = serde_json::json!({
-        "contents": [{
+        let contents = serde_json::json!([{
             "parts": [
                 {"inlineData": {"mimeType": "audio/webm", "data": base64_audio}},
                 {"text": combined_prompt}
             ]
-        }],
-        "generationConfig": {
-            "temperature": 0.15,
-            "responseMimeType": "application/json"
-        }
-    });
+        }]);
 
-    // Цепочка проверенных мультимодальных моделей Gemini, поддерживающих аудио
-    let fallback_models = build_audio_capable_models(&config.ai_model);
+        // Цепочка проверенных мультимодальных моделей Gemini, поддерживающих аудио
+        let fallback_models = build_audio_capable_models(&config.ai_model);
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
-    let api_key = config.api_key.trim().to_string();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(20))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
 
-    // Пробуем модели по очереди
-    let mut last_err = String::new();
-    let mut gemini_text: Option<String> = None;
-    let mut detected_silence = false;
-
-    for model in &fallback_models {
-        if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
-            last_err = "Запрос отменен пользователем".to_string();
-            break;
-        }
-        // Проверяем блокировку модели по времени разблокировки
-        if is_model_locked(model) {
-            last_err = format!("Модель {} временно заблокирована из-за 429", model);
-            continue;
-        }
-
-        // Проверяем локальные лимиты RPM/RPD перед запросом
-        let (rpm, _rpd) = match check_and_record_rate_limit(model) {
-            Ok((rpm, rpd)) => (rpm, rpd),
-            Err(limit_err) => {
-                last_err = format!("Модель {} пропущена: {}", model, limit_err);
-                log_tts_error("Gemini local limit skipped", &last_err);
+        // Пробуем модели по очереди
+        for model in &fallback_models {
+            if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+                last_err = "Запрос отменен пользователем".to_string();
+                break;
+            }
+            // Проверяем блокировку модели по времени разблокировки
+            if is_model_locked(model) {
+                last_err = format!("Модель {} временно заблокирована из-за 429", model);
                 continue;
             }
-        };
 
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-            model, api_key
-        );
-        match client.post(&url).json(&request_payload).send().await {
-            Err(e) => {
-                last_err = format!("Сетевая ошибка ({}): {}", model, e);
-                log_tts_error("Gemini network error", &last_err);
-                continue;
-            }
-            Ok(res) => {
-                let status = res.status();
-                if status.as_u16() == 429 {
-                    let err_text = res.text().await.unwrap_or_default();
-                    let delay = record_model_failure(model, 429, &err_text);
-                    last_err = format!("Модель {} заблокирована (429) на {:?}", model, delay);
-                    log_tts_error("Gemini rate limit 429", &last_err);
-                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            // Проверяем локальные лимиты RPM/RPD перед запросом
+            let (rpm, _rpd) = match check_and_record_rate_limit(model) {
+                Ok((rpm, rpd)) => (rpm, rpd),
+                Err(limit_err) => {
+                    last_err = format!("Модель {} пропущена: {}", model, limit_err);
+                    log_tts_error("Gemini local limit skipped", &last_err);
                     continue;
                 }
-                if status.as_u16() == 503 {
-                    last_err = format!("Сервис недоступен (503) для {}", model);
-                    log_tts_error("Gemini service unavailable 503", &last_err);
+            };
+
+            let url = format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+                model, api_key
+            );
+            match send_gemini_generate_content(&client, &url, &contents, model, &preset, 0.15, true).await {
+                Err(e) => {
+                    if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+                        last_err = "Запрос отменен пользователем".to_string();
+                        break;
+                    }
+                    last_err = format!("Сетевая ошибка ({}): {}", model, e);
+                    log_tts_error("Gemini network error", &last_err);
                     continue;
                 }
-                if !status.is_success() {
-                    let err_text = res.text().await.unwrap_or_default();
-                    last_err = format!("Ошибка {} ({}): {}", status, model, err_text);
-                    log_tts_error("Gemini API error status", &last_err);
-                    if status.as_u16() == 404
-                        || status.as_u16() == 400
+                Ok(Err((status_code, err_text))) => {
+                    last_err = record_and_format_rest_error(model, status_code, &err_text);
+                    if status_code == 429
+                        || status_code == 404
+                        || status_code == 400
                         || err_text.contains("RESOURCE_EXHAUSTED")
                         || err_text.contains("quota")
                     {
-                        record_model_failure(model, status.as_u16(), &err_text);
                         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                     }
                     continue;
                 }
-                match res.json::<GeminiResponse>().await {
-                    Err(e) => {
-                        last_err = format!("Парсинг ответа ({}): {}", model, e);
-                        log_tts_error("Gemini JSON deserialize error", &last_err);
-                        continue;
-                    }
-                    Ok(gr) => {
-                        if let Some(text) = gr
-                            .candidates
-                            .and_then(|c| c.into_iter().next())
-                            .and_then(|c| c.content)
-                            .and_then(|c| c.parts)
-                            .and_then(|p| p.into_iter().next())
-                            .and_then(|p| p.text)
-                        {
-                            let mut probe_clean = text.trim().to_string();
-                            if let (Some(start), Some(end)) = (probe_clean.find('{'), probe_clean.rfind('}')) {
-                                if start <= end {
-                                    probe_clean = probe_clean[start..=end].to_string();
-                                }
+                Ok(Ok(body)) => {
+                    if let Some(text) = extract_gemini_response_text(&body) {
+                        let mut probe_clean = text.trim().to_string();
+                        if let (Some(start), Some(end)) = (probe_clean.find('{'), probe_clean.rfind('}')) {
+                            if start <= end {
+                                probe_clean = probe_clean[start..=end].to_string();
                             }
-
-                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&probe_clean) {
-                                let tr = v.get("transcript").and_then(|val| val.as_str()).unwrap_or("").trim();
-                                let ai = v.get("ai_result").and_then(|val| val.as_str()).unwrap_or("").trim();
-
-                                if tr.is_empty() && ai.is_empty() {
-                                    detected_silence = true;
-                                    break;
-                                }
-                                if tr.is_empty() || is_stub_transcript(tr) || is_stub_transcript(ai) {
-                                    last_err = format!("Модель {} вернула пустую речь или заглушку", model);
-                                    log_tts_error("Gemini stub/empty transcript returned", &last_err);
-                                    detected_silence = true;
-                                    break;
-                                }
-                            } else if is_stub_transcript(&text) {
-                                last_err = format!("Модель {} вернула заглушку: {}", model, text);
-                                log_tts_error("Gemini stub returned", &last_err);
-                                continue;
-                            }
-
-                            record_model_success(model);
-                            gemini_text = Some(text);
-                            used_stt_model = format!("Gemini Cloud ({}) (RPM: {})", model, rpm);
-                            used_llm_model = format!("Gemini Cloud ({})", model);
-                            break;
-                        } else {
-                            last_err = format!("Пустой ответ от {}", model);
-                            log_tts_error("Gemini empty candidates", &last_err);
                         }
+
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&probe_clean) {
+                            let tr = v.get("transcript").and_then(|val| val.as_str()).unwrap_or("").trim();
+                            let ai = v.get("ai_result").and_then(|val| val.as_str()).unwrap_or("").trim();
+
+                            if tr.is_empty() && ai.is_empty() {
+                                detected_silence = true;
+                                break;
+                            }
+                            if tr.is_empty() || is_stub_transcript(tr) || is_stub_transcript(ai) {
+                                last_err = format!("Модель {} вернула пустую речь или заглушку", model);
+                                log_tts_error("Gemini stub/empty transcript returned", &last_err);
+                                detected_silence = true;
+                                break;
+                            }
+                        } else if is_stub_transcript(&text) {
+                            last_err = format!("Модель {} вернула заглушку: {}", model, text);
+                            log_tts_error("Gemini stub returned", &last_err);
+                            continue;
+                        }
+
+                        record_model_success(model);
+                        gemini_text = Some(text);
+                        used_stt_model = format!("Gemini Cloud ({}) (RPM: {})", model, rpm);
+                        used_llm_model = format!("Gemini Cloud ({})", model);
+                        break;
+                    } else {
+                        last_err = format!("Пустой ответ от {}", model);
+                        log_tts_error("Gemini empty candidates", &last_err);
                     }
                 }
             }
         }
     }
 
-    if detected_silence && gemini_text.is_none() {
+    if detected_silence && gemini_text.is_none() && live_outcome.is_none() {
         let _ = std::fs::remove_file(&file_path);
         return Err("На записи не обнаружена разборчивая речь (тишина или фоновый шум)".to_string());
     }
 
-    // Парсим JSON-ответ от Gemini
-    let (raw_transcript, ai_result_text, is_error) = match gemini_text {
+    if live_outcome.is_none()
+        && gemini_text.is_none()
+        && !CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst)
+        && last_err != "Запрос отменен пользователем"
+        && (!is_gemini_live_model(&config.ai_model)
+            || resolve_gemini_live_model_id(&config.ai_model) != GEMINI_LIVE_FALLBACK_MODEL)
+    {
+        if let Ok(pcm) = resolve_pcm_16k_bytes(pcm16k_base64.as_deref(), Some(&file_path)) {
+            match run_gemini_live_text_session(
+                &api_key,
+                GEMINI_LIVE_FALLBACK_MODEL,
+                Some(&pcm),
+                None,
+                Some(&user_preset_prompt),
+            )
+            .await
+            {
+                Ok(LiveAudioAiOutcome::Silence) => {
+                    let _ = std::fs::remove_file(&file_path);
+                    return Err("На записи не обнаружена разборчивая речь (тишина или фоновый шум)".to_string());
+                }
+                Ok(LiveAudioAiOutcome::Success { raw, ai, model }) => {
+                    if raw.trim().is_empty() || is_stub_transcript(&raw) || is_stub_transcript(&ai) {
+                        let _ = std::fs::remove_file(&file_path);
+                        return Err("На записи не обнаружена разборчивая речь (тишина или фоновый шум)".to_string());
+                    }
+                    used_stt_model = format!("Gemini Live Fallback ({}) (Text-Only)", model);
+                    used_llm_model = format!("Gemini Live Fallback ({}) (Text-Only)", model);
+                    live_outcome = Some((raw, ai));
+                }
+                Err(e) => {
+                    if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+                        last_err = "Запрос отменен пользователем".to_string();
+                    } else {
+                        log_tts_error("Gemini Live audio+ai fallback failed", &e);
+                    }
+                }
+            }
+        }
+    }
+
+    // Парсим результат Live или JSON-ответ от Gemini
+    let (raw_transcript, ai_result_text, is_error) = if let Some((raw, ai)) = live_outcome {
+        (raw, ai, false)
+    } else {
+        match gemini_text {
         None => {
-            if last_err == "Запрос отменен пользователем" {
+            if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst)
+                || last_err == "Запрос отменен пользователем"
+            {
                 ("[Запрос отменен пользователем]".to_string(), String::new(), true)
             } else {
                 log_tts_error("Gemini failed entirely", &format!("Attempting local STT + LLM fallback. Gemini error: {}", last_err));
@@ -7035,6 +7817,7 @@ async fn save_audio(
                 }
             }
         }
+        }
     };
 
     let preset_key = if is_error {
@@ -7134,6 +7917,7 @@ async fn process_ai_request(
     preset: String,          // "tasks", "transcript", "email", "essence", "custom"
     custom_prompt: Option<String>,
     result_label: String,    // Название для результата ИИ, например "Суть (Транскрипция)"
+    pcm16k_base64: Option<String>,
 ) -> Result<Vec<HistoryEntry>, String> {
     CANCEL_REQUEST.store(false, std::sync::atomic::Ordering::SeqCst);
 
@@ -7217,156 +8001,220 @@ async fn process_ai_request(
         return Ok(history);
     }
 
-    let request_payload = if source_type == "audio" {
-        // Читаем аудиофайл
-        let audio_path = &history[entry_idx].audio_path;
-        if audio_path.is_empty() {
-            return Err("Аудиофайл не найден для этой записи".to_string());
-        }
-        let bytes = std::fs::read(audio_path)
-            .map_err(|e| format!("Не удалось прочитать аудиофайл: {}", e))?;
-        let base64_audio = STANDARD.encode(&bytes);
+    let audio_path_str = history[entry_idx].audio_path.clone();
+    if source_type == "audio" && audio_path_str.is_empty() {
+        return Err("Аудиофайл не найден для этой записи".to_string());
+    }
 
-        let combined_prompt = format!(
-            r#"Прослушай аудиозапись и выполни следующую задачу:
+    let api_key = config.api_key.trim().to_string();
+    let mut last_err = String::new();
+    let mut gemini_text: Option<String> = None;
+    let mut live_result_text: Option<String> = None;
+    let mut used_llm_model = String::new();
+
+    // Подзадача: попробовать Live Text-Mode для audio или text
+    let run_live_attempt = |model_name: &str,
+                            pcm_cache: &mut Option<Vec<u8>>| {
+        if source_type == "audio" && pcm_cache.is_none() {
+            if let Ok(pcm) = resolve_pcm_16k_bytes(
+                pcm16k_base64.as_deref(),
+                Some(std::path::Path::new(&audio_path_str)),
+            ) {
+                *pcm_cache = Some(pcm);
+            }
+        }
+        let _ = model_name;
+        pcm_cache.clone()
+    };
+    let mut cached_pcm_16k: Option<Vec<u8>> = None;
+
+    if is_gemini_live_model(&config.ai_model) {
+        let pcm_opt = if source_type == "audio" {
+            let p = run_live_attempt(&config.ai_model, &mut cached_pcm_16k);
+            if p.is_none() {
+                last_err = "Не удалось подготовить PCM 16kHz аудио для Live-режима".to_string();
+                log_tts_error("Gemini Live PCM prep failed in process_ai_request", &last_err);
+            }
+            p
+        } else {
+            None
+        };
+
+        if source_type != "audio" || pcm_opt.is_some() {
+            match run_gemini_live_text_session(
+                &api_key,
+                &config.ai_model,
+                pcm_opt.as_deref(),
+                if source_type == "audio" { None } else { Some(&source_text) },
+                Some(&prompt_essence),
+            )
+            .await
+            {
+                Ok(LiveAudioAiOutcome::Success { ai, model, .. }) => {
+                    used_llm_model = format!("Gemini Live ({}) (Text-Only)", model);
+                    live_result_text = Some(ai);
+                }
+                Ok(LiveAudioAiOutcome::Silence) => {
+                    return Err("На записи не обнаружена разборчивая речь (тишина или фоновый шум)".to_string());
+                }
+                Err(e) => {
+                    if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst)
+                        || e.contains("отменен")
+                    {
+                        return Err("Запрос отменен пользователем".to_string());
+                    }
+                    last_err = e;
+                    log_tts_error("Gemini Live primary failed in process_ai_request", &last_err);
+                }
+            }
+        }
+    }
+
+    if live_result_text.is_none() && !CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+        let contents = if source_type == "audio" {
+            let bytes = std::fs::read(&audio_path_str)
+                .map_err(|e| format!("Не удалось прочитать аудиофайл: {}", e))?;
+            let base64_audio = STANDARD.encode(&bytes);
+
+            let combined_prompt = format!(
+                r#"Прослушай аудиозапись и выполни следующую задачу:
             {}
             Ответь на русском языке."#,
-            prompt_essence
-        );
+                prompt_essence
+            );
 
-        serde_json::json!({
-            "contents": [{
+            serde_json::json!([{
                 "parts": [
                     {"inlineData": {"mimeType": "audio/webm", "data": base64_audio}},
                     {"text": combined_prompt}
                 ]
-            }],
-            "generationConfig": {
-                "temperature": 0.3
-            }
-        })
-    } else {
-        let combined_prompt = format!(
-            r#"Вот исходный текст:
+            }])
+        } else {
+            let combined_prompt = format!(
+                r#"Вот исходный текст:
             ---
             {}
             ---
             Выполни следующую задачу с этим текстом:
             {}
             Ответь на русском языке."#,
-            source_text,
-            prompt_essence
-        );
+                source_text,
+                prompt_essence
+            );
 
-        serde_json::json!({
-            "contents": [{
+            serde_json::json!([{
                 "parts": [
                     {"text": combined_prompt}
                 ]
-            }],
-            "generationConfig": {
-                "temperature": 0.3
+            }])
+        };
+
+        // 4. Подготавливаем цепочку проверенных моделей
+        let fallback_models = build_audio_capable_models(&config.ai_model);
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
+        for model in &fallback_models {
+            if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+                last_err = "Запрос отменен пользователем".to_string();
+                break;
             }
-        })
-    };
 
-    // 4. Подготавливаем цепочку проверенных моделей
-    let fallback_models = build_audio_capable_models(&config.ai_model);
-
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
-    let api_key = config.api_key.trim().to_string();
-
-    let mut last_err = String::new();
-    let mut gemini_text: Option<String> = None;
-    let mut used_model = String::new();
-
-    for model in &fallback_models {
-        if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
-            last_err = "Запрос отменен пользователем".to_string();
-            break;
-        }
-
-        // Проверяем блокировку модели
-        if is_model_locked(model) {
-            last_err = format!("Модель {} временно заблокирована из-за 429", model);
-            continue;
-        }
-
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-            model, api_key
-        );
-
-        match client.post(&url).json(&request_payload).send().await {
-            Err(e) => {
-                last_err = format!("Сетевая ошибка ({}): {}", model, e);
-                log_tts_error("Gemini network error", &last_err);
+            // Проверяем блокировку модели
+            if is_model_locked(model) {
+                last_err = format!("Модель {} временно заблокирована из-за 429", model);
                 continue;
             }
-            Ok(res) => {
-                let status = res.status();
-                if status.as_u16() == 429 {
-                    let err_text = res.text().await.unwrap_or_default();
-                    let delay = record_model_failure(model, 429, &err_text);
-                    last_err = format!("Модель {} заблокирована (429) на {:?}", model, delay);
-                    log_tts_error("Gemini rate limit 429", &last_err);
-                    continue;
-                }
-                if status.as_u16() == 503 {
-                    last_err = format!("Сервис недоступен (503) для {}", model);
-                    log_tts_error("Gemini service unavailable 503", &last_err);
-                    continue;
-                }
-                if !status.is_success() {
-                    let err_text = res.text().await.unwrap_or_default();
-                    last_err = format!("Ошибка {} ({}): {}", status, model, err_text);
-                    log_tts_error("Gemini API error status", &last_err);
-                    if status.as_u16() == 404
-                        || status.as_u16() == 400
-                        || err_text.contains("RESOURCE_EXHAUSTED")
-                        || err_text.contains("quota")
-                    {
-                        record_model_failure(model, status.as_u16(), &err_text);
-                    }
-                    continue;
-                }
 
-                match res.json::<GeminiResponse>().await {
-                    Err(e) => {
-                        last_err = format!("Парсинг ответа ({}): {}", model, e);
-                        log_tts_error("Gemini JSON deserialize error", &last_err);
-                        continue;
+            let url = format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+                model, api_key
+            );
+
+            match send_gemini_generate_content(&client, &url, &contents, model, &preset, 0.3, false).await {
+                Err(e) => {
+                    if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+                        last_err = "Запрос отменен пользователем".to_string();
+                        break;
                     }
-                    Ok(gr) => {
-                        if let Some(text) = gr
-                            .candidates
-                            .and_then(|c| c.into_iter().next())
-                            .and_then(|c| c.content)
-                            .and_then(|c| c.parts)
-                            .and_then(|p| p.into_iter().next())
-                            .and_then(|p| p.text)
-                        {
-                            record_model_success(model);
-                            gemini_text = Some(text);
-                            used_model = model.clone();
-                            break;
-                        } else {
-                            last_err = format!("Пустой ответ от {}", model);
-                            log_tts_error("Gemini empty candidates", &last_err);
-                        }
+                    last_err = format!("Сетевая ошибка ({}): {}", model, e);
+                    log_tts_error("Gemini network error", &last_err);
+                    continue;
+                }
+                Ok(Err((status_code, err_text))) => {
+                    last_err = record_and_format_rest_error(model, status_code, &err_text);
+                    continue;
+                }
+                Ok(Ok(body)) => {
+                    if let Some(text) = extract_gemini_response_text(&body) {
+                        record_model_success(model);
+                        gemini_text = Some(text);
+                        used_llm_model = format!("Gemini Cloud ({})", model);
+                        break;
+                    } else {
+                        last_err = format!("Пустой ответ от {}", model);
+                        log_tts_error("Gemini empty candidates", &last_err);
                     }
                 }
             }
         }
     }
 
-    let mut used_llm_model = format!("Gemini Cloud ({})", used_model);
+    if live_result_text.is_none()
+        && gemini_text.is_none()
+        && !CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst)
+        && last_err != "Запрос отменен пользователем"
+        && (!is_gemini_live_model(&config.ai_model)
+            || resolve_gemini_live_model_id(&config.ai_model) != GEMINI_LIVE_FALLBACK_MODEL)
+    {
+        let pcm_opt = if source_type == "audio" {
+            run_live_attempt(GEMINI_LIVE_FALLBACK_MODEL, &mut cached_pcm_16k)
+        } else {
+            None
+        };
+        if source_type != "audio" || pcm_opt.is_some() {
+            match run_gemini_live_text_session(
+                &api_key,
+                GEMINI_LIVE_FALLBACK_MODEL,
+                pcm_opt.as_deref(),
+                if source_type == "audio" { None } else { Some(&source_text) },
+                Some(&prompt_essence),
+            )
+            .await
+            {
+                Ok(LiveAudioAiOutcome::Success { ai, model, .. }) => {
+                    used_llm_model = format!("Gemini Live Fallback ({}) (Text-Only)", model);
+                    live_result_text = Some(ai);
+                }
+                Ok(LiveAudioAiOutcome::Silence) => {
+                    return Err("На записи не обнаружена разборчивая речь (тишина или фоновый шум)".to_string());
+                }
+                Err(e) => {
+                    if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst)
+                        || e.contains("отменен")
+                    {
+                        last_err = "Запрос отменен пользователем".to_string();
+                    } else {
+                        log_tts_error("Gemini Live fallback failed in process_ai_request", &e);
+                    }
+                }
+            }
+        }
+    }
 
-    let ai_result_text = match gemini_text {
+    let ai_result_text = if let Some(t) = live_result_text {
+        t
+    } else {
+        match gemini_text {
         None => {
+            if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst)
+                || last_err == "Запрос отменен пользователем"
+            {
+                return Err("Запрос отменен пользователем".to_string());
+            }
             log_tts_error("Gemini failed entirely in process_ai_request", &format!("Attempting local fallback. Gemini error: {}", last_err));
             let transcribed_text = if source_type == "audio" {
                 let audio_path = history[entry_idx].audio_path.clone();
@@ -7416,6 +8264,7 @@ async fn process_ai_request(
                 cleaned = &cleaned[3..cleaned.len() - 3].trim();
             }
             cleaned.to_string()
+        }
         }
     };
 
@@ -11937,7 +12786,10 @@ fn toggle_anchor_hotkey(app_handle: tauri::AppHandle) -> Result<(), String> {
             clear_anchor_internal(&app_handle, true);
             return Ok(());
         }
-        use winapi::um::winuser::{GetAncestor, GetForegroundWindow, IsWindow};
+        use winapi::shared::windef::POINT;
+        use winapi::um::winuser::{
+            GetAncestor, GetCursorPos, GetForegroundWindow, IsWindow, WindowFromPoint,
+        };
         let fg = unsafe { GetForegroundWindow() as isize };
         let pinned = if is_hwnd_insertable(fg) {
             let root = unsafe {
@@ -11945,17 +12797,39 @@ fn toggle_anchor_hotkey(app_handle: tauri::AppHandle) -> Result<(), String> {
                 if r != 0 { r } else { fg }
             };
             pin_window_from_focus(&app_handle, root, 0)
-        } else if let Ok(guard) = LAST_EXTERNAL_FG.lock() {
-            match *guard {
-                Some((root, focus, pid))
-                    if unsafe { IsWindow(root as _) != 0 } && get_hwnd_pid(root) == pid && is_hwnd_insertable(root) =>
-                {
-                    pin_window_from_focus(&app_handle, root, focus)
-                }
-                _ => false,
-            }
         } else {
-            false
+            // Если фокус сейчас на SincPro или системном окне — пробуем окно под курсором мыши
+            let mut cursor_pinned = false;
+            unsafe {
+                let mut pt = POINT { x: 0, y: 0 };
+                if GetCursorPos(&mut pt) != 0 {
+                    let hover_hwnd = WindowFromPoint(pt) as isize;
+                    if hover_hwnd != 0 {
+                        let root = GetAncestor(hover_hwnd as _, 2) as isize;
+                        let target_root = if root != 0 { root } else { hover_hwnd };
+                        if !is_own_process_hwnd(target_root) && is_hwnd_insertable(target_root) {
+                            let _ = activate_window_reliably(target_root, 0);
+                            cursor_pinned = pin_window_from_focus(&app_handle, target_root, 0);
+                        }
+                    }
+                }
+            }
+            if cursor_pinned {
+                true
+            } else if let Ok(guard) = LAST_EXTERNAL_FG.lock() {
+                match *guard {
+                    Some((root, focus, pid))
+                        if unsafe { IsWindow(root as _) != 0 }
+                            && get_hwnd_pid(root) == pid
+                            && is_hwnd_insertable(root) =>
+                    {
+                        pin_window_from_focus(&app_handle, root, focus)
+                    }
+                    _ => false,
+                }
+            } else {
+                false
+            }
         };
         if !pinned {
             let _ = app_handle.emit(
@@ -13368,5 +14242,89 @@ mod layout_tests {
         // 8. Anchor transparent canvas provides >= 45px unclipped glow margin around max-scaled badge
         let anchor_bleed_margin = (ANCHOR_WIN_SIZE_LOGICAL - ANCHOR_BADGE_SIZE_LOGICAL * 1.14) * 0.5;
         assert!(anchor_bleed_margin >= 45.0, "Anchor glow bleed margin too small: {}", anchor_bleed_margin);
+    }
+
+    #[test]
+    fn test_live_model_detection_and_resolution() {
+        assert!(is_gemini_live_model("gemini-2.5-flash-native-audio-latest"));
+        assert!(is_gemini_live_model("models/gemini-3.1-flash-live-preview"));
+        assert!(is_gemini_live_model("gemini-2.0-flash-live-001"));
+        assert!(!is_gemini_live_model("gemini-2.5-flash"));
+        assert!(!is_gemini_live_model("gemini-3-flash-preview"));
+        assert!(!is_gemini_live_model("local_ollama"));
+
+        assert_eq!(
+            resolve_gemini_live_model_id(""),
+            "gemini-2.5-flash-native-audio-latest"
+        );
+        assert_eq!(
+            resolve_gemini_live_model_id("gemini-3.8-live"),
+            "gemini-3.1-flash-live-preview"
+        );
+        assert_eq!(
+            resolve_gemini_live_model_id("models/gemini-2.5-flash-native-audio-latest"),
+            "gemini-2.5-flash-native-audio-latest"
+        );
+    }
+
+    #[test]
+    fn test_fast_dictation_thinking_config() {
+        let cfg_25 = build_fast_dictation_gen_config("gemini-2.5-flash", "none", 0.1, false);
+        assert_eq!(cfg_25["thinkingConfig"]["thinkingBudget"], 0);
+        assert!(cfg_25.get("responseMimeType").is_none());
+
+        let cfg_25_custom = build_fast_dictation_gen_config("gemini-2.5-flash-lite", "custom", 0.3, true);
+        assert_eq!(cfg_25_custom["thinkingConfig"]["thinkingBudget"], 256);
+        assert_eq!(cfg_25_custom["responseMimeType"], "application/json");
+
+        let cfg_3 = build_fast_dictation_gen_config("gemini-3-flash-preview", "tasks", 0.15, true);
+        assert_eq!(cfg_3["thinkingConfig"]["thinkingLevel"], "MINIMAL");
+
+        let cfg_3_custom = build_fast_dictation_gen_config("gemini-3-flash-preview", "custom", 0.3, false);
+        assert_eq!(cfg_3_custom["thinkingConfig"]["thinkingLevel"], "LOW");
+
+        let cfg_pro = build_fast_dictation_gen_config("gemini-2.5-pro", "none", 0.1, false);
+        assert!(cfg_pro.get("thinkingConfig").is_none());
+    }
+
+    #[test]
+    fn test_extract_gemini_response_skips_thought_parts_and_setup_payload() {
+        let body = r#"{
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"thought": true, "text": "internal reasoning"},
+                        {"text": "Готовый текст"}
+                    ]
+                }
+            }]
+        }"#;
+        assert_eq!(extract_gemini_response_text(body).as_deref(), Some("Готовый текст"));
+
+        let empty_body = r#"{"candidates":[{"content":{"parts":[{"text":""}]}}]}"#;
+        assert_eq!(extract_gemini_response_text(empty_body).as_deref(), Some(""));
+
+        let setup_with_thinking = build_live_text_setup_payload(
+            "gemini-2.5-flash-native-audio-latest",
+            Some("Test sys"),
+            true,
+        );
+        assert_eq!(
+            setup_with_thinking["setup"]["generationConfig"]["responseModalities"][0],
+            "AUDIO"
+        );
+        assert!(setup_with_thinking["setup"].get("inputAudioTranscription").is_some());
+        assert!(setup_with_thinking["setup"].get("outputAudioTranscription").is_some());
+        assert_eq!(
+            setup_with_thinking["setup"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            0
+        );
+
+        let setup_no_thinking = build_live_text_setup_payload(
+            "gemini-3.1-flash-live-preview",
+            None,
+            false,
+        );
+        assert!(setup_no_thinking["setup"]["generationConfig"].get("thinkingConfig").is_none());
     }
 }
