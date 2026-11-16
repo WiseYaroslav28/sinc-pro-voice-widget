@@ -211,7 +211,7 @@
               <h1 class="font-bold text-[#d2bbff] tracking-tight text-[18px] leading-none sidebar-logo">SINC PRO</h1>
               <div class="flex items-center gap-1.5 mt-1 sidebar-subtext">
                 <p class="text-[9px] text-[#ccc3d8] uppercase tracking-wider">Audio Intelligence</p>
-                <span id="sidebar-version-badge" class="text-[9px] text-[#a377ff] font-semibold">v3.5.58</span>
+                <span id="sidebar-version-badge" class="text-[9px] text-[#a377ff] font-semibold">v3.5.59</span>
               </div>
             </div>
           </div>
@@ -404,53 +404,6 @@
 
               <!-- Скрытый spoiler-content -->
               <div class="px-5 pb-4 text-[12px] leading-relaxed text-[#ccc3d8] hidden" id="spoiler-content"></div>
-            </div>
-
-            <!-- Нижняя панель дашборда: Версия, GitHub-звезда и Обратная связь -->
-            <div class="flex items-center justify-between gap-2 px-3 py-2 bg-[#1b1b20]/85 border border-[#4a4455]/25 rounded-xl flex-shrink-0 flex-wrap">
-              <button
-                type="button"
-                id="dashboard-version-pill"
-                class="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-[#131318]/80 hover:bg-[#2a292f] border border-[#4a4455]/30 text-[11px] text-[#ccc3d8] transition-all cursor-pointer focus:outline-none"
-                title="Нажмите, чтобы проверить обновления"
-              >
-                <span class="material-symbols-outlined text-[14px] text-[#a377ff]" id="dashboard-version-icon">verified</span>
-                <span id="dashboard-version-text" class="font-medium text-[#e4e1e9]">Версия 3.5.58</span>
-                <span
-                  id="dashboard-version-status"
-                  class="text-[10px] px-1.5 py-0.5 rounded-full bg-[#7bd6d1]/15 text-[#7bd6d1] font-semibold border border-[#7bd6d1]/25"
-                  >Актуальна</span
-                >
-              </button>
-
-              <div class="flex items-center gap-2 flex-wrap">
-                <button
-                  type="button"
-                  id="btn-dashboard-github-star"
-                  class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#131318]/80 hover:bg-[#2a292f] border border-[#4a4455]/30 hover:border-[#ffd166]/45 text-[11px] text-[#ccc3d8] hover:text-white transition-all cursor-pointer focus:outline-none"
-                  title="Открыть репозиторий SincPro на GitHub и поставить звезду ⭐"
-                >
-                  <svg class="w-3.5 h-3.5 fill-current text-[#e4e1e9]" viewBox="0 0 16 16" aria-hidden="true">
-                    <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
-                  </svg>
-                  <span class="text-[#ffd166] font-bold">★</span>
-                  <span>GitHub · Звезда</span>
-                  <span
-                    id="github-stars-badge"
-                    class="hidden text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#ffd166]/15 text-[#ffd166] border border-[#ffd166]/30"
-                  ></span>
-                </button>
-
-                <button
-                  type="button"
-                  id="btn-dashboard-feedback"
-                  class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#8e52ff]/10 hover:bg-[#8e52ff]/20 border border-[#8e52ff]/35 hover:border-[#a377ff]/60 text-[11px] text-[#d2bbff] hover:text-white transition-all cursor-pointer focus:outline-none"
-                  title="Сообщить об ошибке или предложить улучшение"
-                >
-                  <span class="material-symbols-outlined text-[14px]">rate_review</span>
-                  <span>Ошибка / Пожелание</span>
-                </button>
-              </div>
             </div>
 
           </section>
@@ -1066,12 +1019,59 @@
 
         </div>
 
-        <!-- Подвал дашборда -->
-        <footer class="h-12 w-full bg-[#0e0e13] border-t border-[#4a4455]/30 flex justify-between items-center px-6 flex-shrink-0 z-10 text-[11px]">
-          <span class="font-bold text-[#e4e1e9]" id="footer-api-summary">© 2026 SINC PRO</span>
-          <div class="flex items-center gap-4">
+        <!-- Подвал дашборда (сквозной для всех разделов) -->
+        <footer class="h-12 w-full bg-[#0e0e13] border-t border-[#4a4455]/30 flex justify-between items-center gap-3 px-6 flex-shrink-0 z-10 text-[11px]">
+          <div class="flex items-center gap-3 min-w-0">
+            <span class="font-bold text-[#e4e1e9] whitespace-nowrap" id="footer-api-summary">© 2026 SINC PRO</span>
+            <span class="h-3.5 w-px bg-[#4a4455]/35 flex-shrink-0" aria-hidden="true"></span>
+            <button
+              type="button"
+              id="dashboard-version-pill"
+              class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#1b1b20] hover:bg-[#25242b] border border-[#4a4455]/35 hover:border-[#8e52ff]/50 text-[11px] text-[#ccc3d8] transition-all cursor-pointer focus:outline-none whitespace-nowrap"
+              title="Нажмите, чтобы проверить обновления"
+            >
+              <span class="material-symbols-outlined text-[14px] text-[#a377ff]" id="dashboard-version-icon">verified</span>
+              <span id="dashboard-version-text" class="font-medium text-[#e4e1e9]">Версия 3.5.59</span>
+              <span
+                id="dashboard-version-status"
+                class="text-[10px] px-1.5 py-0.5 rounded-full bg-[#7bd6d1]/15 text-[#7bd6d1] font-semibold border border-[#7bd6d1]/25 leading-none"
+                >Актуальна</span
+              >
+            </button>
+          </div>
+
+          <div class="flex items-center gap-2.5 flex-shrink-0">
+            <button
+              type="button"
+              id="btn-dashboard-github-star"
+              class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#1b1b20] hover:bg-[#25242b] border border-[#4a4455]/35 hover:border-[#ffd166]/45 text-[11px] text-[#ccc3d8] hover:text-white transition-all cursor-pointer focus:outline-none whitespace-nowrap"
+              title="Открыть репозиторий SincPro на GitHub и поставить звезду ⭐"
+            >
+              <svg class="w-3.5 h-3.5 fill-current text-[#e4e1e9] flex-shrink-0" viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
+              </svg>
+              <span class="text-[#ffd166] font-bold leading-none">★</span>
+              <span>GitHub · Звезда</span>
+              <span
+                id="github-stars-badge"
+                class="hidden text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#ffd166]/15 text-[#ffd166] border border-[#ffd166]/30 leading-none"
+              ></span>
+            </button>
+
+            <button
+              type="button"
+              id="btn-dashboard-feedback"
+              class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#8e52ff]/12 hover:bg-[#8e52ff]/22 border border-[#8e52ff]/35 hover:border-[#a377ff]/60 text-[11px] text-[#d2bbff] hover:text-white transition-all cursor-pointer focus:outline-none whitespace-nowrap"
+              title="Сообщить об ошибке или предложить улучшение"
+            >
+              <span class="material-symbols-outlined text-[14px]">rate_review</span>
+              <span>Ошибка / Пожелание</span>
+            </button>
+
+            <span class="h-3.5 w-px bg-[#4a4455]/35 flex-shrink-0" aria-hidden="true"></span>
+
             <!-- Индикаторы статусов систем -->
-            <div class="flex items-center gap-3.5">
+            <div class="flex items-center gap-2">
               <!-- Статус Gemini AI / STT -->
               <div class="flex items-center gap-1.5 cursor-help px-2.5 py-1 rounded-full bg-[#1b1b20] border border-[#4a4455]/30" id="status-container-api" title="Интеграция ИИ: Подключение...">
                 <span class="material-symbols-outlined text-[14px] text-[#ccc3d8]">smart_toy</span>
@@ -4116,10 +4116,10 @@
       }
 
       // Инициализация при загрузке
-      window.__SINC_APP_VERSION__ = '3.5.58';
+      window.__SINC_APP_VERSION__ = '3.5.59';
 
       function syncAppVersionDisplays(version, isMock = false) {
-        const cleanVer = String(version || '3.5.58').trim();
+        const cleanVer = String(version || '3.5.59').trim();
         window.__SINC_APP_VERSION__ = cleanVer;
         const suffix = isMock ? ' (Mock)' : '';
 
@@ -4144,10 +4144,10 @@
             syncAppVersionDisplays(version, false);
           }).catch(err => {
             console.error("Failed to load app version:", err);
-            syncAppVersionDisplays('3.5.58', false);
+            syncAppVersionDisplays('3.5.59', false);
           });
         } else {
-          syncAppVersionDisplays('3.5.58', true);
+          syncAppVersionDisplays('3.5.59', true);
         }
 
         setupAudioPlayer();
@@ -4615,7 +4615,7 @@
           }
           if (dashVersionStatus) {
             dashVersionStatus.textContent = `Доступна v${update.version}`;
-            dashVersionStatus.className = 'text-[10px] px-1.5 py-0.5 rounded-full bg-[#8e52ff]/25 text-[#d2bbff] font-semibold border border-[#a377ff]/45 animate-pulse';
+            dashVersionStatus.className = 'text-[10px] px-1.5 py-0.5 rounded-full bg-[#8e52ff]/25 text-[#d2bbff] font-semibold border border-[#a377ff]/45 leading-none animate-pulse';
           }
           if (dashVersionIcon) {
             dashVersionIcon.textContent = 'system_update_alt';
@@ -4634,7 +4634,7 @@
           const modalNotes = document.getElementById('update-modal-notes');
           const modalSkipBtn = document.getElementById('update-modal-skip-btn');
           if (modalVerBadge) modalVerBadge.textContent = `v${update.version}`;
-          if (modalCurVer) modalCurVer.textContent = `v${window.__SINC_APP_VERSION__ || '3.5.58'}`;
+          if (modalCurVer) modalCurVer.textContent = `v${window.__SINC_APP_VERSION__ || '3.5.59'}`;
           if (modalNotes) modalNotes.textContent = formatUpdateNotesForModal(update.body);
           if (modalSkipBtn) modalSkipBtn.textContent = `Пропустить v${update.version}`;
         }
@@ -4647,7 +4647,7 @@
           }
           if (dashVersionStatus) {
             dashVersionStatus.textContent = 'Актуальна';
-            dashVersionStatus.className = 'text-[10px] px-1.5 py-0.5 rounded-full bg-[#7bd6d1]/15 text-[#7bd6d1] font-semibold border border-[#7bd6d1]/25';
+            dashVersionStatus.className = 'text-[10px] px-1.5 py-0.5 rounded-full bg-[#7bd6d1]/15 text-[#7bd6d1] font-semibold border border-[#7bd6d1]/25 leading-none';
           }
           if (dashVersionIcon) {
             dashVersionIcon.textContent = 'verified';
@@ -4805,7 +4805,7 @@
                 if (skippedVer !== update.version && !sessionDismissedVersions.has(update.version)) {
                   await invoke('show_update_popup', {
                     payload: {
-                      currentVersion: window.__SINC_APP_VERSION__ || '3.5.58',
+                      currentVersion: window.__SINC_APP_VERSION__ || '3.5.59',
                       newVersion: update.version,
                       notes: update.body || ''
                     }
@@ -5051,7 +5051,7 @@
             <div>
               <h3 class="text-sm font-semibold tracking-wide text-white" id="update-modal-title">Доступно обновление SincPro</h3>
               <div class="text-[11px] text-[#ccc3d8] flex items-center gap-1.5 mt-0.5">
-                <span id="update-modal-cur-ver">v3.5.58</span>
+                <span id="update-modal-cur-ver">v3.5.59</span>
                 <span>→</span>
                 <span id="update-modal-ver-badge" class="font-bold text-[#7bd6d1]">v—</span>
               </div>
@@ -5495,7 +5495,7 @@
               };
               const meta = typeMap[selectedType] || typeMap.bug;
               const fullTitle = `${meta.prefix} ${rawTitle}`;
-              const appVer = window.__SINC_APP_VERSION__ || '3.5.58';
+              const appVer = window.__SINC_APP_VERSION__ || '3.5.59';
 
               let reportText = `## ${meta.heading}\n\n${rawBody}`;
               if (includeDiag) {
