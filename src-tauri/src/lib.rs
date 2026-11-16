@@ -2703,44 +2703,70 @@ fn convert_layout(text: &str) -> String {
     }).collect()
 }
 
-fn map_vk_to_chars(vk: u32) -> Option<(char, char)> {
+fn map_vk_to_chars_with_state(vk: u32, shift: bool, caps_lock: bool) -> Option<(char, char)> {
+    let letter_upper = shift ^ caps_lock;
+    let apply_letter_case = |en: char, ru: char| -> (char, char) {
+        if letter_upper {
+            (
+                en.to_ascii_uppercase(),
+                ru.to_uppercase().next().unwrap_or(ru),
+            )
+        } else {
+            (en, ru)
+        }
+    };
+    let apply_punct_letter = |en_plain: char, en_shift: char, ru_plain: char| -> (char, char) {
+        let en = if shift { en_shift } else { en_plain };
+        let ru = if letter_upper {
+            ru_plain.to_uppercase().next().unwrap_or(ru_plain)
+        } else {
+            ru_plain
+        };
+        (en, ru)
+    };
+
     match vk {
-        0x51 => Some(('q', 'й')),
-        0x57 => Some(('w', 'ц')),
-        0x45 => Some(('e', 'у')),
-        0x52 => Some(('r', 'к')),
-        0x54 => Some(('t', 'е')),
-        0x59 => Some(('y', 'н')),
-        0x55 => Some(('u', 'г')),
-        0x49 => Some(('i', 'ш')),
-        0x4F => Some(('o', 'щ')),
-        0x50 => Some(('p', 'з')),
-        0xDB => Some(('[', 'х')),
-        0xDD => Some((']', 'ъ')),
-        0x41 => Some(('a', 'ф')),
-        0x53 => Some(('s', 'ы')),
-        0x44 => Some(('d', 'в')),
-        0x46 => Some(('f', 'а')),
-        0x47 => Some(('g', 'п')),
-        0x48 => Some(('h', 'р')),
-        0x4A => Some(('j', 'о')),
-        0x4B => Some(('k', 'л')),
-        0x4C => Some(('l', 'д')),
-        0xBA => Some((';', 'ж')),
-        0xDE => Some(('\'', 'э')),
-        0x5A => Some(('z', 'я')),
-        0x58 => Some(('x', 'ч')),
-        0x43 => Some(('c', 'с')),
-        0x56 => Some(('v', 'м')),
-        0x42 => Some(('b', 'и')),
-        0x4E => Some(('n', 'т')),
-        0x4D => Some(('m', 'ь')),
-        0xBC => Some((',', 'б')),
-        0xBE => Some(('.', 'ю')),
-        // 0xBF ('/' и '?' в EN, '.' и ',' в RU) намеренно НЕ включен: это всегда пунктуация в обеих раскладках
-        0xC0 => Some(('`', 'ё')),
+        0x51 => Some(apply_letter_case('q', 'й')),
+        0x57 => Some(apply_letter_case('w', 'ц')),
+        0x45 => Some(apply_letter_case('e', 'у')),
+        0x52 => Some(apply_letter_case('r', 'к')),
+        0x54 => Some(apply_letter_case('t', 'е')),
+        0x59 => Some(apply_letter_case('y', 'н')),
+        0x55 => Some(apply_letter_case('u', 'г')),
+        0x49 => Some(apply_letter_case('i', 'ш')),
+        0x4F => Some(apply_letter_case('o', 'щ')),
+        0x50 => Some(apply_letter_case('p', 'з')),
+        0xDB => Some(apply_punct_letter('[', '{', 'х')),
+        0xDD => Some(apply_punct_letter(']', '}', 'ъ')),
+        0x41 => Some(apply_letter_case('a', 'ф')),
+        0x53 => Some(apply_letter_case('s', 'ы')),
+        0x44 => Some(apply_letter_case('d', 'в')),
+        0x46 => Some(apply_letter_case('f', 'а')),
+        0x47 => Some(apply_letter_case('g', 'п')),
+        0x48 => Some(apply_letter_case('h', 'р')),
+        0x4A => Some(apply_letter_case('j', 'о')),
+        0x4B => Some(apply_letter_case('k', 'л')),
+        0x4C => Some(apply_letter_case('l', 'д')),
+        0xBA => Some(apply_punct_letter(';', ':', 'ж')),
+        0xDE => Some(apply_punct_letter('\'', '"', 'э')),
+        0x5A => Some(apply_letter_case('z', 'я')),
+        0x58 => Some(apply_letter_case('x', 'ч')),
+        0x43 => Some(apply_letter_case('c', 'с')),
+        0x56 => Some(apply_letter_case('v', 'м')),
+        0x42 => Some(apply_letter_case('b', 'и')),
+        0x4E => Some(apply_letter_case('n', 'т')),
+        0x4D => Some(apply_letter_case('m', 'ь')),
+        0xBC => Some(apply_punct_letter(',', '<', 'б')),
+        0xBE => Some(apply_punct_letter('.', '>', 'ю')),
+        // 0xBF ('/' и '?' в EN, '.' и ',' в RU) намеренно НЕ включен: это триггер пунктуации
+        0xC0 => Some(apply_punct_letter('`', '~', 'ё')),
         _ => None,
     }
+}
+
+#[allow(dead_code)]
+fn map_vk_to_chars(vk: u32) -> Option<(char, char)> {
+    map_vk_to_chars_with_state(vk, false, false)
 }
 
 fn has_normal_word_casing_min(word: &str, min_len: usize) -> bool {
@@ -2801,6 +2827,8 @@ fn is_recognized_english_word(word_lower: &str) -> bool {
         "admin", "login", "logout", "signup", "token", "secret", "branch", "commit", "merge", "rebase",
         "push", "pull", "fetch", "clone", "status", "stash", "reset", "revert", "build", "check", "test",
         "tests", "debug", "trace", "cargo", "npm", "pnpm", "yarn", "vite", "webpack", "babel", "eslint",
+        "backend", "frontend", "fullstack", "webhook", "backup", "feedback", "callback", "localhost",
+        "endpoint", "selectel",
         // Расширенный словарь частых английских слов
         "able", "above", "accept", "access", "across", "action", "actual", "actually", "add", "added",
         "addition", "address", "advance", "advice", "affect", "afraid", "age", "agency", "agent", "ago",
@@ -3120,6 +3148,111 @@ fn is_valid_english_word(word_lower: &str) -> bool {
     false
 }
 
+fn is_domain_or_filename_like(en_lower: &str) -> bool {
+    if en_lower.chars().any(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    let core = en_lower.trim_end_matches(|c| matches!(c, ',' | '.' | ';' | ':'));
+    if let Some((left, ext)) = core.rsplit_once('.') {
+        if !left.is_empty()
+            && !ext.is_empty()
+            && left.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+            && ext.chars().all(|c| c.is_ascii_alphanumeric())
+        {
+            const KNOWN_UNAMBIGUOUS_EXTS: &[&str] = &[
+                "com", "org", "net", "dev", "app", "pro", "info", "xyz", "site", "online", "tech",
+                "cloud", "edu", "gov", "exe", "msi", "dll", "sys", "bat", "cmd", "ps1", "bin",
+                "html", "htm", "css", "scss", "less", "jsx", "tsx", "mjs", "cjs", "vue", "svelte",
+                "json", "toml", "yaml", "yml", "xml", "csv", "ini", "cfg", "conf", "env", "lock",
+                "log", "txt", "rtf", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "java",
+                "swift", "cpp", "hpp", "php", "sql", "lua", "png", "jpg", "jpeg", "gif", "webp",
+                "svg", "ico", "mp3", "wav", "ogg", "flac", "mp4", "mkv", "webm", "zip", "rar",
+                "tar", "zstd", "onnx", "gguf",
+            ];
+            if KNOWN_UNAMBIGUOUS_EXTS.contains(&ext) {
+                return true;
+            }
+
+            const KNOWN_SHORT_EXTS: &[&str] = &[
+                "ru", "io", "ai", "me", "co", "uk", "de", "fr", "ua", "by", "kz", "sh", "js",
+                "ts", "rs", "py", "rb", "go", "kt", "cs", "md", "gz",
+            ];
+            if KNOWN_SHORT_EXTS.contains(&ext) {
+                let left_has_vowel = left
+                    .chars()
+                    .any(|c| matches!(c, 'a' | 'e' | 'i' | 'o' | 'u' | 'y'));
+                if left_has_vowel || is_valid_english_word(left) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn strip_matching_en_wrapper(en_lower: &str) -> &str {
+    let core = en_lower.trim_end_matches(|c| matches!(c, ',' | '.' | ';' | ':'));
+    for (open, close) in [
+        ("[", "]"),
+        ("{", "}"),
+        ("<", ">"),
+        ("'", "'"),
+        ("\"", "\""),
+        ("`", "`"),
+    ] {
+        if let Some(rest) = core.strip_prefix(open) {
+            if let Some(inner) = rest.strip_suffix(close) {
+                return inner;
+            }
+        }
+    }
+    core
+}
+
+fn is_english_contraction(en_lower: &str) -> bool {
+    let core = en_lower.trim_end_matches(|c| matches!(c, ',' | '.' | ';' | ':' | '?' | '!'));
+    if matches!(core, "o'clock" | "y'all" | "ma'am") {
+        return true;
+    }
+    if let Some((stem, suffix)) = core.split_once('\'') {
+        if !stem.is_empty()
+            && !suffix.is_empty()
+            && stem.chars().all(|c| c.is_ascii_alphabetic())
+            && suffix.chars().all(|c| c.is_ascii_alphabetic())
+        {
+            if core.ends_with("n't") {
+                return stem.len() >= 3
+                    && stem[..stem.len() - 1]
+                        .chars()
+                        .any(|c| matches!(c, 'a' | 'e' | 'i' | 'o' | 'u' | 'y'));
+            }
+            if matches!(suffix, "s" | "re" | "ve" | "ll" | "d" | "m") {
+                return stem == "i" || is_valid_english_word(stem);
+            }
+        }
+    }
+    false
+}
+
+fn has_internal_ru_layout_punctuation(en_lower: &str) -> bool {
+    if is_domain_or_filename_like(en_lower) || is_english_contraction(en_lower) {
+        return false;
+    }
+    let core = en_lower.trim_end_matches(|c| matches!(c, ',' | '.' | ';' | ':'));
+    let inner = strip_matching_en_wrapper(core);
+    if inner != core && !inner.is_empty() && is_valid_english_word(inner) {
+        return false;
+    }
+    core.chars().count() >= 2
+        && core.chars().any(|c| c.is_ascii_alphabetic())
+        && core.chars().any(|c| {
+            matches!(
+                c,
+                ';' | ':' | ',' | '<' | '.' | '>' | '[' | '{' | ']' | '}' | '\'' | '"' | '`' | '~'
+            )
+        })
+}
+
 fn has_valid_russian_phonotactics(ru_lower: &str) -> bool {
     let chars: Vec<char> = ru_lower.chars().collect();
     if chars.len() < 3 {
@@ -3175,7 +3308,7 @@ fn has_valid_russian_phonotactics(ru_lower: &str) -> bool {
         "чщ", "щч", "жш", "шж", "цщ", "щц", "цч", "чц", "шщ", "щщ", "чз", "шз", "жз", "жц", "шц",
         "щг", "щц", "щз", "щд", "щл", "щв", "щп", "щф", "щм", "щк", "щт", "щс", "щр", "щш", "щж", "щх", "щй", "щя", "щю",
         "цр", "цш", "цг", "цн", "цд", "цт", "цф", "цщ", "цй", "цч", "цб", "цж", "цз", "цл", "цм", "цп", "цх",
-        "фд", "фз", "фп", "фщ", "фц", "фч", "фй", "фш", "фж", "фх", "фв", "фм", "фь", "фг",
+        "фд", "фз", "фп", "фщ", "фц", "фч", "фй", "фш", "фж", "фх", "фв", "фм", "фь", "фг", "фс",
         "ьу", "ьщ", "ьд", "ьп", "ьв", "ьи", "феу", "шиг", "геу", "еуч", "зуф", "куй",
         "штп", "шпре", "ешщт", "ышщт", "ьуте", "туыы", "фиду", "шиду", "егку", "фтсу", "утсу",
     ];
@@ -3206,6 +3339,9 @@ fn has_valid_russian_phonotactics(ru_lower: &str) -> bool {
 fn is_impossible_english_word(en_lower: &str) -> bool {
     let chars: Vec<char> = en_lower.chars().collect();
     if chars.len() < 3 {
+        return false;
+    }
+    if is_valid_english_word(en_lower) {
         return false;
     }
     // Наличие спецсимволов внутри слова, которые в RU раскладке являются буквами х, ъ, ж, э, б, ю, ё
@@ -3397,44 +3533,27 @@ fn is_recognized_russian_word(ru_lower: &str, en_source_lower: &str) -> bool {
         "мир", "код", "ход", "шаг", "лог", "бит", "тип", "мал", "шум", "дан", "вид", "хук", "кэш",
         "имя", "бар", "тон", "пар", "тег", "пул", "баг", "мог", "игр", "йод", "йог", "указан", "сутки",
         "пуст", "пустые", "нули", "курсив", "щит", "щите", "индекс", "индексу", "акцент", "акценты",
+        "ниже", "выше", "ближе", "шире", "чаще", "реже", "проще", "тише", "громче", "далее", "ранее",
+        "скорее", "точнее", "быстрее", "раз", "раза", "сто", "ста", "чат", "чате", "чата", "чек",
+        "чеки", "вес", "век", "счет", "счёт", "нос", "рот", "ухо", "уши", "пол", "пола", "сок",
+        "суп", "сыр", "газ", "ток", "дым", "снег", "ключ", "план", "факт", "курс", "банк", "долг",
+        "плюс", "риск", "шанс", "ряд", "род", "бег", "бок", "быт", "зов", "зуб", "подтверждаю",
     ];
 
     if RU_DICTIONARY.contains(&ru_lower) {
         return true;
     }
 
-    // Морфологическое распознавание русских слов (4+ букв) только тогда, когда исходник фонетически невозможен в английском
-    if ru_lower.chars().count() >= 4 && is_impossible_english_word(en_source_lower) {
-        const RU_MORPH_ENDINGS: &[&str] = &[
-            "аться", "яться", "иться", "еться", "уться", "ться", "тся",
-            "ать", "ять", "ить", "еть", "уть", "оть", "ыть",
-            "ешь", "ишь", "ете", "ите", "ают", "яют", "уют", "юют",
-            "ает", "яет", "ует", "юет", "аем", "яем", "уем", "юем",
-            "ала", "яла", "ила", "ела", "али", "яли", "или", "ели", "ало", "яло", "ило", "ело",
-            "ал", "ял", "ил", "ел", "ыл", "ул",
-            "ого", "его", "ому", "ему", "ыми", "ими", "ами", "ями",
-            "ый", "ий", "ой", "ая", "яя", "ое", "ее", "ые", "ие", "ую", "юю", "ых", "их", "ым", "им", "ом", "ем", "ём",
-            "ай", "яй", "уй", "юй",
-            "ость", "ение", "ание", "тель", "очка", "ечка", "ник", "чик", "щик", "ств", "ски", "ско", "ция", "ции", "цию",
-            "ка", "ки", "ку", "ке", "кой", "ок", "ек", "ёк", "ик", "ов", "ев", "ёв", "ей", "ам", "ям", "ах", "ях",
-            "на", "ны", "ни", "не", "ну", "но", "ма", "мы", "ми", "ме", "му", "мо", "та", "ты", "ти", "те", "ту", "то",
-            "ра", "ры", "ри", "ре", "ру", "ро", "ла", "лы", "ли", "ле", "лу", "ло", "да", "ды", "ди", "де", "ду", "до",
-            "ба", "бы", "би", "бе", "бу", "бо", "ва", "вы", "ви", "ве", "ву", "во", "га", "ги", "ге", "гу", "го",
-            "за", "зы", "зи", "зе", "зу", "зо", "па", "пы", "пи", "пе", "пу", "по", "са", "сы", "си", "се", "су", "со",
-            "фа", "фы", "фи", "фе", "фу", "фо", "ха", "хи", "хе", "ху", "хо", "ца", "цы", "це", "цу", "цо",
-            "ча", "чи", "че", "чу", "чо", "ша", "ши", "ше", "шу", "шо", "ща", "щи", "ще", "щу",
-            "ия", "ии", "ию", "ья", "ьи", "ье", "ью", "мя", "ко",
-            "ор", "ер", "ар", "ир", "ур", "ан", "ен", "ин", "он", "ун", "ян", "ат", "ет", "ит", "от", "ут", "ят",
-            "ас", "ес", "ис", "ос", "ус", "аз", "ез", "из", "оз", "уз", "аж", "еж", "ож", "уж", "яж",
-            "ач", "еч", "ич", "оч", "уч", "яч", "ак", "ук", "юк", "як",
-            "ль", "нь", "рь", "ть", "дь", "сь", "зь", "вь", "пь", "бь", "мь", "фь", "чь", "шь", "щь",
-        ];
+    // Явный маркер русской раскладки: знаки препинания (';', ':', ',', '[', ']', ''', '`', '.')
+    // внутри или в начале слова, не являющегося доменом, файлом или английским сокращением
+    if has_internal_ru_layout_punctuation(en_source_lower) {
+        return true;
+    }
 
-        for ending in RU_MORPH_ENDINGS {
-            if ru_lower.ends_with(ending) {
-                return true;
-            }
-        }
+    // Длинные слова (4+ букв), невозможные в английской фонетике и допустимые в русской фонотактике,
+    // распознаём без узкого белого списка морфем (закрывает -аю/-яю/-лю/-рю/-лся, жа/жи/же/жу/жо, -од/-нт/-кт/-ец)
+    if ru_lower.chars().count() >= 4 && is_impossible_english_word(en_source_lower) {
+        return true;
     }
 
     false
@@ -3454,7 +3573,8 @@ fn is_valid_pending_short_word(word_current: &str, word_alternate: &str, first_l
             "а", "в", "и", "к", "о", "с", "у", "я",
             "не", "на", "но", "по", "за", "из", "от", "до", "же", "бы", "ли", "то", "мы", "вы",
             "он", "ты", "да", "ну", "во", "со", "ко", "об", "ни", "ее", "её", "им", "их", "ей",
-            "ем", "уж", "ту", "та", "те", "ах", "ох", "эх", "ух", "ой", "ай", "эй",
+            "ем", "уж", "ту", "та", "те", "ах", "ох", "эх", "ух", "ой", "ай", "эй", "юг", "еж",
+            "ёж", "хм",
         ];
         VALID_RU_SHORT.contains(&alt_lower.as_str())
     } else {
@@ -3480,7 +3600,8 @@ fn should_autocorrect_short_word(word_current: &str, word_alternate: &str, first
         const UNAMBIGUOUS_RU_2LETTER: &[&str] = &[
             "не", "на", "но", "по", "за", "из", "от", "до", "же", "бы", "ли", "то", "вы",
             "он", "ты", "да", "ну", "во", "со", "ко", "об", "ни", "ее", "её", "им", "их",
-            "ей", "уж", "ту", "та", "те", "ах", "ох", "эх", "ух", "ой", "ай", "эй",
+            "ей", "уж", "ту", "та", "те", "ах", "ох", "эх", "ух", "ой", "ай", "эй", "юг",
+            "еж", "ёж", "хм",
         ];
         UNAMBIGUOUS_RU_2LETTER.contains(&alt_lower.as_str())
     } else {
@@ -3507,14 +3628,23 @@ fn should_autocorrect_layout(word_current: &str, word_alternate: &str, first_lay
 
     if first_layout_is_en {
         // Пользователь печатает в АНГЛИЙСКОЙ раскладке -> проверяем перевод EN -> RU
+        if is_domain_or_filename_like(&curr_lower) || is_english_contraction(&curr_lower) {
+            return false;
+        }
+        let core = curr_lower.trim_end_matches(|c| matches!(c, ',' | '.' | ';' | ':'));
+        let inner = strip_matching_en_wrapper(core);
+        if inner != core && !inner.is_empty() && is_valid_english_word(inner) {
+            return false;
+        }
+
         let en_stem = curr_lower.trim_end_matches(|c| matches!(c, ',' | '.' | ';' | ':' | '\''));
         if en_stem.len() != curr_lower.len() && (en_stem.len() < 2 || is_valid_english_word(en_stem) || !is_impossible_english_word(en_stem)) {
             // Если на конце стоит знак препинания (точка/запятая), но до него валидное или фонетически английское слово ("date.", "name.", "hello,"),
-            // разрешаем перевод ТОЛЬКО если слово целиком (включая 'ю'/'б'/'ж'/'э' на конце) есть в словаре RU_DICTIONARY ("знаю", "думаю", "люблю", "говорю")
+            // разрешаем перевод ТОЛЬКО если слово целиком (включая 'ю'/'б'/'ж'/'э' на конце) распознаётся как русское ("знаю", "думаю", "люблю", "говорю")
             if !is_recognized_russian_word(&alt_lower, &curr_lower) || is_valid_english_word(en_stem) {
                 return false;
             }
-            // Дополнительная защита: если основа до точки/запятой фонетически допустима в английском, требуем точного словарного совпадения
+            // Дополнительная защита: если основа до точки/запятой фонетически допустима в английском, требуем точного глагольного окончания на -ю
             if !is_impossible_english_word(en_stem) {
                 let ru_stem_len = en_stem.chars().count();
                 let alt_chars: Vec<char> = alt_lower.chars().collect();
@@ -3522,8 +3652,6 @@ fn should_autocorrect_layout(word_current: &str, word_alternate: &str, first_lay
                 if !has_valid_russian_phonotactics(&alt_lower) || matches!(alt_stem.as_str(), "вфеу" | "тфьу" | "ышеу" | "зфпу" | "ьщву" | "тщву" | "сщву") {
                     return false;
                 }
-                // Если на конце была точка ('.' -> 'ю') или запятая (',' -> 'б'), а основа до неё не имела русских маркеров,
-                // разрешаем только реальные русские глаголы 1-го лица на -аю/-яю/-ую/-юю/-лю/-рю/-чу/-щу/-шу/-жу/-гу/-ду
                 if !alt_lower.ends_with("аю")
                     && !alt_lower.ends_with("яю")
                     && !alt_lower.ends_with("лю")
@@ -3533,6 +3661,7 @@ fn should_autocorrect_layout(word_current: &str, word_alternate: &str, first_lay
                     && !alt_lower.ends_with("шу")
                     && !alt_lower.ends_with("жу")
                     && !alt_lower.ends_with("ую")
+                    && !alt_lower.ends_with("ню")
                 {
                     return false;
                 }
@@ -3558,8 +3687,12 @@ fn should_autocorrect_layout(word_current: &str, word_alternate: &str, first_lay
             return false;
         }
 
-        // Переводим с русского на английский ТОЛЬКО если полученное слово — реальное словарное английское слово!
-        is_recognized_english_word(&alt_lower)
+        // Переводим с русского на английский, если альтернатива — словарное английское слово,
+        // ЛИБО длинная (4+) строка фонетически невозможна в русском и допустима в английском ("ыудусеуд" -> "selectel")
+        is_valid_english_word(&alt_lower)
+            || (alt_lower.len() >= 4
+                && !has_valid_russian_phonotactics(&curr_lower)
+                && !is_impossible_english_word(&alt_lower))
     }
 }
 
@@ -3695,38 +3828,78 @@ fn simulate_backspaces(count: usize) {
     }
 }
 
-fn simulate_enter() {
-    use winapi::um::winuser::{SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_RETURN};
+fn simulate_enter(with_shift: bool) {
+    use winapi::um::winuser::{
+        GetAsyncKeyState, SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
+        VK_LSHIFT, VK_RETURN,
+    };
     use std::mem::size_of;
 
-    let mut inputs = [
-        INPUT {
-            type_: INPUT_KEYBOARD,
-            u: unsafe { std::mem::zeroed() },
-        },
-        INPUT {
-            type_: INPUT_KEYBOARD,
-            u: unsafe { std::mem::zeroed() },
-        }
-    ];
-
     unsafe {
-        *inputs[0].u.ki_mut() = KEYBDINPUT {
-            wVk: VK_RETURN as u16,
-            wScan: 0,
-            dwFlags: 0,
-            time: 0,
-            dwExtraInfo: 0x12345678,
+        let shift_still_held = (GetAsyncKeyState(0x10) as u16 & 0x8000) != 0;
+        let inject_shift = with_shift && !shift_still_held;
+        let make_key = |vk: u16, flags: u32| -> INPUT {
+            let mut inp = INPUT {
+                type_: INPUT_KEYBOARD,
+                u: std::mem::zeroed(),
+            };
+            *inp.u.ki_mut() = KEYBDINPUT {
+                wVk: vk,
+                wScan: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0x12345678,
+            };
+            inp
         };
-        *inputs[1].u.ki_mut() = KEYBDINPUT {
-            wVk: VK_RETURN as u16,
-            wScan: 0,
-            dwFlags: KEYEVENTF_KEYUP,
-            time: 0,
-            dwExtraInfo: 0x12345678,
-        };
-        
-        SendInput(2, inputs.as_mut_ptr(), size_of::<INPUT>() as i32);
+
+        let mut inputs = Vec::with_capacity(4);
+        if inject_shift {
+            inputs.push(make_key(VK_LSHIFT as u16, 0));
+        }
+        inputs.push(make_key(VK_RETURN as u16, 0));
+        inputs.push(make_key(VK_RETURN as u16, KEYEVENTF_KEYUP));
+        if inject_shift {
+            inputs.push(make_key(VK_LSHIFT as u16, KEYEVENTF_KEYUP));
+        }
+        SendInput(inputs.len() as u32, inputs.as_mut_ptr(), size_of::<INPUT>() as i32);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DelimiterKind {
+    Space,
+    Enter { shift: bool },
+    Punct { curr: char, alt: char },
+}
+
+fn classify_layout_delimiter(vk: u32, shift: bool, first_layout_is_en: bool) -> Option<DelimiterKind> {
+    match (vk, shift) {
+        (0x20, _) => Some(DelimiterKind::Space),
+        (0x0D, _) => Some(DelimiterKind::Enter { shift }),
+        (0xBD, false) => Some(DelimiterKind::Punct { curr: '-', alt: '-' }),
+        (0xBF, false) => Some(DelimiterKind::Punct {
+            curr: if first_layout_is_en { '/' } else { '.' },
+            alt: if first_layout_is_en { '.' } else { '/' },
+        }),
+        (0xBF, true) => Some(DelimiterKind::Punct {
+            curr: if first_layout_is_en { '?' } else { ',' },
+            alt: if first_layout_is_en { ',' } else { '?' },
+        }),
+        (0x31, true) => Some(DelimiterKind::Punct { curr: '!', alt: '!' }),
+        (0x36, true) => Some(DelimiterKind::Punct {
+            curr: if first_layout_is_en { '^' } else { ':' },
+            alt: if first_layout_is_en { ':' } else { '^' },
+        }),
+        (0x37, true) => Some(DelimiterKind::Punct {
+            curr: if first_layout_is_en { '&' } else { '?' },
+            alt: if first_layout_is_en { '?' } else { '&' },
+        }),
+        (0x34, true) => Some(DelimiterKind::Punct {
+            curr: if first_layout_is_en { '$' } else { ';' },
+            alt: if first_layout_is_en { ';' } else { '$' },
+        }),
+        _ => None,
     }
 }
 
@@ -3854,16 +4027,16 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
             0
         };
         let hkl = GetKeyboardLayout(if target_thread != 0 { target_thread } else { fg_thread });
-        let lang_id = (hkl as usize) & 0xFFFF;
+        let primary_lang = ((hkl as usize) & 0xFFFF) & 0x03FF;
         let mouse_clicked = MOUSE_CLICKED_SINCE_KEY.swap(false, Ordering::Relaxed)
-            || (GetAsyncKeyState(0x01) != 0)
-            || (GetAsyncKeyState(0x02) != 0)
-            || (GetAsyncKeyState(0x04) != 0);
+            || ((GetAsyncKeyState(0x01) as u16) & 0x8000) != 0
+            || ((GetAsyncKeyState(0x02) as u16) & 0x8000) != 0
+            || ((GetAsyncKeyState(0x04) as u16) & 0x8000) != 0;
         if mouse_clicked {
             TYPED_BUFFER.lock().unwrap().clear();
             PENDING_SHORT_WORDS.lock().unwrap().clear();
         }
-        (fg_hwnd as isize, hkl as usize, lang_id == 0x0409)
+        (fg_hwnd as isize, hkl as usize, primary_lang == 0x09)
     };
 
     let prev_hwnd = LAST_TYPED_HWND.swap(current_hwnd, Ordering::Relaxed);
@@ -3883,22 +4056,17 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
         *last_time = Instant::now();
     }
 
-    if let Some((eng, rus)) = map_vk_to_chars(vk) {
+    let caps_lock = unsafe { winapi::um::winuser::GetKeyState(winapi::um::winuser::VK_CAPITAL) & 1 } != 0;
+    let is_potential_delimiter = matches!(
+        (vk, shift),
+        (0x20, _) | (0x0D, _) | (0xBD, false) | (0xBF, _) | (0x31 | 0x34 | 0x36 | 0x37, true)
+    );
+
+    if let Some((eng_char, rus_char)) = map_vk_to_chars_with_state(vk, shift, caps_lock) {
         if ctrl || alt || win {
             TYPED_BUFFER.lock().unwrap().clear();
             PENDING_SHORT_WORDS.lock().unwrap().clear();
             return false;
-        }
-
-        // Учитываем регистр на основе CapsLock и Shift
-        let caps_lock = unsafe { winapi::um::winuser::GetKeyState(winapi::um::winuser::VK_CAPITAL) & 1 } != 0;
-        let is_uppercase = shift ^ caps_lock;
-
-        let mut eng_char = eng;
-        let mut rus_char = rus;
-        if is_uppercase {
-            eng_char = eng_char.to_uppercase().to_string().chars().next().unwrap_or(eng_char);
-            rus_char = rus_char.to_uppercase().to_string().chars().next().unwrap_or(rus_char);
         }
 
         let mut buf = TYPED_BUFFER.lock().unwrap();
@@ -3923,7 +4091,7 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
             // Пользователь стер пробел перед текущим словом — сбрасываем ожидающие короткие слова
             PENDING_SHORT_WORDS.lock().unwrap().clear();
         }
-    } else if vk == 0x20 || vk == 0x0D {
+    } else if is_potential_delimiter {
         if ctrl || alt || win {
             TYPED_BUFFER.lock().unwrap().clear();
             PENDING_SHORT_WORDS.lock().unwrap().clear();
@@ -3946,6 +4114,11 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
             PENDING_SHORT_WORDS.lock().unwrap().clear();
             return false;
         }
+
+        let Some(delim) = classify_layout_delimiter(vk, shift, first_layout) else {
+            PENDING_SHORT_WORDS.lock().unwrap().clear();
+            return false;
+        };
 
         let word_current: String = typed_keys.iter().map(|k| if first_layout { k.eng_char } else { k.rus_char }).collect();
         let word_alternate: String = typed_keys.iter().map(|k| if first_layout { k.rus_char } else { k.eng_char }).collect();
@@ -3998,31 +4171,54 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
             full_alternate.push_str(&word_alternate);
 
             let replace_len = full_current.chars().count();
-            let undo_len = full_alternate.chars().count() + 1;
+            let (text_to_send, orig_to_restore, alt_for_log, undo_len, enter_shift_opt) = match delim {
+                DelimiterKind::Space => (
+                    format!("{} ", full_alternate),
+                    format!("{} ", full_current),
+                    format!("{} ", full_alternate),
+                    full_alternate.chars().count() + 1,
+                    None,
+                ),
+                DelimiterKind::Punct { curr, alt } => (
+                    format!("{}{}", full_alternate, alt),
+                    format!("{}{}", full_current, curr),
+                    format!("{}{}", full_alternate, alt),
+                    full_alternate.chars().count() + 1,
+                    None,
+                ),
+                DelimiterKind::Enter { shift: enter_shift } => (
+                    full_alternate.clone(),
+                    full_current.clone(),
+                    full_alternate.clone(),
+                    full_alternate.chars().count() + 1,
+                    Some(enter_shift),
+                ),
+            };
 
+            LAYOUT_PROCESSING.store(true, Ordering::SeqCst);
             std::thread::spawn(move || {
-                LAYOUT_PROCESSING.store(true, Ordering::SeqCst);
                 switch_active_window_layout(!first_layout);
-                std::thread::sleep(Duration::from_millis(10));
+                std::thread::sleep(Duration::from_millis(8));
                 simulate_backspaces(replace_len);
-                std::thread::sleep(Duration::from_millis(15));
-                simulate_unicode_input(&full_alternate);
+                std::thread::sleep(Duration::from_millis(10));
+                simulate_unicode_input(&text_to_send);
 
-                if vk == 0x20 {
-                    simulate_unicode_input(" ");
-                } else {
-                    simulate_enter();
+                if let Some(with_shift) = enter_shift_opt {
+                    simulate_enter(with_shift);
                 }
 
                 LAST_TYPED_HKL.store(0, Ordering::SeqCst);
 
-                let mut last_correct = LAST_AUTOCORRECT.lock().unwrap();
-                *last_correct = Some((full_current.clone(), full_alternate.clone(), !first_layout, undo_len));
+                {
+                    let mut last_correct = LAST_AUTOCORRECT.lock().unwrap();
+                    *last_correct = Some((orig_to_restore, alt_for_log.clone(), !first_layout, undo_len));
+                }
+
+                // Сбрасываем блокировку хука ДО звукового сигнала (Beep длится ~40мс), чтобы не глотать следующие буквы
+                LAYOUT_PROCESSING.store(false, Ordering::SeqCst);
 
                 unsafe { let _ = winapi::um::utilapiset::Beep(400, 40); }
-                log_to_file(&format!("Autocorrected: '{}' -> '{}'", full_current, full_alternate));
-
-                LAYOUT_PROCESSING.store(false, Ordering::SeqCst);
+                log_to_file(&format!("Autocorrected: '{}' -> '{}'", full_current, alt_for_log));
             });
             return true;
         } else if vk == 0x20 && (1..=2).contains(&char_count) && is_valid_pending_short_word(&word_current, &word_alternate, first_layout) {
@@ -4050,16 +4246,36 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
 }
 
 fn switch_active_window_layout(to_english: bool) {
-    use winapi::um::winuser::{GetForegroundWindow, GetWindowThreadProcessId, GetGUIThreadInfo, GUITHREADINFO, PostMessageW, WM_INPUTLANGCHANGEREQUEST};
+    use winapi::um::winuser::{
+        GetForegroundWindow, GetGUIThreadInfo, GetKeyboardLayoutList, GetWindowThreadProcessId,
+        PostMessageW, GUITHREADINFO, WM_INPUTLANGCHANGEREQUEST,
+    };
     use winapi::shared::minwindef::LPARAM;
     unsafe {
         let fg_hwnd = GetForegroundWindow();
         if !fg_hwnd.is_null() {
-            let layout_id = if to_english {
-                0x04090409 as LPARAM
-            } else {
-                0x04190419 as LPARAM
-            };
+            let target_primary: usize = if to_english { 0x09 } else { 0x19 };
+            let preferred_full: usize = if to_english { 0x0409 } else { 0x0419 };
+            let fallback_hkl: LPARAM = if to_english { 0x04090409 } else { 0x04190419 };
+
+            let mut layout_id = fallback_hkl;
+            let count = GetKeyboardLayoutList(0, std::ptr::null_mut());
+            if count > 0 {
+                let mut list = vec![std::ptr::null_mut(); count as usize];
+                let filled = GetKeyboardLayoutList(count, list.as_mut_ptr());
+                if filled > 0 {
+                    let valid = &list[..filled as usize];
+                    if let Some(&exact) = valid.iter().find(|&&h| ((h as usize) & 0xFFFF) == preferred_full) {
+                        layout_id = exact as LPARAM;
+                    } else if let Some(&primary) = valid
+                        .iter()
+                        .find(|&&h| (((h as usize) & 0xFFFF) & 0x03FF) == target_primary)
+                    {
+                        layout_id = primary as LPARAM;
+                    }
+                }
+            }
+
             let fg_thread = GetWindowThreadProcessId(fg_hwnd, std::ptr::null_mut());
             let mut gui_info: GUITHREADINFO = std::mem::zeroed();
             gui_info.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
@@ -5091,6 +5307,25 @@ fn parse_hotkey_key(k: &str) -> u32 {
     }
 }
 
+fn sanitize_excluded_processes(procs: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for p in procs {
+        let lower = p.trim().to_lowercase();
+        if lower.is_ascii()
+            && lower.ends_with(".exe")
+            && lower.len() > 4
+            && lower
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+            && seen.insert(lower.clone())
+        {
+            out.push(lower);
+        }
+    }
+    out
+}
+
 fn sync_layout_config(config: &AppConfig) {
     LAYOUT_CONVERTER_ENABLED.store(config.layout_converter_mode, Ordering::SeqCst);
     LAYOUT_HOTKEY_MODIFIER.store(parse_hotkey_modifier(&config.layout_hotkey_modifier), Ordering::SeqCst);
@@ -5140,10 +5375,11 @@ fn sync_layout_config(config: &AppConfig) {
         word_set.insert(word.to_lowercase());
     }
 
+    let sanitized_procs = sanitize_excluded_processes(config.layout_excluded_processes.clone());
     let mut proc_set = EXCLUDED_PROCESSES.lock().unwrap();
     proc_set.clear();
-    for proc in &config.layout_excluded_processes {
-        proc_set.insert(proc.to_lowercase());
+    for proc in sanitized_procs {
+        proc_set.insert(proc);
     }
 }
 
@@ -5181,6 +5417,7 @@ fn load_config_internal(app_handle: &tauri::AppHandle) -> Result<AppConfig, Stri
     if ai_lower.contains("native-audio") || ai_lower.contains("-live") {
         config.ai_model = "gemini-2.5-flash".to_string();
     }
+    config.layout_excluded_processes = sanitize_excluded_processes(config.layout_excluded_processes);
     Ok(config)
 }
 
@@ -5192,7 +5429,8 @@ async fn load_config(app_handle: tauri::AppHandle) -> Result<AppConfig, String> 
 }
 
 #[tauri::command]
-async fn save_config(app_handle: tauri::AppHandle, config: AppConfig) -> Result<(), String> {
+async fn save_config(app_handle: tauri::AppHandle, mut config: AppConfig) -> Result<(), String> {
+    config.layout_excluded_processes = sanitize_excluded_processes(config.layout_excluded_processes);
     let config_dir = app_handle
         .path()
         .app_config_dir()
@@ -5393,7 +5631,7 @@ async fn update_config_fields(app_handle: tauri::AppHandle, fields: serde_json::
         }
         if let Some(val) = obj.get("layout_excluded_processes") {
             if let Ok(procs) = serde_json::from_value::<Vec<String>>(val.clone()) {
-                config.layout_excluded_processes = procs;
+                config.layout_excluded_processes = sanitize_excluded_processes(procs);
             }
         }
         if let Some(val) = obj.get("ai_servers") {
@@ -13551,6 +13789,129 @@ mod layout_tests {
         // 8. Anchor transparent canvas provides >= 45px unclipped glow margin around max-scaled badge
         let anchor_bleed_margin = (ANCHOR_WIN_SIZE_LOGICAL - ANCHOR_BADGE_SIZE_LOGICAL * 1.14) * 0.5;
         assert!(anchor_bleed_margin >= 45.0, "Anchor glow bleed margin too small: {}", anchor_bleed_margin);
+    }
+
+    #[test]
+    fn test_internal_punctuation_compound_and_symmetric_switching() {
+        // 1. Точная фраза пользователя: "gjlndth;lf. yb;t еще дополнения:"
+        assert!(should_autocorrect_layout("gjlndth;lf.", "подтверждаю", true));
+        assert!(should_autocorrect_layout("yb;t", "ниже", true));
+        assert_eq!(
+            simulate_phrase_typing(&["gjlndth;lf.", "yb;t", "tot", "ljgjkytybz"], true),
+            "подтверждаю ниже еще дополнения"
+        );
+
+        // 2. Слова со знаками препинания (';', ':', ',', '[', ']', ''', '`', '.') внутри/в начале
+        for &(en_raw, ru_expected) in &[
+            ("e;t", "уже"),
+            (";le", "жду"),
+            ("hf,jnf", "работа"),
+            (",jr", "бок"),
+            ("[jhjij", "хорошо"),
+            ("j,]trn", "объект"),
+            ("dc`", "всё"),
+            ("'nj", "это"),
+            ("gj'njve", "поэтому"),
+            ("rk.x", "ключ"),
+            ("gk.c", "плюс"),
+        ] {
+            assert!(
+                should_autocorrect_layout(en_raw, ru_expected, true),
+                "Expected internal-punctuation word '{}' -> '{}'",
+                en_raw,
+                ru_expected
+            );
+        }
+
+        // 3. Ранее пропускавшиеся русские окончания (-аю/-яю/-лю/-рю/-ню/-лся, -од/-кт/-нт/-ец) и короткие слова
+        for ru_word in &[
+            "отправляю", "проверяю", "отправлю", "проверю", "помню", "оказался", "получился",
+            "подход", "проект", "клиент", "конец", "раз", "сто", "чат",
+        ] {
+            let en_typed = ru_to_en_str(ru_word);
+            assert!(
+                should_autocorrect_layout(&en_typed, ru_word, true),
+                "Expected EN->RU conversion for '{}' (typed as '{}')",
+                ru_word,
+                en_typed
+            );
+        }
+
+        // 4. Защита доменов, имён файлов, английских сокращений и обёрток от ложного перевода
+        for protected_en in &[
+            "google.com", "index.html", "config.json", "lib.rs", "SincPro.exe", "node.js",
+            "don't", "doesn't", "it's", "can't", "i'm", "you're", "we've", "user's",
+            "[link]", "'hello'", "\"test\"", "<div>",
+        ] {
+            let ru_alt = en_to_ru_str(protected_en);
+            assert!(
+                !should_autocorrect_layout(protected_en, &ru_alt, true),
+                "Protected English token '{}' must NOT convert to '{}'",
+                protected_en,
+                ru_alt
+            );
+        }
+
+        // 5. Симметричное переключение RU -> EN по фонетике и словарю
+        for &(ru_raw, en_expected) in &[
+            ("ыудусеуд", "selectel"),
+            ("акщтеутв", "frontend"),
+            ("ифслутв", "backend"),
+            ("цуирщщл", "webhook"),
+            ("реез", "http"),
+            ("ещьд", "toml"),
+        ] {
+            assert!(
+                should_autocorrect_layout(ru_raw, en_expected, false),
+                "Expected symmetric RU->EN conversion '{}' -> '{}'",
+                ru_raw,
+                en_expected
+            );
+        }
+
+        // 6. Классификация триггеров: дефис составных слов и знаки препинания
+        assert_eq!(
+            classify_layout_delimiter(0xBD, false, true),
+            Some(DelimiterKind::Punct { curr: '-', alt: '-' })
+        );
+        assert_eq!(
+            classify_layout_delimiter(0xBF, true, true),
+            Some(DelimiterKind::Punct { curr: '?', alt: ',' })
+        );
+        assert_eq!(
+            classify_layout_delimiter(0xBF, false, true),
+            Some(DelimiterKind::Punct { curr: '/', alt: '.' })
+        );
+        assert_eq!(
+            classify_layout_delimiter(0x36, true, true),
+            Some(DelimiterKind::Punct { curr: '^', alt: ':' })
+        );
+        assert_eq!(
+            classify_layout_delimiter(0x37, true, true),
+            Some(DelimiterKind::Punct { curr: '&', alt: '?' })
+        );
+        assert_eq!(
+            classify_layout_delimiter(0x31, true, true),
+            Some(DelimiterKind::Punct { curr: '!', alt: '!' })
+        );
+        assert_eq!(
+            classify_layout_delimiter(0x0D, true, true),
+            Some(DelimiterKind::Enter { shift: true })
+        );
+
+        // 7. Shift-маппинг русских букв на пунктуационных клавишах и санитайзер процессов
+        assert_eq!(map_vk_to_chars_with_state(0xBA, true, false), Some((':', 'Ж')));
+        assert_eq!(map_vk_to_chars_with_state(0xBE, true, false), Some(('>', 'Ю')));
+        assert_eq!(
+            sanitize_excluded_processes(vec![
+                "впн".to_string(),
+                "chrome.exe".to_string(),
+                "Code.EXE".to_string(),
+                "vpn".to_string(),
+                "а".to_string(),
+            ]),
+            vec!["chrome.exe".to_string(), "code.exe".to_string()]
+        );
     }
 
     #[test]

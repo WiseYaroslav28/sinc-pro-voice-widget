@@ -2154,12 +2154,22 @@
 
       document.getElementById('btn-layout-add-app').addEventListener('click', () => {
         const input = document.getElementById('input-layout-app');
-        const val = input.value.trim().toLowerCase();
-        if (val && !layoutExcludedProcesses.includes(val)) {
+        let val = input.value.trim().toLowerCase();
+        if (!val) return;
+        if (!/^[a-z0-9._-]+$/.test(val)) {
+          showToast('Укажите имя процесса на латинице (например, app.exe)', true);
+          return;
+        }
+        if (!val.endsWith('.exe')) {
+          val += '.exe';
+        }
+        if (!layoutExcludedProcesses.includes(val)) {
           layoutExcludedProcesses.push(val);
           input.value = '';
           renderLayoutApps();
           saveConfig(true);
+        } else {
+          input.value = '';
         }
       });
       document.getElementById('input-layout-app').addEventListener('keydown', (e) => {
@@ -4003,13 +4013,13 @@
             console.error("Failed to load app version:", err);
             const versionDisplay = document.getElementById('app-version-display');
             if (versionDisplay) {
-              versionDisplay.textContent = `Текущая версия: 3.5.56`;
+              versionDisplay.textContent = `Текущая версия: 3.5.57`;
             }
           });
         } else {
           const versionDisplay = document.getElementById('app-version-display');
           if (versionDisplay) {
-            versionDisplay.textContent = `Текущая версия: 3.5.56 (Mock)`;
+            versionDisplay.textContent = `Текущая версия: 3.5.57 (Mock)`;
           }
         }
 
