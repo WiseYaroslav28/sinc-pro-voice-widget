@@ -1,0 +1,332 @@
+<!doctype html>
+<html class="dark" lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SINC PRO — Доступно обновление</title>
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+      * {
+        box-sizing: border-box;
+        outline: none !important;
+      }
+      html,
+      body {
+        background: transparent !important;
+        background-color: transparent !important;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        width: 100vw;
+        height: 100vh;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 8px;
+      }
+      .drag-region {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 44px;
+        height: 42px;
+        cursor: move;
+        z-index: 5;
+      }
+      button {
+        position: relative;
+        z-index: 10;
+      }
+      #popup-notes::-webkit-scrollbar {
+        width: 4px;
+      }
+      #popup-notes::-webkit-scrollbar-thumb {
+        background: rgba(163, 119, 255, 0.35);
+        border-radius: 999px;
+      }
+    </style>
+  </head>
+  <body class="bg-transparent text-[#e4e1e9] antialiased">
+    <div
+      class="w-full h-full flex flex-col justify-between relative overflow-hidden"
+      style="
+        background: #1c1b23;
+        border: 1px solid rgba(142, 82, 255, 0.55);
+        border-radius: 16px;
+        box-shadow: 0 0 0 1px rgba(142, 82, 255, 0.16), 0 10px 30px rgba(0, 0, 0, 0.85), 0 0 22px rgba(123, 214, 209, 0.12);
+        padding: 14px 16px;
+      "
+    >
+      <div class="drag-region" data-tauri-drag-region></div>
+
+      <!-- Шапка уведомления -->
+      <div class="flex items-start justify-between gap-2 z-10">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <div
+            class="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0"
+            style="background: linear-gradient(135deg, rgba(142, 82, 255, 0.25), rgba(123, 214, 209, 0.2)); border: 1px solid rgba(142, 82, 255, 0.4);"
+          >
+            <span class="material-symbols-outlined text-[#7bd6d1] text-[18px]">system_update_alt</span>
+          </div>
+          <div class="min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-[13px] font-bold text-white leading-tight">Доступно обновление</span>
+              <span
+                id="popup-new-version"
+                class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#7bd6d1]/15 text-[#7bd6d1] border border-[#7bd6d1]/35"
+                >v—</span
+              >
+            </div>
+            <div class="text-[10px] text-[#ccc3d8]/75 mt-0.5" id="popup-current-version">Текущая: —</div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          id="btn-popup-close"
+          class="text-[#ccc3d8] hover:text-white hover:bg-[#2a292f] rounded-lg p-1 transition-colors flex items-center justify-center cursor-pointer bg-transparent border-0 flex-shrink-0"
+          title="Напомнить при следующем запуске"
+          aria-label="Закрыть уведомление"
+        >
+          <span class="material-symbols-outlined text-[17px]">close</span>
+        </button>
+      </div>
+
+      <!-- Описание изменений -->
+      <div class="flex-1 flex flex-col justify-center my-2.5 min-h-0 z-10">
+        <div
+          id="popup-notes"
+          class="bg-[#131318]/90 border border-[#4a4455]/30 rounded-xl px-3 py-2 text-[11px] leading-relaxed text-[#ccc3d8] overflow-y-auto whitespace-pre-wrap"
+          style="max-height: 86px; min-height: 54px;"
+        >
+          Загрузка описания обновления...
+        </div>
+
+        <!-- Прогресс загрузки -->
+        <div id="popup-progress-wrap" class="hidden flex-col gap-1.5 mt-2">
+          <div class="flex items-center justify-between text-[10px] text-[#7bd6d1] font-medium">
+            <span id="popup-progress-text">Подготовка загрузки...</span>
+            <span id="popup-progress-percent">0%</span>
+          </div>
+          <div class="w-full h-1.5 bg-[#131318] rounded-full overflow-hidden border border-[#4a4455]/30">
+            <div
+              id="popup-progress-bar"
+              class="h-full rounded-full transition-all duration-200"
+              style="width: 0%; background: linear-gradient(90deg, #8e52ff, #7bd6d1);"
+            ></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Кнопки действий -->
+      <div class="flex items-center justify-between gap-2 pt-2 border-t border-[#4a4455]/25 z-10">
+        <div class="flex items-center gap-1">
+          <button
+            type="button"
+            id="btn-popup-skip"
+            class="px-2 py-1 rounded-lg text-[10px] font-medium text-[#ccc3d8]/75 hover:text-[#ffb4ab] hover:bg-[#2a292f] transition-colors cursor-pointer bg-transparent border-0"
+            title="Больше не показывать уведомление для этой версии"
+          >
+            Пропустить
+          </button>
+          <button
+            type="button"
+            id="btn-popup-details"
+            class="px-2 py-1 rounded-lg text-[10px] font-medium text-[#d2bbff] hover:text-white hover:bg-[#2a292f] transition-colors cursor-pointer bg-transparent border-0"
+            title="Открыть подробности в главном окне"
+          >
+            Подробнее
+          </button>
+        </div>
+
+        <div class="flex items-center gap-1.5">
+          <button
+            type="button"
+            id="btn-popup-later"
+            class="px-3 py-1.5 rounded-lg border border-[#4a4455]/40 text-[#ccc3d8] hover:text-white hover:bg-[#2a292f] transition-all text-[11px] font-semibold cursor-pointer bg-transparent"
+          >
+            Позже
+          </button>
+          <button
+            type="button"
+            id="btn-popup-install"
+            class="px-3.5 py-1.5 rounded-lg text-white transition-all text-[11px] font-semibold shadow-lg cursor-pointer border-0"
+            style="background: linear-gradient(90deg, #8e52ff, #45a29e);"
+          >
+            Обновить
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const newVersionEl = document.getElementById('popup-new-version');
+      const currentVersionEl = document.getElementById('popup-current-version');
+      const notesEl = document.getElementById('popup-notes');
+      const progressWrapEl = document.getElementById('popup-progress-wrap');
+      const progressBarEl = document.getElementById('popup-progress-bar');
+      const progressTextEl = document.getElementById('popup-progress-text');
+      const progressPercentEl = document.getElementById('popup-progress-percent');
+
+      const btnClose = document.getElementById('btn-popup-close');
+      const btnSkip = document.getElementById('btn-popup-skip');
+      const btnDetails = document.getElementById('btn-popup-details');
+      const btnLater = document.getElementById('btn-popup-later');
+      const btnInstall = document.getElementById('btn-popup-install');
+
+      let currentPayload = { currentVersion: '', newVersion: '', notes: '' };
+      let isInstalling = false;
+
+      function formatReleaseNotesPlain(raw) {
+        if (!raw || !String(raw).trim()) {
+          return 'Доступна новая версия SINC PRO с улучшениями и исправлениями.';
+        }
+        return String(raw)
+          .replace(/\r\n/g, '\n')
+          .replace(/^###\s*/gm, '')
+          .replace(/\*\*(.*?)\*\*/g, '$1')
+          .replace(/`([^`]+)`/g, '$1')
+          .replace(/\n{3,}/g, '\n\n')
+          .trim();
+      }
+
+      function setButtonsDisabled(disabled) {
+        [btnClose, btnSkip, btnDetails, btnLater, btnInstall].forEach((btn) => {
+          if (btn) btn.disabled = disabled;
+        });
+        if (btnInstall) {
+          btnInstall.style.opacity = disabled ? '0.65' : '1';
+        }
+      }
+
+      function applyPopupData(payload) {
+        if (!payload) return;
+        currentPayload = {
+          currentVersion: payload.currentVersion || '',
+          newVersion: payload.newVersion || '',
+          notes: payload.notes || ''
+        };
+        if (newVersionEl) {
+          newVersionEl.textContent = currentPayload.newVersion ? `v${currentPayload.newVersion}` : 'Новая версия';
+        }
+        if (currentVersionEl) {
+          currentVersionEl.textContent = currentPayload.currentVersion
+            ? `Установлена: v${currentPayload.currentVersion}`
+            : 'Доступна новая сборка';
+        }
+        if (btnSkip) {
+          btnSkip.textContent = currentPayload.newVersion
+            ? `Пропустить v${currentPayload.newVersion}`
+            : 'Пропустить';
+        }
+        if (notesEl) {
+          notesEl.textContent = formatReleaseNotesPlain(currentPayload.notes);
+          notesEl.scrollTop = 0;
+        }
+        isInstalling = false;
+        setButtonsDisabled(false);
+        if (progressWrapEl) {
+          progressWrapEl.classList.add('hidden');
+          progressWrapEl.classList.remove('flex');
+        }
+      }
+
+      async function sendPopupAction(action) {
+        if (!window.__TAURI__) return;
+        try {
+          await window.__TAURI__.event.emit('update-popup-action', {
+            action,
+            version: currentPayload.newVersion
+          });
+        } catch (e) {
+          console.error('update-popup-action emit error:', e);
+        }
+      }
+
+      async function dismissPopup(action) {
+        if (isInstalling) return;
+        await sendPopupAction(action);
+        if (window.__TAURI__ && window.__TAURI__.core) {
+          await window.__TAURI__.core.invoke('hide_update_popup').catch(() => {});
+        }
+      }
+
+      if (btnClose) btnClose.addEventListener('click', () => dismissPopup('later'));
+      if (btnLater) btnLater.addEventListener('click', () => dismissPopup('later'));
+      if (btnSkip) btnSkip.addEventListener('click', () => dismissPopup('skip'));
+
+      if (btnDetails) {
+        btnDetails.addEventListener('click', async () => {
+          if (isInstalling) return;
+          if (window.__TAURI__ && window.__TAURI__.core) {
+            await window.__TAURI__.core.invoke('open_main_from_update_popup').catch(() => {});
+          }
+        });
+      }
+
+      if (btnInstall) {
+        btnInstall.addEventListener('click', async () => {
+          if (isInstalling) return;
+          isInstalling = true;
+          setButtonsDisabled(true);
+          if (progressWrapEl) {
+            progressWrapEl.classList.remove('hidden');
+            progressWrapEl.classList.add('flex');
+          }
+          if (progressTextEl) progressTextEl.textContent = 'Начинаю загрузку...';
+          if (progressPercentEl) progressPercentEl.textContent = '0%';
+          if (progressBarEl) progressBarEl.style.width = '0%';
+          await sendPopupAction('install');
+        });
+      }
+
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !isInstalling) {
+          dismissPopup('later');
+        }
+      });
+
+      if (window.__TAURI__) {
+        const { core, event } = window.__TAURI__;
+        core
+          .invoke('get_update_popup_data')
+          .then((data) => {
+            if (data) applyPopupData(data);
+          })
+          .catch(() => {});
+
+        event.listen('update-popup-data', (ev) => {
+          if (ev && ev.payload) applyPopupData(ev.payload);
+        });
+
+        event.listen('update-download-progress', (ev) => {
+          const p = ev && ev.payload ? ev.payload : {};
+          if (p.status === 'started' || p.status === 'progress') {
+            isInstalling = true;
+            setButtonsDisabled(true);
+            if (progressWrapEl) {
+              progressWrapEl.classList.remove('hidden');
+              progressWrapEl.classList.add('flex');
+            }
+            const pct = typeof p.percent === 'number' ? Math.max(0, Math.min(100, p.percent)) : 0;
+            if (progressBarEl) progressBarEl.style.width = `${pct}%`;
+            if (progressPercentEl) progressPercentEl.textContent = `${pct}%`;
+            if (progressTextEl) progressTextEl.textContent = p.text || 'Загрузка обновления...';
+          } else if (p.status === 'finished') {
+            if (progressBarEl) progressBarEl.style.width = '100%';
+            if (progressPercentEl) progressPercentEl.textContent = '100%';
+            if (progressTextEl) progressTextEl.textContent = p.text || 'Установка и перезапуск...';
+          } else if (p.status === 'error') {
+            isInstalling = false;
+            setButtonsDisabled(false);
+            if (progressTextEl) progressTextEl.textContent = p.error || 'Ошибка загрузки обновления';
+          }
+        });
+      }
+    </script>
+  </body>
+</html>

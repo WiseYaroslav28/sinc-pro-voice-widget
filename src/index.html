@@ -132,6 +132,71 @@
       #dashboard-toggles-container .tri-switch-wrapper:hover {
         background-color: rgba(255, 255, 255, 0.05);
       }
+
+      /* Нативные модальные окна <dialog>: блокировка скролла подложки и доступный скрытый анонсер */
+      dialog.sinc-dialog {
+        margin: auto;
+        padding: 0;
+        border: none;
+        background: transparent;
+        max-width: calc(100vw - 32px);
+        max-height: calc(100vh - 32px);
+        color: #e4e1e9;
+      }
+      dialog.sinc-dialog[open] {
+        display: flex;
+      }
+      dialog:modal {
+        overscroll-behavior: contain;
+      }
+      dialog::backdrop {
+        overflow: hidden;
+        overscroll-behavior: contain;
+        background-color: rgba(8, 8, 14, 0.7);
+        backdrop-filter: blur(4px);
+      }
+
+      .visually-hidden:where(:not(:focus-within, :active)) {
+        position: absolute !important;
+        clip-path: inset(50%) !important;
+        overflow: hidden !important;
+        width: 1px !important;
+        height: 1px !important;
+        margin: -1px !important;
+        padding: 0 !important;
+        border: 0 !important;
+        white-space: nowrap !important;
+      }
+
+      /* Валидация формы обратной связи только после взаимодействия */
+      .field-error-msg {
+        display: none;
+        align-items: center;
+        gap: 6px;
+        color: #ffb4ab;
+        font-size: 11px;
+        margin-top: 2px;
+      }
+      :is(:user-invalid, .user-invalid-fallback) {
+        border-color: #ffb4ab !important;
+        background-color: rgba(147, 0, 10, 0.22) !important;
+      }
+      :is(:user-invalid, .user-invalid-fallback) + .field-error-msg {
+        display: flex;
+      }
+      .fb-type-radio:checked + .fb-type-pill {
+        border-color: rgba(163, 119, 255, 0.85);
+        background-color: rgba(142, 82, 255, 0.2);
+        color: #ffffff;
+        box-shadow: 0 0 12px rgba(142, 82, 255, 0.22);
+      }
+      .fb-type-radio:focus-visible + .fb-type-pill,
+      dialog.sinc-dialog button:focus-visible,
+      dialog.sinc-dialog input:focus-visible,
+      dialog.sinc-dialog textarea:focus-visible {
+        outline: 2px solid #a377ff !important;
+        outline-offset: 2px;
+      }
     </style>
   </head>
 
@@ -144,7 +209,10 @@
             <img src="assets/sinc-pro-icon.png" alt="SINC PRO" class="w-9 h-9 rounded-lg flex-shrink-0 shadow-[0_0_12px_rgba(142,82,255,0.35)] pointer-events-none" />
             <div class="pointer-events-none">
               <h1 class="font-bold text-[#d2bbff] tracking-tight text-[18px] leading-none sidebar-logo">SINC PRO</h1>
-              <p class="text-[9px] text-[#ccc3d8] uppercase tracking-wider mt-1 sidebar-subtext">Audio Intelligence</p>
+              <div class="flex items-center gap-1.5 mt-1 sidebar-subtext">
+                <p class="text-[9px] text-[#ccc3d8] uppercase tracking-wider">Audio Intelligence</p>
+                <span id="sidebar-version-badge" class="text-[9px] text-[#a377ff] font-semibold">v3.5.58</span>
+              </div>
             </div>
           </div>
           <button class="text-[#ccc3d8] hover:text-[#d2bbff] transition-colors focus:outline-none" id="sidebar-toggle" title="Свернуть панель">
@@ -336,6 +404,53 @@
 
               <!-- Скрытый spoiler-content -->
               <div class="px-5 pb-4 text-[12px] leading-relaxed text-[#ccc3d8] hidden" id="spoiler-content"></div>
+            </div>
+
+            <!-- Нижняя панель дашборда: Версия, GitHub-звезда и Обратная связь -->
+            <div class="flex items-center justify-between gap-2 px-3 py-2 bg-[#1b1b20]/85 border border-[#4a4455]/25 rounded-xl flex-shrink-0 flex-wrap">
+              <button
+                type="button"
+                id="dashboard-version-pill"
+                class="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-[#131318]/80 hover:bg-[#2a292f] border border-[#4a4455]/30 text-[11px] text-[#ccc3d8] transition-all cursor-pointer focus:outline-none"
+                title="Нажмите, чтобы проверить обновления"
+              >
+                <span class="material-symbols-outlined text-[14px] text-[#a377ff]" id="dashboard-version-icon">verified</span>
+                <span id="dashboard-version-text" class="font-medium text-[#e4e1e9]">Версия 3.5.58</span>
+                <span
+                  id="dashboard-version-status"
+                  class="text-[10px] px-1.5 py-0.5 rounded-full bg-[#7bd6d1]/15 text-[#7bd6d1] font-semibold border border-[#7bd6d1]/25"
+                  >Актуальна</span
+                >
+              </button>
+
+              <div class="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  id="btn-dashboard-github-star"
+                  class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#131318]/80 hover:bg-[#2a292f] border border-[#4a4455]/30 hover:border-[#ffd166]/45 text-[11px] text-[#ccc3d8] hover:text-white transition-all cursor-pointer focus:outline-none"
+                  title="Открыть репозиторий SincPro на GitHub и поставить звезду ⭐"
+                >
+                  <svg class="w-3.5 h-3.5 fill-current text-[#e4e1e9]" viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
+                  </svg>
+                  <span class="text-[#ffd166] font-bold">★</span>
+                  <span>GitHub · Звезда</span>
+                  <span
+                    id="github-stars-badge"
+                    class="hidden text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#ffd166]/15 text-[#ffd166] border border-[#ffd166]/30"
+                  ></span>
+                </button>
+
+                <button
+                  type="button"
+                  id="btn-dashboard-feedback"
+                  class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#8e52ff]/10 hover:bg-[#8e52ff]/20 border border-[#8e52ff]/35 hover:border-[#a377ff]/60 text-[11px] text-[#d2bbff] hover:text-white transition-all cursor-pointer focus:outline-none"
+                  title="Сообщить об ошибке или предложить улучшение"
+                >
+                  <span class="material-symbols-outlined text-[14px]">rate_review</span>
+                  <span>Ошибка / Пожелание</span>
+                </button>
+              </div>
             </div>
 
           </section>
@@ -4001,26 +4116,38 @@
       }
 
       // Инициализация при загрузке
+      window.__SINC_APP_VERSION__ = '3.5.58';
+
+      function syncAppVersionDisplays(version, isMock = false) {
+        const cleanVer = String(version || '3.5.58').trim();
+        window.__SINC_APP_VERSION__ = cleanVer;
+        const suffix = isMock ? ' (Mock)' : '';
+
+        const versionDisplay = document.getElementById('app-version-display');
+        if (versionDisplay) {
+          versionDisplay.textContent = `Текущая версия: ${cleanVer}${suffix}`;
+        }
+        const dashVersionText = document.getElementById('dashboard-version-text');
+        if (dashVersionText) {
+          dashVersionText.textContent = `Версия ${cleanVer}${suffix}`;
+        }
+        const sidebarBadge = document.getElementById('sidebar-version-badge');
+        if (sidebarBadge) {
+          sidebarBadge.textContent = `v${cleanVer}`;
+        }
+      }
+
       document.addEventListener('DOMContentLoaded', async () => {
-        // Отображение текущей версии приложения
+        // Отображение текущей версии приложения во всех интерфейсах
         if (window.__TAURI__) {
           window.__TAURI__.app.getVersion().then((version) => {
-            const versionDisplay = document.getElementById('app-version-display');
-            if (versionDisplay) {
-              versionDisplay.textContent = `Текущая версия: ${version}`;
-            }
+            syncAppVersionDisplays(version, false);
           }).catch(err => {
             console.error("Failed to load app version:", err);
-            const versionDisplay = document.getElementById('app-version-display');
-            if (versionDisplay) {
-              versionDisplay.textContent = `Текущая версия: 3.5.57`;
-            }
+            syncAppVersionDisplays('3.5.58', false);
           });
         } else {
-          const versionDisplay = document.getElementById('app-version-display');
-          if (versionDisplay) {
-            versionDisplay.textContent = `Текущая версия: 3.5.57 (Mock)`;
-          }
+          syncAppVersionDisplays('3.5.58', true);
         }
 
         setupAudioPlayer();
@@ -4057,6 +4184,8 @@
           'win-minimize', 'win-maximize', 'win-close',
           'sidebar-toggle', 'player-play', 'player-progress',
           'api-status-text', 'api-status-dot',
+          'dashboard-version-pill', 'btn-dashboard-github-star', 'btn-dashboard-feedback',
+          'update-modal', 'feedback-modal',
         ];
         REQUIRED_IDS.forEach(id => {
           check(`DOM: #${id} существует`, () => !!document.getElementById(id));
@@ -4442,142 +4571,369 @@
           showToast(reason, false);
         });
 
-        // Логика Tauri Updater и заметного уведомления об обновлении в шапке
+        // Единый контроллер обновлений (при запуске + каждые 4 часа), окно уведомления и кнопки дашборда
+        const GITHUB_REPO_URL = 'https://github.com/WiseYaroslav28/sinc-pro-voice-widget';
         const btnCheckUpdates = document.getElementById('btn-check-updates');
         const updateStatusText = document.getElementById('update-status-text');
         const updateProgressContainer = document.getElementById('update-progress-container');
         const updateProgressBar = document.getElementById('update-progress-bar');
         const headerUpdateBanner = document.getElementById('header-update-banner');
-        const headerUpdateText = document.getElementById('header-update-text');
+        const headerUpdateText = document.getElementById('header-update-version-text');
 
-        if (headerUpdateBanner) {
-          headerUpdateBanner.addEventListener('click', () => {
-            switchTab('tab-settings');
-            if (btnCheckUpdates && !btnCheckUpdates.disabled) {
-              btnCheckUpdates.click();
-            }
-          });
+        const dashVersionPill = document.getElementById('dashboard-version-pill');
+        const dashVersionIcon = document.getElementById('dashboard-version-icon');
+        const dashVersionStatus = document.getElementById('dashboard-version-status');
+        const btnDashGithubStar = document.getElementById('btn-dashboard-github-star');
+        const githubStarsBadge = document.getElementById('github-stars-badge');
+        const btnDashFeedback = document.getElementById('btn-dashboard-feedback');
+
+        let currentPendingUpdate = null;
+        let isUpdateChecking = false;
+        let isUpdateInstalling = false;
+        const sessionDismissedVersions = new Set();
+
+        function formatUpdateNotesForModal(raw) {
+          if (!raw || !String(raw).trim()) {
+            return 'Доступна новая версия SINC PRO с улучшениями и исправлениями.';
+          }
+          return String(raw)
+            .replace(/\r\n/g, '\n')
+            .replace(/^###\s*/gm, '')
+            .replace(/\*\*(.*?)\*\*/g, '$1')
+            .replace(/`([^`]+)`/g, '$1')
+            .trim();
         }
 
-        // Фоновая проверка обновлений при запуске (чтобы сразу показать кнопку в шапке дашборда)
-        setTimeout(async () => {
+        function markUpdateAvailableUI(update) {
+          currentPendingUpdate = update;
+          if (!update || !update.version) return;
+
+          if (headerUpdateBanner && headerUpdateText) {
+            headerUpdateText.textContent = `Доступно v${update.version}`;
+            headerUpdateBanner.classList.remove('hidden');
+            headerUpdateBanner.classList.add('flex');
+          }
+          if (dashVersionStatus) {
+            dashVersionStatus.textContent = `Доступна v${update.version}`;
+            dashVersionStatus.className = 'text-[10px] px-1.5 py-0.5 rounded-full bg-[#8e52ff]/25 text-[#d2bbff] font-semibold border border-[#a377ff]/45 animate-pulse';
+          }
+          if (dashVersionIcon) {
+            dashVersionIcon.textContent = 'system_update_alt';
+            dashVersionIcon.className = 'material-symbols-outlined text-[14px] text-[#7bd6d1]';
+          }
+          if (dashVersionPill) {
+            dashVersionPill.title = `Доступна версия v${update.version} — нажмите для установки`;
+          }
+          if (updateStatusText) {
+            updateStatusText.classList.remove('hidden');
+            updateStatusText.innerHTML = `Доступна новая версия: <strong class="text-[#7bd6d1]">v${update.version}</strong>`;
+          }
+
+          const modalVerBadge = document.getElementById('update-modal-ver-badge');
+          const modalCurVer = document.getElementById('update-modal-cur-ver');
+          const modalNotes = document.getElementById('update-modal-notes');
+          const modalSkipBtn = document.getElementById('update-modal-skip-btn');
+          if (modalVerBadge) modalVerBadge.textContent = `v${update.version}`;
+          if (modalCurVer) modalCurVer.textContent = `v${window.__SINC_APP_VERSION__ || '3.5.58'}`;
+          if (modalNotes) modalNotes.textContent = formatUpdateNotesForModal(update.body);
+          if (modalSkipBtn) modalSkipBtn.textContent = `Пропустить v${update.version}`;
+        }
+
+        function markUpdateUpToDateUI() {
+          currentPendingUpdate = null;
+          if (headerUpdateBanner) {
+            headerUpdateBanner.classList.add('hidden');
+            headerUpdateBanner.classList.remove('flex');
+          }
+          if (dashVersionStatus) {
+            dashVersionStatus.textContent = 'Актуальна';
+            dashVersionStatus.className = 'text-[10px] px-1.5 py-0.5 rounded-full bg-[#7bd6d1]/15 text-[#7bd6d1] font-semibold border border-[#7bd6d1]/25';
+          }
+          if (dashVersionIcon) {
+            dashVersionIcon.textContent = 'verified';
+            dashVersionIcon.className = 'material-symbols-outlined text-[14px] text-[#a377ff]';
+          }
+          if (dashVersionPill) {
+            dashVersionPill.title = 'Нажмите, чтобы проверить обновления';
+          }
+        }
+
+        function openUpdateModal() {
+          const updateModal = document.getElementById('update-modal');
+          if (!updateModal || !currentPendingUpdate) return;
+          markUpdateAvailableUI(currentPendingUpdate);
+          if (!updateModal.open) {
+            updateModal.returnValue = '';
+            updateModal.showModal();
+          }
+        }
+
+        async function emitPopupDownloadProgress(payload) {
+          if (window.__TAURI__ && window.__TAURI__.event) {
+            await window.__TAURI__.event.emit('update-download-progress', payload).catch(() => {});
+          }
+        }
+
+        async function installPendingUpdate() {
+          if (isUpdateInstalling || !currentPendingUpdate) return;
+          isUpdateInstalling = true;
+
+          const modalProgressWrap = document.getElementById('update-modal-progress-wrap');
+          const modalProgressBar = document.getElementById('update-modal-progress-bar');
+          const modalStatus = document.getElementById('update-modal-status');
+          const modalInstallBtn = document.getElementById('update-modal-install-btn');
+          const modalLaterBtn = document.getElementById('update-modal-later-btn');
+          const modalSkipBtn = document.getElementById('update-modal-skip-btn');
+
+          if (btnCheckUpdates) {
+            btnCheckUpdates.disabled = true;
+            btnCheckUpdates.textContent = 'Установка...';
+          }
+          if (updateProgressContainer) updateProgressContainer.classList.remove('hidden');
+          if (updateProgressBar) updateProgressBar.style.width = '0%';
+          if (modalProgressWrap) modalProgressWrap.classList.remove('hidden');
+          if (modalProgressBar) modalProgressBar.style.width = '0%';
+          if (modalStatus) modalStatus.textContent = 'Подготовка к загрузке...';
+          [modalInstallBtn, modalLaterBtn, modalSkipBtn].forEach((b) => { if (b) b.disabled = true; });
+
           try {
-            if (window.__TAURI__ && window.__TAURI__.updater) {
-              const { check } = window.__TAURI__.updater;
-              const update = await check();
-              if (update && update.version) {
-                if (headerUpdateBanner && headerUpdateText) {
-                  headerUpdateText.textContent = `Доступно обновление v${update.version}`;
-                  headerUpdateBanner.classList.remove('hidden');
-                  headerUpdateBanner.classList.add('flex');
-                }
+            let downloadedBytes = 0;
+            let totalBytes = 0;
+
+            await currentPendingUpdate.downloadAndInstall(async (progress) => {
+              if (progress.event === 'Started') {
+                downloadedBytes = 0;
+                totalBytes = progress.data.contentLength || 0;
+                const msg = 'Загрузка пакета обновления...';
                 if (updateStatusText) {
                   updateStatusText.classList.remove('hidden');
-                  updateStatusText.innerHTML = `Доступна новая версия: <strong class="text-[#7bd6d1]">${update.version}</strong>`;
+                  updateStatusText.textContent = msg;
                 }
+                if (modalStatus) modalStatus.textContent = msg;
+                await emitPopupDownloadProgress({ status: 'started', percent: 0, text: msg });
+              } else if (progress.event === 'Progress') {
+                downloadedBytes += progress.data.chunkLength;
+                totalBytes = progress.data.contentLength || totalBytes;
+                const percent = totalBytes ? Math.round((downloadedBytes / totalBytes) * 100) : 0;
+                const dlMb = (downloadedBytes / 1024 / 1024).toFixed(1);
+                const totMb = totalBytes ? (totalBytes / 1024 / 1024).toFixed(1) : '?';
+                const msg = `Загружено ${dlMb} / ${totMb} МБ`;
+                if (updateProgressBar) updateProgressBar.style.width = `${percent}%`;
+                if (modalProgressBar) modalProgressBar.style.width = `${percent}%`;
+                if (updateStatusText) {
+                  updateStatusText.classList.remove('hidden');
+                  updateStatusText.textContent = `Загружено: ${percent}% (${dlMb} МБ / ${totMb} МБ)`;
+                }
+                if (modalStatus) modalStatus.textContent = `${percent}% (${dlMb} / ${totMb} МБ)`;
+                await emitPopupDownloadProgress({ status: 'progress', percent, text: msg });
+              } else if (progress.event === 'Finished') {
+                const msg = 'Установка завершена. Перезапуск...';
+                if (updateProgressBar) updateProgressBar.style.width = '100%';
+                if (modalProgressBar) modalProgressBar.style.width = '100%';
+                if (updateStatusText) {
+                  updateStatusText.classList.remove('hidden');
+                  updateStatusText.textContent = msg;
+                }
+                if (modalStatus) modalStatus.textContent = msg;
+                await emitPopupDownloadProgress({ status: 'finished', percent: 100, text: msg });
               }
+            });
+
+            await invoke('hide_update_popup').catch(() => {});
+            if (window.__TAURI__ && window.__TAURI__.process) {
+              await window.__TAURI__.process.relaunch();
             }
-          } catch (e) {
-            console.warn('Фоновая проверка обновлений не удалась:', e);
+          } catch (err) {
+            console.error('Ошибка при обновлении приложения:', err);
+            isUpdateInstalling = false;
+            const errMsg = 'Ошибка установки: ' + err;
+            if (updateStatusText) {
+              updateStatusText.classList.remove('hidden');
+              updateStatusText.textContent = 'Ошибка проверки обновлений';
+            }
+            if (modalStatus) modalStatus.textContent = errMsg;
+            if (btnCheckUpdates) {
+              btnCheckUpdates.disabled = false;
+              btnCheckUpdates.textContent = 'Проверить обновления';
+            }
+            [modalInstallBtn, modalLaterBtn, modalSkipBtn].forEach((b) => { if (b) b.disabled = false; });
+            if (updateProgressContainer) updateProgressContainer.classList.add('hidden');
+            await emitPopupDownloadProgress({ status: 'error', error: 'Ошибка загрузки' });
+            showToast('Не удалось установить обновление: ' + err, true);
           }
-        }, 2500);
+        }
 
-        if (btnCheckUpdates) {
-          btnCheckUpdates.addEventListener('click', async () => {
-            if (!window.__TAURI__ || !window.__TAURI__.updater) {
-              showToast('Обновления недоступны в этом режиме', true);
-              return;
-            }
+        async function checkForUpdatesUnified({ manual = false } = {}) {
+          if (isUpdateChecking || isUpdateInstalling) return;
+          if (!window.__TAURI__ || !window.__TAURI__.updater) {
+            if (manual) showToast('Обновления недоступны в этом режиме', true);
+            return;
+          }
 
-            try {
+          isUpdateChecking = true;
+          if (manual) {
+            if (btnCheckUpdates) {
               btnCheckUpdates.disabled = true;
               btnCheckUpdates.textContent = 'Проверка...';
-              if (updateStatusText) {
+            }
+            if (dashVersionStatus && !currentPendingUpdate) {
+              dashVersionStatus.textContent = 'Проверка...';
+            }
+            if (updateStatusText) {
+              updateStatusText.classList.remove('hidden');
+              updateStatusText.textContent = 'Проверка наличия обновлений...';
+            }
+          }
+
+          try {
+            const { check } = window.__TAURI__.updater;
+            const update = await check();
+
+            if (!update || !update.version) {
+              markUpdateUpToDateUI();
+              if (updateStatusText && manual) {
                 updateStatusText.classList.remove('hidden');
-                updateStatusText.textContent = 'Проверка наличия обновлений...';
+                updateStatusText.textContent = 'У вас установлена последняя версия';
               }
-
-              const { check } = window.__TAURI__.updater;
-              const update = await check();
-
-              if (!update) {
-                if (updateStatusText) {
-                  updateStatusText.classList.remove('hidden');
-                  updateStatusText.textContent = 'У вас установлена последняя версия';
+              if (manual) showToast('Обновлений не найдено — установлена актуальная версия');
+            } else {
+              markUpdateAvailableUI(update);
+              if (manual) {
+                openUpdateModal();
+              } else {
+                const skippedVer = localStorage.getItem('sinc_skipped_update_version');
+                if (skippedVer !== update.version && !sessionDismissedVersions.has(update.version)) {
+                  await invoke('show_update_popup', {
+                    payload: {
+                      currentVersion: window.__SINC_APP_VERSION__ || '3.5.58',
+                      newVersion: update.version,
+                      notes: update.body || ''
+                    }
+                  }).catch((e) => console.warn('show_update_popup error:', e));
                 }
-                showToast('Обновлений не найдено');
-                btnCheckUpdates.disabled = false;
-                btnCheckUpdates.textContent = 'Проверить обновления';
-                return;
               }
-
-              // Если обновление найдено
-              if (headerUpdateBanner && headerUpdateText) {
-                headerUpdateText.textContent = `Доступно обновление v${update.version}`;
-                headerUpdateBanner.classList.remove('hidden');
-                headerUpdateBanner.classList.add('flex');
-              }
-              if (updateStatusText) {
-                updateStatusText.classList.remove('hidden');
-                updateStatusText.innerHTML = `Доступна новая версия: <strong class="text-[#7bd6d1]">${update.version}</strong>`;
-              }
-
-              const confirmUpdate = confirm(`Доступно обновление до версии ${update.version}.\n\nОписание изменений:\n${update.body || 'Нет описания'}\n\nХотите скачать и установить его сейчас?`);
-              
-              if (!confirmUpdate) {
-                btnCheckUpdates.disabled = false;
-                btnCheckUpdates.textContent = 'Проверить обновления';
-                return;
-              }
-
-              // Запуск скачивания и установки
-              btnCheckUpdates.textContent = 'Установка...';
-              if (updateProgressContainer) updateProgressContainer.classList.remove('hidden');
-              if (updateProgressBar) updateProgressBar.style.width = '0%';
-
-              let downloadedBytes = 0;
-              let totalBytes = 0;
-
-              await update.downloadAndInstall((progress) => {
-                if (progress.event === 'Started') {
-                  if (updateStatusText) {
-                    updateStatusText.classList.remove('hidden');
-                    updateStatusText.textContent = 'Загрузка пакета обновления...';
-                  }
-                  downloadedBytes = 0;
-                  totalBytes = progress.data.contentLength || 0;
-                } else if (progress.event === 'Progress') {
-                  downloadedBytes += progress.data.chunkLength;
-                  totalBytes = progress.data.contentLength || totalBytes;
-                  const percent = totalBytes ? Math.round((downloadedBytes / totalBytes) * 100) : 0;
-                  if (updateProgressBar) updateProgressBar.style.width = `${percent}%`;
-                  if (updateStatusText) {
-                    updateStatusText.classList.remove('hidden');
-                    updateStatusText.textContent = `Загружено: ${percent}% (${Math.round(downloadedBytes / 1024 / 1024 * 10) / 10} MB / ${Math.round(totalBytes / 1024 / 1024 * 10) / 10} MB)`;
-                  }
-                } else if (progress.event === 'Finished') {
-                  if (updateStatusText) {
-                    updateStatusText.classList.remove('hidden');
-                    updateStatusText.textContent = 'Установка завершена. Перезапуск...';
-                  }
-                  if (updateProgressBar) updateProgressBar.style.width = '100%';
-                }
-              });
-
-              // Перезапускаем приложение
-              const { relaunch } = window.__TAURI__.process;
-              await relaunch();
-
-            } catch (err) {
-              console.error('Ошибка при обновлении приложения:', err);
+            }
+          } catch (err) {
+            console.warn('Проверка обновлений не удалась:', err);
+            if (manual) {
+              if (!currentPendingUpdate) markUpdateUpToDateUI();
               if (updateStatusText) {
                 updateStatusText.classList.remove('hidden');
                 updateStatusText.textContent = 'Ошибка проверки обновлений';
               }
-              showToast('Не удалось установить обновление: ' + err, true);
+              showToast('Не удалось проверить обновления: ' + err, true);
+            }
+          } finally {
+            isUpdateChecking = false;
+            if (btnCheckUpdates && !isUpdateInstalling) {
               btnCheckUpdates.disabled = false;
               btnCheckUpdates.textContent = 'Проверить обновления';
-              if (updateProgressContainer) updateProgressContainer.classList.add('hidden');
+            }
+          }
+        }
+
+        window.__sincUpdateActions = {
+          dismissLater(version) {
+            if (version) sessionDismissedVersions.add(version);
+            invoke('hide_update_popup').catch(() => {});
+          },
+          skipVersion(version) {
+            if (version) {
+              localStorage.setItem('sinc_skipped_update_version', version);
+              sessionDismissedVersions.add(version);
+            }
+            invoke('hide_update_popup').catch(() => {});
+          },
+          installNow() {
+            installPendingUpdate();
+          }
+        };
+
+        if (headerUpdateBanner) {
+          headerUpdateBanner.addEventListener('click', () => {
+            if (currentPendingUpdate) {
+              openUpdateModal();
+            } else {
+              checkForUpdatesUnified({ manual: true });
+            }
+          });
+        }
+
+        if (dashVersionPill) {
+          dashVersionPill.addEventListener('click', () => {
+            if (currentPendingUpdate) {
+              openUpdateModal();
+            } else {
+              checkForUpdatesUnified({ manual: true });
+            }
+          });
+        }
+
+        if (btnCheckUpdates) {
+          btnCheckUpdates.addEventListener('click', () => {
+            if (currentPendingUpdate) {
+              openUpdateModal();
+            } else {
+              checkForUpdatesUnified({ manual: true });
+            }
+          });
+        }
+
+        if (btnDashGithubStar) {
+          btnDashGithubStar.addEventListener('click', () => {
+            if (window.__TAURI__) {
+              invoke('open_external_url', { url: GITHUB_REPO_URL }).catch(() => {});
+            } else {
+              window.open(GITHUB_REPO_URL, '_blank', 'noopener');
+            }
+          });
+        }
+
+        if (btnDashFeedback) {
+          btnDashFeedback.addEventListener('click', () => {
+            if (window.openFeedbackModal) window.openFeedbackModal();
+          });
+        }
+
+        // Получаем число звёзд GitHub в фоне (кэшируется на бэкенде на 30 мин)
+        setTimeout(() => {
+          if (window.__TAURI__ && githubStarsBadge) {
+            invoke('fetch_github_repo_info')
+              .then((info) => {
+                if (info && typeof info.stars === 'number' && info.stars > 0) {
+                  githubStarsBadge.textContent = String(info.stars);
+                  githubStarsBadge.classList.remove('hidden');
+                }
+              })
+              .catch(() => {});
+          }
+        }, 1500);
+
+        // Проверка обновлений при запуске + периодически каждые 4 часа
+        setTimeout(() => checkForUpdatesUnified({ manual: false }), 3000);
+        setInterval(() => checkForUpdatesUnified({ manual: false }), 4 * 60 * 60 * 1000);
+
+        if (window.__TAURI__ && window.__TAURI__.event) {
+          window.__TAURI__.event.listen('update-popup-action', (ev) => {
+            const data = ev && ev.payload ? ev.payload : {};
+            const ver = data.version || (currentPendingUpdate && currentPendingUpdate.version) || '';
+            if (data.action === 'later') {
+              if (ver) sessionDismissedVersions.add(ver);
+            } else if (data.action === 'skip') {
+              if (ver) {
+                localStorage.setItem('sinc_skipped_update_version', ver);
+                sessionDismissedVersions.add(ver);
+              }
+            } else if (data.action === 'install') {
+              installPendingUpdate();
+            }
+          });
+
+          window.__TAURI__.event.listen('open-update-modal', () => {
+            if (currentPendingUpdate) {
+              openUpdateModal();
+            } else {
+              checkForUpdatesUnified({ manual: true });
             }
           });
         }
@@ -4681,6 +5037,492 @@
           }
           window.openProfileModal(false);
         });
+      })();
+    </script>
+
+    <!-- Modal: Подробности обновления (нативный <dialog>) -->
+    <dialog id="update-modal" class="sinc-dialog" closedby="any" aria-labelledby="update-modal-title">
+      <div class="bg-[#1b1b20] border border-[#4a4455]/50 rounded-2xl w-[440px] max-w-full p-6 shadow-2xl flex flex-col gap-4 text-[#e4e1e9]">
+        <div class="flex items-center justify-between pb-3 border-b border-[#4a4455]/25">
+          <div class="flex items-center gap-2.5">
+            <div class="w-8 h-8 rounded-xl bg-[#8e52ff]/15 border border-[#8e52ff]/40 flex items-center justify-center flex-shrink-0">
+              <span class="material-symbols-outlined text-[#7bd6d1] text-[18px]">system_update_alt</span>
+            </div>
+            <div>
+              <h3 class="text-sm font-semibold tracking-wide text-white" id="update-modal-title">Доступно обновление SincPro</h3>
+              <div class="text-[11px] text-[#ccc3d8] flex items-center gap-1.5 mt-0.5">
+                <span id="update-modal-cur-ver">v3.5.58</span>
+                <span>→</span>
+                <span id="update-modal-ver-badge" class="font-bold text-[#7bd6d1]">v—</span>
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            id="update-modal-close-btn"
+            class="p-1.5 rounded-lg text-[#ccc3d8] hover:text-white hover:bg-[#2a292f] transition-all cursor-pointer bg-transparent border-0"
+            aria-label="Закрыть окно обновления"
+          >
+            <span class="material-symbols-outlined text-[18px]">close</span>
+          </button>
+        </div>
+
+        <div class="flex flex-col gap-2">
+          <div class="text-[11px] text-[#ccc3d8] font-medium uppercase tracking-wider">Что нового</div>
+          <div
+            id="update-modal-notes"
+            class="bg-[#0e0e13] border border-[#4a4455]/35 rounded-xl p-3.5 text-[12px] leading-relaxed text-[#e4e1e9]/90 whitespace-pre-wrap overflow-y-auto"
+            style="max-height: 200px; min-height: 84px;"
+          >
+            Загрузка списка изменений...
+          </div>
+        </div>
+
+        <div id="update-modal-progress-wrap" class="hidden flex-col gap-1.5">
+          <div class="text-[11px] text-[#7bd6d1] font-medium" id="update-modal-status">Загрузка обновления...</div>
+          <div class="w-full h-2 bg-[#0e0e13] rounded-full overflow-hidden border border-[#4a4455]/30">
+            <div
+              id="update-modal-progress-bar"
+              class="h-full rounded-full transition-all duration-200"
+              style="width: 0%; background: linear-gradient(90deg, #8e52ff, #7bd6d1);"
+            ></div>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between gap-2 pt-3 border-t border-[#4a4455]/25">
+          <button
+            type="button"
+            id="update-modal-skip-btn"
+            class="px-3 py-2 rounded-xl text-[11px] font-medium text-[#ccc3d8]/80 hover:text-[#ffb4ab] hover:bg-[#2a292f] transition-all cursor-pointer bg-transparent border-0"
+          >
+            Пропустить эту версию
+          </button>
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              id="update-modal-later-btn"
+              class="px-4 py-2 rounded-xl text-[12px] font-medium text-[#ccc3d8] hover:text-white hover:bg-[#2a292f] transition-all cursor-pointer bg-transparent border border-[#4a4455]/30"
+            >
+              Позже
+            </button>
+            <button
+              type="button"
+              id="update-modal-install-btn"
+              autofocus
+              class="px-4 py-2 rounded-xl text-[12px] font-semibold text-white bg-gradient-to-r from-[#8e52ff] to-[#45a29e] hover:opacity-95 shadow-lg shadow-[#8e52ff]/25 transition-all cursor-pointer border-0"
+            >
+              Скачать и установить
+            </button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- Modal: Отправка ошибки или пожелания (нативный <dialog>) -->
+    <dialog id="feedback-modal" class="sinc-dialog" closedby="any" aria-labelledby="feedback-modal-title">
+      <form
+        id="feedback-form"
+        method="post"
+        action="https://github.com/WiseYaroslav28/sinc-pro-voice-widget/issues/new"
+        aria-labelledby="feedback-modal-title"
+        novalidate
+        class="bg-[#1b1b20] border border-[#4a4455]/50 rounded-2xl w-[460px] max-w-full p-6 shadow-2xl flex flex-col gap-4 text-[#e4e1e9]"
+      >
+        <div class="flex items-center justify-between pb-3 border-b border-[#4a4455]/25">
+          <div class="flex items-center gap-2">
+            <span class="material-symbols-outlined text-[#d2bbff] text-[20px]">rate_review</span>
+            <h3 class="text-sm font-semibold tracking-wide text-white" id="feedback-modal-title">Ошибка или пожелание</h3>
+          </div>
+          <button
+            type="button"
+            id="feedback-modal-close-btn"
+            class="p-1.5 rounded-lg text-[#ccc3d8] hover:text-white hover:bg-[#2a292f] transition-all cursor-pointer bg-transparent border-0"
+            aria-label="Закрыть форму обратной связи"
+          >
+            <span class="material-symbols-outlined text-[18px]">close</span>
+          </button>
+        </div>
+
+        <fieldset class="border-0 p-0 m-0 flex flex-col gap-2">
+          <legend class="text-[11px] font-medium text-[#ccc3d8] mb-1.5">Тип обращения</legend>
+          <div class="grid grid-cols-3 gap-2">
+            <div>
+              <input type="radio" name="feedback_type" id="fb-type-bug" value="bug" class="visually-hidden fb-type-radio" checked />
+              <label
+                for="fb-type-bug"
+                class="fb-type-pill flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl border border-[#4a4455]/40 bg-[#131318] text-[11px] font-semibold text-[#ccc3d8] hover:text-white cursor-pointer transition-all"
+              >
+                <span>🐛</span><span>Ошибка</span>
+              </label>
+            </div>
+            <div>
+              <input type="radio" name="feedback_type" id="fb-type-idea" value="idea" class="visually-hidden fb-type-radio" />
+              <label
+                for="fb-type-idea"
+                class="fb-type-pill flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl border border-[#4a4455]/40 bg-[#131318] text-[11px] font-semibold text-[#ccc3d8] hover:text-white cursor-pointer transition-all"
+              >
+                <span>✨</span><span>Пожелание</span>
+              </label>
+            </div>
+            <div>
+              <input type="radio" name="feedback_type" id="fb-type-question" value="question" class="visually-hidden fb-type-radio" />
+              <label
+                for="fb-type-question"
+                class="fb-type-pill flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-xl border border-[#4a4455]/40 bg-[#131318] text-[11px] font-semibold text-[#ccc3d8] hover:text-white cursor-pointer transition-all"
+              >
+                <span>💬</span><span>Вопрос</span>
+              </label>
+            </div>
+          </div>
+        </fieldset>
+
+        <div class="flex flex-col gap-1">
+          <label for="feedback-title" class="text-[12px] font-medium text-[#e4e1e9]">
+            Краткий заголовок <span aria-hidden="true" class="text-[#ffb4ab]">*</span>
+          </label>
+          <span id="feedback-title-hint" class="text-[11px] text-[#ccc3d8]/75">От 4 до 120 символов</span>
+          <input
+            type="text"
+            id="feedback-title"
+            name="title"
+            required
+            minlength="4"
+            maxlength="120"
+            autofocus
+            aria-invalid="false"
+            aria-describedby="feedback-title-hint"
+            data-error="feedback-title-error"
+            class="bg-[#0e0e13] border border-[#4a4455]/45 text-white rounded-xl px-3.5 py-2 text-[12px] focus:outline-none focus:border-[#8e52ff] w-full transition-all"
+            placeholder="Например: Не сработал перевод раскладки после паузы..."
+          />
+          <div id="feedback-title-error" class="field-error-msg">
+            <span role="img" aria-label="Ошибка">❌</span>
+            <span>Введите заголовок длиной не менее 4 символов.</span>
+          </div>
+        </div>
+
+        <div class="flex flex-col gap-1">
+          <label for="feedback-body" class="text-[12px] font-medium text-[#e4e1e9]">
+            Подробное описание <span aria-hidden="true" class="text-[#ffb4ab]">*</span>
+          </label>
+          <span id="feedback-body-hint" class="text-[11px] text-[#ccc3d8]/75">Опишите шаги воспроизведения или вашу идею (минимум 10 символов)</span>
+          <textarea
+            id="feedback-body"
+            name="description"
+            rows="4"
+            required
+            minlength="10"
+            maxlength="3000"
+            aria-invalid="false"
+            aria-describedby="feedback-body-hint"
+            data-error="feedback-body-error"
+            class="bg-[#0e0e13] border border-[#4a4455]/45 text-white rounded-xl p-3 text-[12px] focus:outline-none focus:border-[#8e52ff] w-full resize-y transition-all"
+            placeholder="Расскажите подробнее, что произошло или что стоит улучшить..."
+          ></textarea>
+          <div id="feedback-body-error" class="field-error-msg">
+            <span role="img" aria-label="Ошибка">❌</span>
+            <span>Добавьте описание (минимум 10 символов), чтобы мы смогли разобраться.</span>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 pt-0.5">
+          <input
+            type="checkbox"
+            id="feedback-include-diag"
+            name="include_diag"
+            checked
+            class="w-4 h-4 rounded accent-[#8e52ff] cursor-pointer"
+          />
+          <label for="feedback-include-diag" class="text-[11px] text-[#ccc3d8] cursor-pointer">
+            Прикрепить версию SincPro и параметры среды
+          </label>
+        </div>
+
+        <div class="flex items-center justify-between gap-2 pt-3 border-t border-[#4a4455]/25">
+          <span class="text-[10px] text-[#ccc3d8]/65">Текст скопируется в буфер и откроется GitHub Issues</span>
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              id="feedback-cancel-btn"
+              class="px-4 py-2 rounded-xl text-[12px] font-medium text-[#ccc3d8] hover:text-white hover:bg-[#2a292f] transition-all cursor-pointer bg-transparent border-0"
+            >
+              Отмена
+            </button>
+            <button
+              type="submit"
+              id="feedback-submit-btn"
+              class="px-4 py-2 rounded-xl text-[12px] font-semibold text-white bg-gradient-to-r from-[#8e52ff] to-[#a370ff] hover:from-[#9d66ff] hover:to-[#b385ff] shadow-lg shadow-[#8e52ff]/20 transition-all cursor-pointer border-0"
+            >
+              Отправить в GitHub
+            </button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+    <script>
+      (function setupDialogsAndFeedbackForm() {
+        const updateModal = document.getElementById('update-modal');
+        const updateCloseBtn = document.getElementById('update-modal-close-btn');
+        const updateLaterBtn = document.getElementById('update-modal-later-btn');
+        const updateSkipBtn = document.getElementById('update-modal-skip-btn');
+        const updateInstallBtn = document.getElementById('update-modal-install-btn');
+
+        const feedbackModal = document.getElementById('feedback-modal');
+        const feedbackForm = document.getElementById('feedback-form');
+        const feedbackCloseBtn = document.getElementById('feedback-modal-close-btn');
+        const feedbackCancelBtn = document.getElementById('feedback-cancel-btn');
+        const feedbackSubmitBtn = document.getElementById('feedback-submit-btn');
+
+        // Фолбэк для light-dismiss (closedby="any") по координатам pointerdown + pointerup
+        if (!('closedBy' in HTMLDialogElement.prototype)) {
+          const isOutside = (e, d) => {
+            const r = d.getBoundingClientRect();
+            return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+          };
+          for (const d of document.querySelectorAll('dialog[closedby="any"]')) {
+            let pressedOutside = false;
+            d.addEventListener('pointerdown', (e) => { pressedOutside = isOutside(e, d); });
+            d.addEventListener('pointerup', (e) => {
+              if (pressedOutside && isOutside(e, d)) d.close();
+            });
+          }
+        }
+
+        if (updateModal) {
+          updateModal.addEventListener('close', () => {
+            updateModal.returnValue = '';
+          });
+        }
+
+        function currentModalUpdateVersion() {
+          const badge = document.getElementById('update-modal-ver-badge');
+          return badge ? badge.textContent.replace(/^v/, '').trim() : '';
+        }
+
+        if (updateCloseBtn) {
+          updateCloseBtn.addEventListener('click', () => {
+            if (window.__sincUpdateActions) window.__sincUpdateActions.dismissLater(currentModalUpdateVersion());
+            if (updateModal && updateModal.open) updateModal.close('later');
+          });
+        }
+        if (updateLaterBtn) {
+          updateLaterBtn.addEventListener('click', () => {
+            if (window.__sincUpdateActions) window.__sincUpdateActions.dismissLater(currentModalUpdateVersion());
+            if (updateModal && updateModal.open) updateModal.close('later');
+          });
+        }
+        if (updateSkipBtn) {
+          updateSkipBtn.addEventListener('click', () => {
+            if (window.__sincUpdateActions) window.__sincUpdateActions.skipVersion(currentModalUpdateVersion());
+            if (updateModal && updateModal.open) updateModal.close('skip');
+            showToast('Уведомление для этой версии скрыто');
+          });
+        }
+        if (updateInstallBtn) {
+          updateInstallBtn.addEventListener('click', () => {
+            if (window.__sincUpdateActions) window.__sincUpdateActions.installNow();
+          });
+        }
+
+        // Политик-живой регион для скринридеров (один на страницу)
+        const announcer = document.createElement('div');
+        announcer.setAttribute('aria-live', 'polite');
+        announcer.classList.add('visually-hidden');
+        document.body.append(announcer);
+        let announceTimer = null;
+        let announcedField = null;
+
+        const linkError = (el, shown) => {
+          const errorId = el.dataset.error;
+          if (!errorId) return;
+          const ids = (el.getAttribute('aria-describedby') || '')
+            .split(/\s+/)
+            .filter((id) => id && id !== errorId);
+          if (shown) ids.push(errorId);
+          if (ids.length) el.setAttribute('aria-describedby', ids.join(' '));
+          else el.removeAttribute('aria-describedby');
+        };
+
+        const spokenText = (node) => {
+          const copy = node.cloneNode(true);
+          copy.querySelectorAll('[aria-hidden="true"]').forEach((n) => n.remove());
+          copy.querySelectorAll('[role="img"][aria-label]').forEach((n) => n.replaceWith(`${n.getAttribute('aria-label')}: `));
+          return copy.textContent.replace(/\s+/g, ' ').trim();
+        };
+
+        const announceError = (el) => {
+          const errEl = document.getElementById(el.dataset.error);
+          if (!errEl) return;
+          const lbl = el.labels && el.labels[0] ? `${spokenText(el.labels[0])}: ` : '';
+          clearTimeout(announceTimer);
+          announcer.textContent = '';
+          announcedField = el;
+          announceTimer = setTimeout(() => {
+            announcer.textContent = lbl + spokenText(errEl);
+          }, 500);
+        };
+
+        const flagged = new WeakSet();
+        const announced = new WeakSet();
+        const dirtyState = new WeakMap();
+
+        const syncAria = (el, announce = false, forceShowInvalid = false) => {
+          if (!el || !el.matches || !el.matches('input, select, textarea')) return;
+          const nativeUserInvalid = CSS.supports('selector(:user-invalid)') && el.matches(':user-invalid');
+          const invalid = forceShowInvalid || nativeUserInvalid || el.classList.contains('user-invalid-fallback');
+          if (invalid) {
+            el.classList.add('user-invalid-fallback');
+            if (announce && !announced.has(el)) {
+              announceError(el);
+              announced.add(el);
+            }
+            el.setAttribute('aria-invalid', 'true');
+            linkError(el, true);
+            flagged.add(el);
+          } else if (flagged.has(el) || el.getAttribute('aria-invalid') !== 'true') {
+            el.classList.remove('user-invalid-fallback');
+            el.setAttribute('aria-invalid', 'false');
+            linkError(el, false);
+            flagged.delete(el);
+            announced.delete(el);
+            if (announcedField === el) {
+              clearTimeout(announceTimer);
+              announcer.textContent = '';
+            }
+          }
+        };
+
+        function resetFeedbackValidationUI() {
+          if (!feedbackForm) return;
+          for (const el of feedbackForm.querySelectorAll('input, textarea')) {
+            dirtyState.delete(el);
+            flagged.delete(el);
+            announced.delete(el);
+            el.classList.remove('user-invalid-fallback');
+            el.setAttribute('aria-invalid', 'false');
+            linkError(el, false);
+          }
+          if (feedbackSubmitBtn) feedbackSubmitBtn.disabled = false;
+        }
+
+        window.openFeedbackModal = function() {
+          if (!feedbackModal) return;
+          resetFeedbackValidationUI();
+          if (!feedbackModal.open) {
+            feedbackModal.returnValue = '';
+            feedbackModal.showModal();
+          }
+        };
+
+        if (feedbackCloseBtn) {
+          feedbackCloseBtn.addEventListener('click', () => {
+            if (feedbackModal && feedbackModal.open) feedbackModal.close('cancel');
+          });
+        }
+        if (feedbackCancelBtn) {
+          feedbackCancelBtn.addEventListener('click', () => {
+            if (feedbackModal && feedbackModal.open) feedbackModal.close('cancel');
+          });
+        }
+        if (feedbackModal) {
+          feedbackModal.addEventListener('close', () => {
+            feedbackModal.returnValue = '';
+            clearTimeout(announceTimer);
+            announcer.textContent = '';
+          });
+        }
+
+        if (feedbackForm) {
+          feedbackForm.addEventListener('input', (e) => {
+            const el = e.target;
+            if (!el.matches || !el.matches('input, textarea')) return;
+            const st = dirtyState.get(el) || { hasInteracted: false, hasBlurred: false };
+            st.hasInteracted = true;
+            dirtyState.set(el, st);
+            if (el.validity.valid) {
+              el.classList.remove('user-invalid-fallback');
+              syncAria(el, false, false);
+            } else if (st.hasBlurred) {
+              syncAria(el, false, true);
+            }
+          });
+
+          feedbackForm.addEventListener('blur', (e) => {
+            const el = e.target;
+            if (!el.matches || !el.matches('input, textarea') || !el.dataset.error) return;
+            const st = dirtyState.get(el) || { hasInteracted: false, hasBlurred: false };
+            st.hasBlurred = true;
+            dirtyState.set(el, st);
+            if (st.hasInteracted) {
+              const bad = !el.validity.valid;
+              if (bad) el.classList.add('user-invalid-fallback');
+              syncAria(el, bad, bad);
+            }
+          }, true);
+
+          feedbackForm.addEventListener('invalid', (e) => {
+            const el = e.target;
+            announced.add(el);
+            dirtyState.set(el, { hasInteracted: true, hasBlurred: true });
+            el.classList.add('user-invalid-fallback');
+            syncAria(el, false, true);
+          }, true);
+
+          feedbackForm.addEventListener('reset', () => {
+            setTimeout(resetFeedbackValidationUI);
+          });
+
+          feedbackForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!feedbackForm.checkValidity()) {
+              const firstBad = feedbackForm.querySelector(':invalid');
+              if (firstBad && firstBad.focus) firstBad.focus();
+              return;
+            }
+
+            if (feedbackSubmitBtn) feedbackSubmitBtn.disabled = true;
+            try {
+              const selectedType = feedbackForm.querySelector('input[name="feedback_type"]:checked')?.value || 'bug';
+              const rawTitle = (document.getElementById('feedback-title')?.value || '').trim();
+              const rawBody = (document.getElementById('feedback-body')?.value || '').trim();
+              const includeDiag = !!document.getElementById('feedback-include-diag')?.checked;
+
+              const typeMap = {
+                bug: { prefix: '[Bug]', label: 'bug', heading: 'Сообщение об ошибке' },
+                idea: { prefix: '[Feature]', label: 'enhancement', heading: 'Пожелание по улучшению' },
+                question: { prefix: '[Question]', label: 'question', heading: 'Вопрос по SincPro' }
+              };
+              const meta = typeMap[selectedType] || typeMap.bug;
+              const fullTitle = `${meta.prefix} ${rawTitle}`;
+              const appVer = window.__SINC_APP_VERSION__ || '3.5.58';
+
+              let reportText = `## ${meta.heading}\n\n${rawBody}`;
+              if (includeDiag) {
+                reportText += `\n\n---\n**Диагностика:**\n- Версия SincPro: v${appVer}\n- Платформа: ${navigator.platform || 'Windows'}\n- WebView: ${navigator.userAgent}`;
+              }
+
+              if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(`${fullTitle}\n\n${reportText}`).catch(() => {});
+              }
+
+              const issueUrl = `https://github.com/WiseYaroslav28/sinc-pro-voice-widget/issues/new?title=${encodeURIComponent(fullTitle)}&labels=${encodeURIComponent(meta.label)}&body=${encodeURIComponent(reportText)}`;
+              if (window.__TAURI__) {
+                await invoke('open_external_url', { url: issueUrl });
+              } else {
+                window.open(issueUrl, '_blank', 'noopener');
+              }
+
+              feedbackForm.reset();
+              if (feedbackModal && feedbackModal.open) feedbackModal.close('submitted');
+              showToast('Текст скопирован в буфер, открыта форма GitHub Issues');
+            } catch (err) {
+              console.error('Feedback submit error:', err);
+              showToast('Не удалось открыть форму GitHub: ' + err, true);
+              if (feedbackSubmitBtn) feedbackSubmitBtn.disabled = false;
+            }
+          });
+        }
       })();
     </script>
 

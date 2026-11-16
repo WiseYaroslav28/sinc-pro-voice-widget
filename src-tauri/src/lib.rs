@@ -58,6 +58,8 @@ lazy_static::lazy_static! {
     static ref GEMINI_LIVE_WS_SLOT: tokio::sync::Mutex<Option<PersistentGeminiLiveWs>> = tokio::sync::Mutex::new(None);
     static ref EDGE_CHROMIUM_VERSION: std::sync::Mutex<String> = std::sync::Mutex::new("143.0.3650.75".to_string());
     static ref EDGE_GEC_VERSION: std::sync::Mutex<String> = std::sync::Mutex::new("2-143.0.3650.75".to_string());
+    static ref LATEST_UPDATE_POPUP_DATA: std::sync::Mutex<Option<serde_json::Value>> = std::sync::Mutex::new(None);
+    static ref CACHED_GITHUB_STARS: std::sync::Mutex<Option<(Instant, u64)>> = std::sync::Mutex::new(None);
 }
 
 use std::collections::HashSet;
@@ -6141,6 +6143,143 @@ fn open_external_url(url: String) -> Result<(), String> {
             .map_err(|e| format!("Не удалось открыть браузер: {}", e))?;
     }
     Ok(())
+}
+
+#[tauri::command]
+async fn fetch_github_repo_info() -> Result<serde_json::Value, String> {
+    const REPO_URL: &str = "https://github.com/WiseYaroslav28/sinc-pro-voice-widget";
+    if let Ok(guard) = CACHED_GITHUB_STARS.lock() {
+        if let Some((fetched_at, stars)) = *guard {
+            if fetched_at.elapsed() < std::time::Duration::from_secs(1800) {
+                return Ok(serde_json::json!({ "stars": stars, "url": REPO_URL }));
+            }
+        }
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(6))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .get("https://api.github.com/repos/WiseYaroslav28/sinc-pro-voice-widget")
+        .header("User-Agent", "SincPro-Desktop")
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| format!("GitHub API request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("GitHub API returned status {}", resp.status()));
+    }
+
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("GitHub API parse failed: {}", e))?;
+    let stars = json
+        .get("stargazers_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    if let Ok(mut guard) = CACHED_GITHUB_STARS.lock() {
+        *guard = Some((Instant::now(), stars));
+    }
+
+    Ok(serde_json::json!({ "stars": stars, "url": REPO_URL }))
+}
+
+#[tauri::command]
+fn get_update_popup_data() -> Option<serde_json::Value> {
+    LATEST_UPDATE_POPUP_DATA
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+}
+
+#[tauri::command]
+fn show_update_popup(app_handle: tauri::AppHandle, payload: serde_json::Value) -> Result<(), String> {
+    if let Ok(mut guard) = LATEST_UPDATE_POPUP_DATA.lock() {
+        *guard = Some(payload.clone());
+    }
+
+    let win = app_handle
+        .get_webview_window("update-popup")
+        .ok_or_else(|| "Окно update-popup не найдено".to_string())?;
+
+    let _ = win.emit("update-popup-data", payload);
+
+    #[cfg(target_os = "windows")]
+    {
+        ensure_webview_window_borderless(&win);
+        let mon = get_cursor_monitor().unwrap_or(CursorMonitorInfo {
+            work_left: 0,
+            work_top: 0,
+            work_right: 1920,
+            work_bottom: 1040,
+            scale_factor: 1.0,
+        });
+        let sf = if mon.scale_factor > 0.5 {
+            mon.scale_factor
+        } else {
+            1.0
+        };
+        let width_phys = (380.0 * sf).round() as i32;
+        let height_phys = (276.0 * sf).round() as i32;
+        let margin_phys = (18.0 * sf).round() as i32;
+        let x = mon.work_right - width_phys - margin_phys;
+        let y = mon.work_bottom - height_phys - margin_phys;
+
+        let win_clone = win.clone();
+        let _ = win.run_on_main_thread(move || {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            use winapi::um::winuser::{
+                SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+                SW_SHOWNOACTIVATE,
+            };
+            if let Ok(handle) = win_clone.window_handle() {
+                if let RawWindowHandle::Win32(win_handle) = handle.as_raw() {
+                    let hwnd = win_handle.hwnd.get() as winapi::shared::windef::HWND;
+                    unsafe {
+                        SetWindowPos(
+                            hwnd,
+                            HWND_TOPMOST,
+                            x,
+                            y,
+                            width_phys,
+                            height_phys,
+                            SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                        );
+                        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                    }
+                }
+            }
+        });
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = win.show();
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+fn hide_update_popup(app_handle: tauri::AppHandle) {
+    if let Some(win) = app_handle.get_webview_window("update-popup") {
+        let _ = win.hide();
+    }
+}
+
+#[tauri::command]
+fn open_main_from_update_popup(app_handle: tauri::AppHandle) {
+    if let Some(win) = app_handle.get_webview_window("update-popup") {
+        let _ = win.hide();
+    }
+    show_and_focus_main_window(&app_handle);
+    if let Some(main_win) = app_handle.get_webview_window("main") {
+        let _ = main_win.emit("open-update-modal", ());
+    }
 }
 
 #[tauri::command]
@@ -13326,7 +13465,7 @@ pub fn run() {
             // Устанавливаем Win32 subclass и безрамочный POPUP-стиль ДО показа окон
             #[cfg(target_os = "windows")]
             {
-                for label in &["widget", "capsule", "anchor"] {
+                for label in &["widget", "capsule", "anchor", "update-popup"] {
                     if let Some(w) = app.get_webview_window(label) {
                         ensure_webview_window_borderless(&w);
                     }
@@ -13352,7 +13491,7 @@ pub fn run() {
 
             #[cfg(target_os = "windows")]
             {
-                for label in &["widget", "capsule", "anchor"] {
+                for label in &["widget", "capsule", "anchor", "update-popup"] {
                     if let Some(w) = app.get_webview_window(label) {
                         ensure_webview_window_borderless(&w);
                     }
@@ -13513,6 +13652,11 @@ pub fn run() {
             uninstall_extension,
             uninstall_model,
             open_external_url,
+            fetch_github_repo_info,
+            get_update_popup_data,
+            show_update_popup,
+            hide_update_popup,
+            open_main_from_update_popup,
             fetch_gemini_models,
             set_module_mode,
             load_history,
