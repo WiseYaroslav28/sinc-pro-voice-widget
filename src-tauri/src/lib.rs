@@ -82,6 +82,8 @@ struct PendingShortWord {
 static MOUSE_CLICKED_SINCE_KEY: AtomicBool = AtomicBool::new(false);
 static LAST_TYPED_HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 static LAST_TYPED_HKL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static IN_URL_CHAIN: AtomicBool = AtomicBool::new(false);
+static LAST_TOKEN_WAS_EN_CONTEXT: AtomicBool = AtomicBool::new(false);
 
 lazy_static::lazy_static! {
     static ref TYPED_BUFFER: std::sync::Mutex<Vec<TypedKey>> = std::sync::Mutex::new(Vec::new());
@@ -2762,6 +2764,10 @@ fn map_vk_to_chars_with_state(vk: u32, shift: bool, caps_lock: bool) -> Option<(
         0xBE => Some(apply_punct_letter('.', '>', 'ю')),
         // 0xBF ('/' и '?' в EN, '.' и ',' в RU) намеренно НЕ включен: это триггер пунктуации
         0xC0 => Some(apply_punct_letter('`', '~', 'ё')),
+        0x30..=0x39 if !shift => {
+            let d = char::from_u32(vk).unwrap_or('0');
+            Some((d, d))
+        }
         _ => None,
     }
 }
@@ -2831,6 +2837,12 @@ fn is_recognized_english_word(word_lower: &str) -> bool {
         "tests", "debug", "trace", "cargo", "npm", "pnpm", "yarn", "vite", "webpack", "babel", "eslint",
         "backend", "frontend", "fullstack", "webhook", "backup", "feedback", "callback", "localhost",
         "endpoint", "selectel",
+        "supabase", "vercel", "netlify", "railway", "render", "firebase", "cloudflare", "prisma",
+        "drizzle", "shadcn", "lucide", "astro", "nuxt", "remix", "turso", "upstash", "stripe",
+        "paypal", "figma", "tilda", "linear", "lovable", "replit", "deepseek", "perplexity",
+        "midjourney", "elevenlabs", "anthropic", "huggingface", "signin", "dashboard", "habr",
+        "dzen", "avito", "ozon", "yandex", "wildberries", "kinopoisk", "gosuslugi", "tinkoff",
+        "tbank", "sber", "kwork", "timeweb", "beget",
         // Расширенный словарь частых английских слов
         "able", "above", "accept", "access", "across", "action", "actual", "actually", "add", "added",
         "addition", "address", "advance", "advice", "affect", "afraid", "age", "agency", "agent", "ago",
@@ -3128,7 +3140,7 @@ fn is_valid_english_word(word_lower: &str) -> bool {
         "db", "os", "pc", "tv", "vr", "ar", "fps", "dpi", "ppi", "hz", "khz", "mhz", "ghz", "buf",
         "prev", "css", "obj", "ffmpeg", "cpp", "mpeg", "ffi", "gdi", "cmp", "rev", "lru", "sqrt",
         "div", "nav", "wss", "pcm", "dsp", "ssml", "gzip", "zstd", "rpm", "hwnd", "btn", "btns",
-        "href", "xmlns", "gpt",
+        "href", "xmlns", "gpt", "trpc", "zod", "bun", "deno", "utf8", "base64",
     ];
 
     if TECH_AND_SHORT_EN.contains(&word_lower) {
@@ -3151,39 +3163,79 @@ fn is_valid_english_word(word_lower: &str) -> bool {
 }
 
 fn is_domain_or_filename_like(en_lower: &str) -> bool {
-    if en_lower.chars().any(|c| c.is_ascii_digit()) {
+    let core = en_lower.trim_end_matches(|c| matches!(c, ',' | '.' | ';' | ':'));
+    if core.is_empty() {
+        return false;
+    }
+
+    // IPv4 адреса (192.168.0.1, 127.0.0.1)
+    let segments: Vec<&str> = core.split('.').collect();
+    if segments.len() == 4
+        && segments
+            .iter()
+            .all(|seg| !seg.is_empty() && seg.len() <= 3 && seg.chars().all(|c| c.is_ascii_digit()))
+    {
         return true;
     }
-    let core = en_lower.trim_end_matches(|c| matches!(c, ',' | '.' | ';' | ':'));
+
     if let Some((left, ext)) = core.rsplit_once('.') {
         if !left.is_empty()
-            && !ext.is_empty()
+            && ext.len() >= 2
+            && !left.starts_with('.')
+            && !left.ends_with('.')
+            && !left.contains("..")
+            && left.chars().any(|c| c.is_ascii_alphanumeric())
             && left.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
             && ext.chars().all(|c| c.is_ascii_alphanumeric())
         {
+            if left.contains('.') {
+                return true;
+            }
+
             const KNOWN_UNAMBIGUOUS_EXTS: &[&str] = &[
-                "com", "org", "net", "dev", "app", "pro", "info", "xyz", "site", "online", "tech",
-                "cloud", "edu", "gov", "exe", "msi", "dll", "sys", "bat", "cmd", "ps1", "bin",
+                // gTLDs & new TLDs
+                "com", "org", "net", "edu", "gov", "mil", "int", "info", "biz", "name", "pro",
+                "dev", "app", "page", "web", "site", "website", "online", "tech", "store", "shop",
+                "club", "xyz", "top", "vip", "icu", "fun", "space", "link", "click", "live",
+                "life", "world", "work", "cloud", "digital", "agency", "studio", "design", "media",
+                "news", "blog", "press", "wiki", "docs", "help", "support", "email", "chat", "bot",
+                "new", "run", "codes", "tools", "systems", "solutions", "services", "network",
+                "company", "group", "team", "center", "zone", "today", "plus", "one", "win", "art",
+                "games", "game", "video", "audio", "music", "photo", "social", "community",
+                "market", "finance", "money", "cash", "pay", "bank", "trade", "capital", "ventures",
+                "fund", "host", "hosting", "domains", "academy", "school", "courses", "care",
+                "health", "fit", "cafe", "bar", "pub", "travel", "city", "house", "land", "estate",
+                "build", "auto", "cars", "software", "science", "data", "security", "local",
+                "localhost", "internal", "test", "onion",
+                // Однозначные ccTLD ('ю' + ext не встречается в реальных русских словах)
+                "ru", "su", "by", "ua", "uz", "kg", "az", "md", "lv", "lt", "ee",
+                "io", "ai", "co", "me", "cc", "gg", "sh", "ws", "vc", "ly", "be", "to", "so",
+                "is", "fr", "uk", "us", "eu", "au", "cn", "jp", "kr", "in", "tr", "ae",
+                "il", "pl", "nl", "ch", "at", "se", "no", "fi", "dk", "es", "pt", "br",
+                "mx", "ar", "cl", "pe", "vn", "th", "sg", "id", "ph", "my", "hk", "tw", "nz",
+                // Однозначные расширения файлов
+                "exe", "msi", "dll", "sys", "bat", "cmd", "ps1", "bin",
                 "html", "htm", "css", "scss", "less", "jsx", "tsx", "mjs", "cjs", "vue", "svelte",
                 "json", "toml", "yaml", "yml", "xml", "csv", "ini", "cfg", "conf", "env", "lock",
                 "log", "txt", "rtf", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "java",
                 "swift", "cpp", "hpp", "php", "sql", "lua", "png", "jpg", "jpeg", "gif", "webp",
                 "svg", "ico", "mp3", "wav", "ogg", "flac", "mp4", "mkv", "webm", "zip", "rar",
-                "tar", "zstd", "onnx", "gguf",
+                "tar", "gz", "zstd", "onnx", "gguf", "js", "ts", "rs", "py", "go",
             ];
             if KNOWN_UNAMBIGUOUS_EXTS.contains(&ext) {
                 return true;
             }
 
-            const KNOWN_SHORT_EXTS: &[&str] = &[
-                "ru", "io", "ai", "me", "co", "uk", "de", "fr", "ua", "by", "kz", "sh", "js",
-                "ts", "rs", "py", "rb", "go", "kt", "cs", "md", "gz",
+            // Короткие TLD/расширения, которые пересекаются с русскими словами на '-ю..'
+            // ("кастрюля"=rfcnh.kz, "клюем"=rk.tv, "клюву"=rk.de, "плюсы"=gk.cs)
+            const KNOWN_AMBIGUOUS_SHORT_EXTS: &[&str] = &[
+                "kz", "tv", "de", "it", "cs", "kt", "rb", "ca", "cz", "ge", "am", "im", "fm",
             ];
-            if KNOWN_SHORT_EXTS.contains(&ext) {
-                let left_has_vowel = left
+            if KNOWN_AMBIGUOUS_SHORT_EXTS.contains(&ext) {
+                let left_has_domain_marker = left
                     .chars()
-                    .any(|c| matches!(c, 'a' | 'e' | 'i' | 'o' | 'u' | 'y'));
-                if left_has_vowel || is_valid_english_word(left) {
+                    .any(|c| matches!(c, 'a' | 'e' | 'i' | 'o' | 'u' | 'y' | '-' | '_') || c.is_ascii_digit());
+                if left_has_domain_marker || is_valid_english_word(left) {
                     return true;
                 }
             }
@@ -3237,7 +3289,10 @@ fn is_english_contraction(en_lower: &str) -> bool {
 }
 
 fn has_internal_ru_layout_punctuation(en_lower: &str) -> bool {
-    if is_domain_or_filename_like(en_lower) || is_english_contraction(en_lower) {
+    if en_lower.chars().any(|c| c.is_ascii_digit())
+        || is_domain_or_filename_like(en_lower)
+        || is_english_contraction(en_lower)
+    {
         return false;
     }
     let core = en_lower.trim_end_matches(|c| matches!(c, ',' | '.' | ';' | ':'));
@@ -3344,6 +3399,12 @@ fn is_impossible_english_word(en_lower: &str) -> bool {
         return false;
     }
     if is_valid_english_word(en_lower) {
+        return false;
+    }
+    if en_lower.chars().any(|c| c.is_ascii_digit())
+        || is_domain_or_filename_like(en_lower)
+        || is_english_contraction(en_lower)
+    {
         return false;
     }
     // Наличие спецсимволов внутри слова, которые в RU раскладке являются буквами х, ъ, ж, э, б, ю, ё
@@ -3575,8 +3636,8 @@ fn is_valid_pending_short_word(word_current: &str, word_alternate: &str, first_l
             "а", "в", "и", "к", "о", "с", "у", "я",
             "не", "на", "но", "по", "за", "из", "от", "до", "же", "бы", "ли", "то", "мы", "вы",
             "он", "ты", "да", "ну", "во", "со", "ко", "об", "ни", "ее", "её", "им", "их", "ей",
-            "ем", "уж", "ту", "та", "те", "ах", "ох", "эх", "ух", "ой", "ай", "эй", "юг", "еж",
-            "ёж", "хм",
+            "ем", "уж", "ту", "та", "те", "че", "чё", "ах", "ох", "эх", "ух", "ой", "ай", "эй",
+            "юг", "еж", "ёж", "хм",
         ];
         VALID_RU_SHORT.contains(&alt_lower.as_str())
     } else {
@@ -3586,6 +3647,38 @@ fn is_valid_pending_short_word(word_current: &str, word_alternate: &str, first_l
             "do", "go", "so", "up", "at", "as", "an", "no", "us", "am", "ok", "hi",
         ];
         VALID_EN_SHORT.contains(&alt_lower.as_str())
+    }
+}
+
+fn should_autocorrect_single_letter_word(
+    word_current: &str,
+    word_alternate: &str,
+    first_layout_is_en: bool,
+    delim: DelimiterKind,
+    after_en_context: bool,
+) -> bool {
+    if !first_layout_is_en || after_en_context {
+        return false;
+    }
+    if word_current.chars().count() != 1 || word_alternate.chars().count() != 1 {
+        return false;
+    }
+    let alt_lower = word_alternate.to_lowercase();
+    match delim {
+        // Все 8 однобуквенных русских слов (не существующих в английском как отдельные слова):
+        // а (f), в (d), и (b), к (r), о (j), с (c), у (e), я (z)
+        DelimiterKind::Space => matches!(
+            alt_lower.as_str(),
+            "а" | "в" | "и" | "к" | "о" | "с" | "у" | "я"
+        ),
+        // Перед запятой ("Я, ...", "А, ..."), восклицательным знаком или Enter — только местоимение/союз "я", "а"
+        DelimiterKind::Enter { .. }
+        | DelimiterKind::Punct { curr: '?', alt: ',' }
+        | DelimiterKind::Punct { curr: '!', alt: '!' } => {
+            matches!(alt_lower.as_str(), "а" | "я")
+        }
+        // Никогда не срабатываем на дефисе '-' (e-mail, z-index, f-string, d-link) и слэше '/' (c/o, r/rust)
+        _ => false,
     }
 }
 
@@ -3602,8 +3695,8 @@ fn should_autocorrect_short_word(word_current: &str, word_alternate: &str, first
         const UNAMBIGUOUS_RU_2LETTER: &[&str] = &[
             "не", "на", "но", "по", "за", "из", "от", "до", "же", "бы", "ли", "то", "вы",
             "он", "ты", "да", "ну", "во", "со", "ко", "об", "ни", "ее", "её", "им", "их",
-            "ей", "уж", "ту", "та", "те", "ах", "ох", "эх", "ух", "ой", "ай", "эй", "юг",
-            "еж", "ёж", "хм",
+            "ей", "уж", "ту", "та", "те", "че", "чё", "ах", "ох", "эх", "ух", "ой", "ай",
+            "эй", "юг", "еж", "ёж", "хм",
         ];
         UNAMBIGUOUS_RU_2LETTER.contains(&alt_lower.as_str())
     } else {
@@ -3619,18 +3712,43 @@ fn should_autocorrect_layout(word_current: &str, word_alternate: &str, first_lay
     if word_current.chars().count() < 3 || word_alternate.chars().count() < 3 {
         return false;
     }
+    if word_current == word_alternate {
+        return false;
+    }
+
+    let curr_lower_early = word_current.to_lowercase();
+    let alt_lower_early = word_alternate.to_lowercase();
+    if first_layout_is_en
+        && matches!(
+            curr_lower_early.as_str(),
+            "http:" | "https:" | "ws:" | "wss:" | "ftp:"
+        )
+    {
+        return false;
+    }
+    if !first_layout_is_en
+        && matches!(
+            alt_lower_early.as_str(),
+            "http:" | "https:" | "ws:" | "wss:" | "ftp:"
+        )
+    {
+        return true;
+    }
 
     // Проверяем нормальный регистр (только строчные или первая заглавная + остальные строчные)
     if !has_normal_word_casing(word_current) || !has_normal_word_casing(word_alternate) {
         return false;
     }
 
-    let curr_lower = word_current.to_lowercase();
-    let alt_lower = word_alternate.to_lowercase();
+    let curr_lower = curr_lower_early;
+    let alt_lower = alt_lower_early;
 
     if first_layout_is_en {
         // Пользователь печатает в АНГЛИЙСКОЙ раскладке -> проверяем перевод EN -> RU
-        if is_domain_or_filename_like(&curr_lower) || is_english_contraction(&curr_lower) {
+        if curr_lower.chars().any(|c| c.is_ascii_digit())
+            || is_domain_or_filename_like(&curr_lower)
+            || is_english_contraction(&curr_lower)
+        {
             return false;
         }
         let core = curr_lower.trim_end_matches(|c| matches!(c, ',' | '.' | ';' | ':'));
@@ -3679,22 +3797,36 @@ fn should_autocorrect_layout(word_current: &str, word_alternate: &str, first_lay
         is_recognized_russian_word(&alt_lower, &curr_lower)
     } else {
         // Пользователь печатает в РУССКОЙ раскладке -> проверяем перевод RU -> EN
-        // Если в альтернативе есть не-буквы (пользователь нажимал русские буквы б, ю, ж, э, х, ъ, ё), это точно НЕ английское слово
-        if !alt_lower.chars().all(|c| c.is_ascii_lowercase()) {
-            return false;
-        }
-
         // Если текущее русское слово уже распознано как русское — никогда его не трогаем
         if is_recognized_russian_word(&curr_lower, &alt_lower) {
             return false;
         }
 
-        // Переводим с русского на английский, если альтернатива — словарное английское слово,
-        // ЛИБО длинная (4+) строка фонетически невозможна в русском и допустима в английском ("ыудусеуд" -> "selectel")
-        is_valid_english_word(&alt_lower)
-            || (alt_lower.len() >= 4
-                && !has_valid_russian_phonotactics(&curr_lower)
-                && !is_impossible_english_word(&alt_lower))
+        // Домены/URL/IP/имена файлов, набранные по ошибке в русской раскладке ("ыгзфифыуюсщь" -> "supabase.com")
+        if is_domain_or_filename_like(&alt_lower) {
+            return true;
+        }
+
+        // Английские сокращения ("вщтэе" -> "don't"), набранные в русской раскладке
+        if is_english_contraction(&alt_lower) && !has_valid_russian_phonotactics(&curr_lower) {
+            return true;
+        }
+
+        if alt_lower.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+            && alt_lower.chars().any(|c| c.is_ascii_lowercase())
+        {
+            if alt_lower.chars().any(|c| c.is_ascii_digit()) {
+                return is_valid_english_word(&alt_lower);
+            }
+            // Переводим с русского на английский, если альтернатива — словарное английское слово,
+            // ЛИБО длинная (4+) строка фонетически невозможна в русском и допустима в английском ("ыудусеуд" -> "selectel")
+            return is_valid_english_word(&alt_lower)
+                || (alt_lower.len() >= 4
+                    && !has_valid_russian_phonotactics(&curr_lower)
+                    && !is_impossible_english_word(&alt_lower));
+        }
+
+        false
     }
 }
 
@@ -3905,6 +4037,12 @@ fn classify_layout_delimiter(vk: u32, shift: bool, first_layout_is_en: bool) -> 
     }
 }
 
+fn clear_pending_layout_context() {
+    PENDING_SHORT_WORDS.lock().unwrap().clear();
+    IN_URL_CHAIN.store(false, Ordering::Relaxed);
+    LAST_TOKEN_WAS_EN_CONTEXT.store(false, Ordering::Relaxed);
+}
+
 fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
     let mode = LAYOUT_CONVERTER_ENABLED.load(Ordering::Relaxed);
     if mode == 0 || !is_key_down {
@@ -3976,7 +4114,7 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
     if is_undo_hotkey {
         let mut last_correct = LAST_AUTOCORRECT.lock().unwrap();
         if let Some((original, _corrected, to_english, backspace_count)) = last_correct.take() {
-            PENDING_SHORT_WORDS.lock().unwrap().clear();
+            clear_pending_layout_context();
             std::thread::spawn(move || {
                 LAYOUT_PROCESSING.store(true, Ordering::SeqCst);
                 switch_active_window_layout(!to_english);
@@ -4000,7 +4138,7 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
     // При комбинациях смены раскладки (Alt+Shift, Ctrl+Shift, Win+Space) немедленно очищаем буфер
     if is_modifier && (ctrl as u8 + alt as u8 + shift as u8 + win as u8) >= 2 {
         TYPED_BUFFER.lock().unwrap().clear();
-        PENDING_SHORT_WORDS.lock().unwrap().clear();
+        clear_pending_layout_context();
         return false;
     }
 
@@ -4036,7 +4174,7 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
             || ((GetAsyncKeyState(0x04) as u16) & 0x8000) != 0;
         if mouse_clicked {
             TYPED_BUFFER.lock().unwrap().clear();
-            PENDING_SHORT_WORDS.lock().unwrap().clear();
+            clear_pending_layout_context();
         }
         (fg_hwnd as isize, hkl as usize, primary_lang == 0x09)
     };
@@ -4045,7 +4183,7 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
     let prev_hkl = LAST_TYPED_HKL.swap(current_hkl, Ordering::Relaxed);
     if (prev_hwnd != 0 && prev_hwnd != current_hwnd) || (prev_hkl != 0 && prev_hkl != current_hkl) {
         TYPED_BUFFER.lock().unwrap().clear();
-        PENDING_SHORT_WORDS.lock().unwrap().clear();
+        clear_pending_layout_context();
     }
 
     // Сбрасываем буфер ввода, если была пауза в печати больше 3 секунд
@@ -4053,7 +4191,7 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
         let mut last_time = LAST_KEY_TIME.lock().unwrap();
         if last_time.elapsed() > Duration::from_secs(3) {
             TYPED_BUFFER.lock().unwrap().clear();
-            PENDING_SHORT_WORDS.lock().unwrap().clear();
+            clear_pending_layout_context();
         }
         *last_time = Instant::now();
     }
@@ -4067,7 +4205,7 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
     if let Some((eng_char, rus_char)) = map_vk_to_chars_with_state(vk, shift, caps_lock) {
         if ctrl || alt || win {
             TYPED_BUFFER.lock().unwrap().clear();
-            PENDING_SHORT_WORDS.lock().unwrap().clear();
+            clear_pending_layout_context();
             return false;
         }
 
@@ -4086,23 +4224,31 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
         if ctrl || alt || shift || win {
             // Ctrl+Backspace (или модифицированный Backspace) удаляет слово целиком — очищаем весь буфер!
             buf.clear();
-            PENDING_SHORT_WORDS.lock().unwrap().clear();
+            clear_pending_layout_context();
         } else if !buf.is_empty() {
             buf.pop();
         } else {
             // Пользователь стер пробел перед текущим словом — сбрасываем ожидающие короткие слова
-            PENDING_SHORT_WORDS.lock().unwrap().clear();
+            clear_pending_layout_context();
         }
     } else if is_potential_delimiter {
         if ctrl || alt || win {
             TYPED_BUFFER.lock().unwrap().clear();
-            PENDING_SHORT_WORDS.lock().unwrap().clear();
+            clear_pending_layout_context();
             return false;
         }
 
         let mut buf_guard = TYPED_BUFFER.lock().unwrap();
         if buf_guard.is_empty() {
             PENDING_SHORT_WORDS.lock().unwrap().clear();
+            if vk == 0x20 || vk == 0x0D {
+                IN_URL_CHAIN.store(false, Ordering::Relaxed);
+                if vk == 0x0D {
+                    LAST_TOKEN_WAS_EN_CONTEXT.store(false, Ordering::Relaxed);
+                }
+            } else if !(vk == 0xBF && !shift && is_eng_layout) {
+                IN_URL_CHAIN.store(false, Ordering::Relaxed);
+            }
             return false;
         }
 
@@ -4113,12 +4259,12 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
         let first_layout = typed_keys[0].is_english_layout;
         let all_same_layout = typed_keys.iter().all(|k| k.is_english_layout == first_layout && k.is_english_layout == is_eng_layout);
         if !all_same_layout {
-            PENDING_SHORT_WORDS.lock().unwrap().clear();
+            clear_pending_layout_context();
             return false;
         }
 
         let Some(delim) = classify_layout_delimiter(vk, shift, first_layout) else {
-            PENDING_SHORT_WORDS.lock().unwrap().clear();
+            clear_pending_layout_context();
             return false;
         };
 
@@ -4138,13 +4284,22 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
         };
         if is_excluded {
             PENDING_SHORT_WORDS.lock().unwrap().clear();
+            IN_URL_CHAIN.store(false, Ordering::Relaxed);
+            LAST_TOKEN_WAS_EN_CONTEXT.store(first_layout && vk != 0x0D, Ordering::Relaxed);
             return false;
         }
 
-        let should_convert = if char_count >= 3 {
+        let in_url_before = IN_URL_CHAIN.load(Ordering::Relaxed);
+        let after_en_before = LAST_TOKEN_WAS_EN_CONTEXT.load(Ordering::Relaxed);
+
+        let should_convert = if in_url_before && first_layout {
+            false
+        } else if char_count >= 3 {
             should_autocorrect_layout(&word_current, &word_alternate, first_layout)
         } else if char_count == 2 {
             should_autocorrect_short_word(&word_current, &word_alternate, first_layout)
+        } else if char_count == 1 {
+            should_autocorrect_single_letter_word(&word_current, &word_alternate, first_layout, delim, after_en_before)
         } else {
             false
         };
@@ -4158,6 +4313,10 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
                 pend.clear();
                 list
             };
+
+            let ended_with_en_slash = !first_layout && vk == 0xBF && !shift;
+            IN_URL_CHAIN.store(ended_with_en_slash, Ordering::Relaxed);
+            LAST_TOKEN_WAS_EN_CONTEXT.store(!first_layout && vk != 0x0D, Ordering::Relaxed);
 
             let mut full_current = String::new();
             let mut full_alternate = String::new();
@@ -4223,25 +4382,40 @@ fn process_keyboard_input(vk: u32, is_key_down: bool) -> bool {
                 log_to_file(&format!("Autocorrected: '{}' -> '{}'", full_current, alt_for_log));
             });
             return true;
-        } else if vk == 0x20 && (1..=2).contains(&char_count) && is_valid_pending_short_word(&word_current, &word_alternate, first_layout) {
-            let mut pend = PENDING_SHORT_WORDS.lock().unwrap();
-            if !pend.is_empty() && pend[0].is_english_layout != first_layout {
-                pend.clear();
-            }
-            pend.push(PendingShortWord {
-                word_current,
-                word_alternate,
-                is_english_layout: first_layout,
-            });
-            if pend.len() > 4 {
-                pend.remove(0);
-            }
         } else {
-            PENDING_SHORT_WORDS.lock().unwrap().clear();
+            let keep_url = first_layout && vk != 0x20 && vk != 0x0D && (in_url_before || (vk == 0xBF && !shift));
+            IN_URL_CHAIN.store(keep_url, Ordering::Relaxed);
+
+            if vk == 0x20 && (1..=2).contains(&char_count) && is_valid_pending_short_word(&word_current, &word_alternate, first_layout) {
+                let mut pend = PENDING_SHORT_WORDS.lock().unwrap();
+                if !pend.is_empty() && pend[0].is_english_layout != first_layout {
+                    pend.clear();
+                }
+                pend.push(PendingShortWord {
+                    word_current,
+                    word_alternate,
+                    is_english_layout: first_layout,
+                });
+                if pend.len() > 4 {
+                    pend.remove(0);
+                }
+            } else {
+                PENDING_SHORT_WORDS.lock().unwrap().clear();
+                if vk == 0x0D || !first_layout {
+                    LAST_TOKEN_WAS_EN_CONTEXT.store(false, Ordering::Relaxed);
+                } else if word_current.chars().any(|c| c.is_ascii_alphabetic()) {
+                    LAST_TOKEN_WAS_EN_CONTEXT.store(true, Ordering::Relaxed);
+                }
+            }
         }
     } else if !is_modifier {
         TYPED_BUFFER.lock().unwrap().clear();
         PENDING_SHORT_WORDS.lock().unwrap().clear();
+        // Символы внутри URL-запросов ('=', '#', '&' и т.п.) не должны обрывать защиту URL до пробела/Enter
+        if !(is_eng_layout && IN_URL_CHAIN.load(Ordering::Relaxed)) {
+            IN_URL_CHAIN.store(false, Ordering::Relaxed);
+        }
+        LAST_TOKEN_WAS_EN_CONTEXT.store(is_eng_layout, Ordering::Relaxed);
     }
 
     false
@@ -13756,6 +13930,7 @@ mod layout_tests {
 
     fn simulate_phrase_typing(words: &[&str], start_is_en: bool) -> String {
         let mut is_en = start_is_en;
+        let mut after_en_context = false;
         let mut pending: Vec<PendingShortWord> = Vec::new();
         let mut screen = String::new();
 
@@ -13782,6 +13957,14 @@ mod layout_tests {
                 should_autocorrect_layout(&word_current, &word_alternate, is_en)
             } else if char_count == 2 {
                 should_autocorrect_short_word(&word_current, &word_alternate, is_en)
+            } else if char_count == 1 {
+                should_autocorrect_single_letter_word(
+                    &word_current,
+                    &word_alternate,
+                    is_en,
+                    DelimiterKind::Space,
+                    after_en_context,
+                )
             } else {
                 false
             };
@@ -13805,6 +13988,7 @@ mod layout_tests {
                 let remaining_chars = screen.chars().count() - replace_len;
                 screen = screen.chars().take(remaining_chars).collect();
                 screen.push_str(&full_alternate);
+                after_en_context = !is_en;
                 is_en = !is_en;
             } else if (1..=2).contains(&char_count) && is_valid_pending_short_word(&word_current, &word_alternate, is_en) {
                 pending.push(PendingShortWord {
@@ -13814,6 +13998,11 @@ mod layout_tests {
                 });
             } else {
                 pending.clear();
+                if !is_en {
+                    after_en_context = false;
+                } else if word_current.chars().any(|c| c.is_ascii_alphabetic()) {
+                    after_en_context = true;
+                }
             }
 
             if idx + 1 < words.len() {
@@ -14123,5 +14312,136 @@ mod layout_tests {
 
         let empty_body = r#"{"candidates":[{"content":{"parts":[{"text":""}]}}]}"#;
         assert_eq!(extract_gemini_response_text(empty_body).as_deref(), Some(""));
+    }
+
+    #[test]
+    fn test_websites_domains_and_single_letter_russian_words() {
+        // 1. Точный пример пользователя: "ыгзфифыуюсщь" ("supabase.com", набранный в RU-раскладке) -> EN
+        assert!(should_autocorrect_layout("ыгзфифыуюсщь", "supabase.com", false));
+        for &(ru_domain, en_domain) in &[
+            ("ыгзфифыуюсщь", "supabase.com"),
+            ("цццюыгзфифыуюсщь", "www.supabase.com"),
+            ("пщщпдуюсщь", "google.com"),
+            ("мсюкг", "vc.ru"),
+            ("ррюкг", "hh.ru"),
+            ("циюкг", "wb.ru"),
+            ("ешдвфюсс", "tilda.cc"),
+            ("ищдеютуц", "bolt.new"),
+            ("2пшыюкг", "2gis.ru"),
+            ("м0ювум", "v0.dev"),
+            ("192ю168ю0ю1", "192.168.0.1"),
+            ("реезыЖ", "https:"),
+            ("ыгзфифыу", "supabase"),
+            ("муксуд", "vercel"),
+        ] {
+            assert!(
+                should_autocorrect_layout(ru_domain, en_domain, false),
+                "Expected RU->EN domain/brand conversion '{}' -> '{}'",
+                ru_domain,
+                en_domain
+            );
+        }
+
+        // 2. Сайты, домены, короткие ссылки и tech-бренды на EN НИКОГДА не конвертируются в RU
+        for en_site in &[
+            "supabase.com", "vc.ru", "hh.ru", "wb.ru", "rbc.ru", "cbr.ru", "vtb.ru", "rzd.ru",
+            "clck.ru", "t.co", "g.co", "vk.cc", "ya.cc", "tilda.cc", "tilda.ws", "bit.ly",
+            "youtu.be", "bolt.new", "ray.so", "linktr.ee", "mysite.store", "mysite.agency",
+            "habr", "dzen", "tbank", "trpc", "http:", "https:",
+        ] {
+            let ru_alt = en_to_ru_str(en_site);
+            assert!(
+                !should_autocorrect_layout(en_site, &ru_alt, true),
+                "Website/brand '{}' must NOT convert to '{}'",
+                en_site,
+                ru_alt
+            );
+        }
+
+        // 3. Реальные русские слова с 'ю' по-прежнему переводятся EN->RU и НЕ трогаются в RU
+        for &(en_raw, ru_expected) in &[
+            ("rk.x", "ключ"),
+            ("gk.c", "плюс"),
+            ("gk.cf", "плюса"),
+            ("gk.cs", "плюсы"),
+            ("k.lb", "люди"),
+            ("dfk.nf", "валюта"),
+            ("b.km", "июль"),
+            ("yflt.cm", "надеюсь"),
+            ("rfcnh.kz", "кастрюля"),
+            ("rk.tv", "клюем"),
+            ("rk.de", "клюву"),
+            ("gjlndth;lf.", "подтверждаю"),
+        ] {
+            assert!(
+                should_autocorrect_layout(en_raw, ru_expected, true),
+                "Expected EN->RU conversion for '{}' -> '{}'",
+                en_raw,
+                ru_expected
+            );
+            assert!(
+                !should_autocorrect_layout(ru_expected, en_raw, false),
+                "Real Russian word '{}' must NOT convert back to '{}'",
+                ru_expected,
+                en_raw
+            );
+        }
+
+        // 4. Числа с русскими единицами остаются RU, а ASCII+цифры tech-токены переводятся RU->EN
+        for &(ru_qty, en_alt) in &[("5шт", "5in"), ("10кг", "10ru"), ("20см", "20cv")] {
+            assert!(
+                !should_autocorrect_layout(ru_qty, en_alt, false),
+                "Russian quantity '{}' must NOT convert to '{}'",
+                ru_qty,
+                en_alt
+            );
+        }
+        for &(ru_tech, en_tech) in &[("ьз4", "mp4"), ("геа8", "utf8"), ("ифыу64", "base64")] {
+            assert!(
+                should_autocorrect_layout(ru_tech, en_tech, false),
+                "Expected RU->EN tech token conversion '{}' -> '{}'",
+                ru_tech,
+                en_tech
+            );
+        }
+
+        // 5. Однобуквенные русские слова (а, в, и, к, о, с, у, я) в EN-раскладке переводятся сразу по пробелу,
+        // но не ломают дефисные термины и не срабатывают после английских слов
+        for &(en_char, ru_char) in &[
+            ("f", "а"), ("d", "в"), ("b", "и"), ("r", "к"),
+            ("j", "о"), ("c", "с"), ("e", "у"), ("z", "я"),
+            ("F", "А"), ("D", "В"), ("Z", "Я"),
+        ] {
+            assert!(
+                should_autocorrect_single_letter_word(en_char, ru_char, true, DelimiterKind::Space, false),
+                "Single-letter '{}' must convert to '{}' on Space",
+                en_char,
+                ru_char
+            );
+            assert!(
+                !should_autocorrect_single_letter_word(
+                    en_char,
+                    ru_char,
+                    true,
+                    DelimiterKind::Punct { curr: '-', alt: '-' },
+                    false,
+                ),
+                "Single-letter '{}' must NOT convert on hyphen '-'",
+                en_char
+            );
+            assert!(
+                !should_autocorrect_single_letter_word(en_char, ru_char, true, DelimiterKind::Space, true),
+                "Single-letter '{}' must NOT convert right after English word",
+                en_char
+            );
+        }
+
+        assert_eq!(simulate_phrase_typing(&["z"], true), "я");
+        assert_eq!(simulate_phrase_typing(&["d"], true), "в");
+        assert_eq!(simulate_phrase_typing(&["d", "5", "xfcjd"], true), "в 5 часов");
+        assert_eq!(simulate_phrase_typing(&["d", "supabase.com"], true), "в supabase.com");
+        assert_eq!(simulate_phrase_typing(&["Option", "B", "is", "good"], true), "Option B is good");
+        assert_eq!(simulate_phrase_typing(&["Vitamin", "C", "works"], true), "Vitamin C works");
+        assert_eq!(simulate_phrase_typing(&["hello", "z", "levf."], true), "hello я думаю");
     }
 }

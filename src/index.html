@@ -211,7 +211,7 @@
               <h1 class="font-bold text-[#d2bbff] tracking-tight text-[18px] leading-none sidebar-logo">SINC PRO</h1>
               <div class="flex items-center gap-1.5 mt-1 sidebar-subtext">
                 <p class="text-[9px] text-[#ccc3d8] uppercase tracking-wider">Audio Intelligence</p>
-                <span id="sidebar-version-badge" class="text-[9px] text-[#a377ff] font-semibold">v3.5.59</span>
+                <span id="sidebar-version-badge" class="text-[9px] text-[#a377ff] font-semibold">v3.5.60</span>
               </div>
             </div>
           </div>
@@ -1031,7 +1031,7 @@
               title="Нажмите, чтобы проверить обновления"
             >
               <span class="material-symbols-outlined text-[14px] text-[#a377ff]" id="dashboard-version-icon">verified</span>
-              <span id="dashboard-version-text" class="font-medium text-[#e4e1e9]">Версия 3.5.59</span>
+              <span id="dashboard-version-text" class="font-medium text-[#e4e1e9]">Версия 3.5.60</span>
               <span
                 id="dashboard-version-status"
                 class="text-[10px] px-1.5 py-0.5 rounded-full bg-[#7bd6d1]/15 text-[#7bd6d1] font-semibold border border-[#7bd6d1]/25 leading-none"
@@ -4116,10 +4116,10 @@
       }
 
       // Инициализация при загрузке
-      window.__SINC_APP_VERSION__ = '3.5.59';
+      window.__SINC_APP_VERSION__ = '3.5.60';
 
       function syncAppVersionDisplays(version, isMock = false) {
-        const cleanVer = String(version || '3.5.59').trim();
+        const cleanVer = String(version || '3.5.60').trim();
         window.__SINC_APP_VERSION__ = cleanVer;
         const suffix = isMock ? ' (Mock)' : '';
 
@@ -4144,10 +4144,10 @@
             syncAppVersionDisplays(version, false);
           }).catch(err => {
             console.error("Failed to load app version:", err);
-            syncAppVersionDisplays('3.5.59', false);
+            syncAppVersionDisplays('3.5.60', false);
           });
         } else {
-          syncAppVersionDisplays('3.5.59', true);
+          syncAppVersionDisplays('3.5.60', true);
         }
 
         setupAudioPlayer();
@@ -4590,6 +4590,7 @@
         let currentPendingUpdate = null;
         let isUpdateChecking = false;
         let isUpdateInstalling = false;
+        let lastAutoUpdateCheckAt = 0;
         const sessionDismissedVersions = new Set();
 
         function formatUpdateNotesForModal(raw) {
@@ -4634,7 +4635,7 @@
           const modalNotes = document.getElementById('update-modal-notes');
           const modalSkipBtn = document.getElementById('update-modal-skip-btn');
           if (modalVerBadge) modalVerBadge.textContent = `v${update.version}`;
-          if (modalCurVer) modalCurVer.textContent = `v${window.__SINC_APP_VERSION__ || '3.5.59'}`;
+          if (modalCurVer) modalCurVer.textContent = `v${window.__SINC_APP_VERSION__ || '3.5.60'}`;
           if (modalNotes) modalNotes.textContent = formatUpdateNotesForModal(update.body);
           if (modalSkipBtn) modalSkipBtn.textContent = `Пропустить v${update.version}`;
         }
@@ -4771,6 +4772,7 @@
           }
 
           isUpdateChecking = true;
+          lastAutoUpdateCheckAt = Date.now();
           if (manual) {
             if (btnCheckUpdates) {
               btnCheckUpdates.disabled = true;
@@ -4805,7 +4807,7 @@
                 if (skippedVer !== update.version && !sessionDismissedVersions.has(update.version)) {
                   await invoke('show_update_popup', {
                     payload: {
-                      currentVersion: window.__SINC_APP_VERSION__ || '3.5.59',
+                      currentVersion: window.__SINC_APP_VERSION__ || '3.5.60',
                       newVersion: update.version,
                       notes: update.body || ''
                     }
@@ -4909,9 +4911,19 @@
           }
         }, 1500);
 
-        // Проверка обновлений при запуске + периодически каждые 4 часа
+        // Проверка обновлений при запуске, каждые 30 минут и при открытии окна из трея (не чаще раза в 10 мин)
+        const UPDATE_FOCUS_COOLDOWN_MS = 10 * 60 * 1000;
+        function maybeCheckUpdatesOnFocus() {
+          if (!currentPendingUpdate && Date.now() - lastAutoUpdateCheckAt >= UPDATE_FOCUS_COOLDOWN_MS) {
+            checkForUpdatesUnified({ manual: false });
+          }
+        }
         setTimeout(() => checkForUpdatesUnified({ manual: false }), 3000);
-        setInterval(() => checkForUpdatesUnified({ manual: false }), 4 * 60 * 60 * 1000);
+        setInterval(() => checkForUpdatesUnified({ manual: false }), 30 * 60 * 1000);
+        window.addEventListener('focus', maybeCheckUpdatesOnFocus);
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') maybeCheckUpdatesOnFocus();
+        });
 
         if (window.__TAURI__ && window.__TAURI__.event) {
           window.__TAURI__.event.listen('update-popup-action', (ev) => {
@@ -5051,7 +5063,7 @@
             <div>
               <h3 class="text-sm font-semibold tracking-wide text-white" id="update-modal-title">Доступно обновление SincPro</h3>
               <div class="text-[11px] text-[#ccc3d8] flex items-center gap-1.5 mt-0.5">
-                <span id="update-modal-cur-ver">v3.5.59</span>
+                <span id="update-modal-cur-ver">v3.5.60</span>
                 <span>→</span>
                 <span id="update-modal-ver-badge" class="font-bold text-[#7bd6d1]">v—</span>
               </div>
@@ -5495,7 +5507,7 @@
               };
               const meta = typeMap[selectedType] || typeMap.bug;
               const fullTitle = `${meta.prefix} ${rawTitle}`;
-              const appVer = window.__SINC_APP_VERSION__ || '3.5.59';
+              const appVer = window.__SINC_APP_VERSION__ || '3.5.60';
 
               let reportText = `## ${meta.heading}\n\n${rawBody}`;
               if (includeDiag) {
