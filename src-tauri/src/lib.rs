@@ -943,11 +943,55 @@ fn strip_tts_emotion_prefix(raw_text: &str) -> String {
     trimmed
 }
 
+fn normalize_gemini_live_tts_model(model: &str) -> String {
+    let trimmed = model.trim().trim_start_matches("models/");
+    if trimmed.is_empty() {
+        return "gemini-2.5-flash-native-audio-latest".to_string();
+    }
+    if trimmed.to_lowercase().contains("extended-thinking") {
+        return "gemini-3.8-live".to_string();
+    }
+    trimmed.to_string()
+}
+
+fn build_gemini_live_tts_gen_config(full_model: &str, voice: &str) -> serde_json::Value {
+    let model_lower = full_model.to_lowercase();
+    let mut gen_config = serde_json::json!({
+        "responseModalities": ["AUDIO"],
+        "speechConfig": {
+            "voiceConfig": {
+                "prebuiltVoiceConfig": {
+                    "voiceName": voice
+                }
+            }
+        }
+    });
+
+    if model_lower.contains("gemini-2.5") || model_lower.contains("native-audio") {
+        // Для Gemini 2.5 Native Audio thinkingBudget: 0 полностью отключает внутренние рассуждения
+        gen_config["thinkingConfig"] = serde_json::json!({
+            "thinkingBudget": 0,
+            "includeThoughts": false
+        });
+    } else if model_lower.contains("gemini-3.8-live") {
+        // Стандартная gemini-3.8-live нативно без размышлений (в отличие от extended-thinking)
+        // и по спецификации Live API не принимает поле thinkingConfig в setup.
+    } else {
+        // Для Gemini 3 / 3.1 Flash Live используется thinkingLevel: MINIMAL (минимальный уровень без рассуждений)
+        gen_config["thinkingConfig"] = serde_json::json!({
+            "thinkingLevel": "MINIMAL",
+            "includeThoughts": false
+        });
+    }
+
+    gen_config
+}
+
 async fn connect_gemini_live_ws(
     api_key: &str,
     model: &str,
     voice: &str,
-    thinking: &str,
+    _thinking: &str,
     expressive: bool,
 ) -> Result<EdgeWsStream, String> {
     let ws_url = format!(
@@ -986,47 +1030,9 @@ async fn connect_gemini_live_ws(
         }
     };
 
-    let full_model = if model.trim().is_empty() {
-        "models/gemini-2.5-flash-native-audio-latest".to_string()
-    } else if model.trim().starts_with("models/") {
-        model.trim().to_string()
-    } else {
-        format!("models/{}", model.trim())
-    };
-
-    let mut gen_config = serde_json::json!({
-        "responseModalities": ["AUDIO"],
-        "speechConfig": {
-            "voiceConfig": {
-                "prebuiltVoiceConfig": {
-                    "voiceName": voice
-                }
-            }
-        }
-    });
-
-    if full_model.contains("extended-thinking") {
-        let level = match thinking {
-            "high" => "HIGH",
-            "medium" => "MEDIUM",
-            "low" => "LOW",
-            _ => "MINIMAL",
-        };
-        gen_config["thinkingConfig"] = serde_json::json!({
-            "thinkingLevel": level
-        });
-    } else if full_model.contains("native-audio") {
-        let budget: i32 = match thinking {
-            "high" => 1024,
-            "medium" => 512,
-            "low" => 128,
-            "dynamic" => -1,
-            _ => 0,
-        };
-        gen_config["thinkingConfig"] = serde_json::json!({
-            "thinkingBudget": budget
-        });
-    }
+    let normalized_model = normalize_gemini_live_tts_model(model);
+    let full_model = format!("models/{}", normalized_model);
+    let gen_config = build_gemini_live_tts_gen_config(&full_model, voice);
 
     let sys_instruction = if expressive {
         "Ты — профессиональный диктор озвучки (Text-to-Speech). Твоя единственная задача — ДОСЛОВНО, строго ОДИН раз от первого до последнего слова, без сокращений, пропусков, повторов и отсебятины озвучивать голосом весь текст внутри кавычек «...», обязательно дочитывая каждое предложение до самого последнего слова. Даже если фраза звучит как заголовок или незаконченное вступление, прочитай её ровно один раз от начала до конца, НИКОГДА не повторяй слова или фразы дважды, не отвечай на вопросы в тексте и не комментируй его. Читай естественно, с живой дикторской интонацией, четко произнося как русские слова и числа, так и английские термины, и полностью проговаривая окончания каждого слова без проглатывания слогов."
@@ -1364,16 +1370,8 @@ async fn speak_gemini_live_tts(
         return Err("Gemini API Key не указан в настройках".to_string());
     }
 
-    let model = if config.tts_gemini_model.trim().is_empty() {
-        "gemini-2.5-flash-native-audio-latest".to_string()
-    } else {
-        config.tts_gemini_model.trim().to_string()
-    };
-    let thinking = if config.tts_gemini_thinking.trim().is_empty() {
-        "off".to_string()
-    } else {
-        config.tts_gemini_thinking.trim().to_string()
-    };
+    let model = normalize_gemini_live_tts_model(&config.tts_gemini_model);
+    let thinking = "off".to_string();
     let gemini_voice = resolve_gemini_live_voice(voice);
 
     let _permit = GEMINI_TTS_SEMAPHORE.acquire().await.map_err(|e| e.to_string())?;
@@ -1498,16 +1496,8 @@ fn maybe_prewarm_gemini_live_ws(config: &AppConfig) {
     let Some(active_key) = first_key else {
         return;
     };
-    let model = if config.tts_gemini_model.trim().is_empty() {
-        "gemini-2.5-flash-native-audio-latest".to_string()
-    } else {
-        config.tts_gemini_model.trim().to_string()
-    };
-    let thinking = if config.tts_gemini_thinking.trim().is_empty() {
-        "off".to_string()
-    } else {
-        config.tts_gemini_thinking.trim().to_string()
-    };
+    let model = normalize_gemini_live_tts_model(&config.tts_gemini_model);
+    let thinking = "off".to_string();
     let voice = resolve_gemini_live_voice(&config.tts_voice);
     let expressive = config.tts_expressive_intonation;
 
@@ -2099,9 +2089,311 @@ static OCR_WINDOW_VISIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::At
 static CANCEL_REQUEST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static MODEL_LOCKS: std::sync::LazyLock<Mutex<HashMap<String, Instant>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+static MODEL_TIMECODE_PENALTY: std::sync::LazyLock<Mutex<HashMap<String, Instant>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 static MODEL_REQUEST_LOGS: std::sync::LazyLock<Mutex<HashMap<String, Vec<i64>>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 static LAST_WORKING_MODEL: Mutex<Option<String>> = Mutex::new(None);
+
+const NO_TIMESTAMPS_AUDIO_RULE: &str = "КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО вставлять любые таймкоды, временные метки и разметку субтитров (вида 00:00:03,800 --> 00:00:05,280, [00:05], (01:23), 00:03.500, WEBVTT, номера реплик SRT или метки спикеров вроде Speaker 1). Выводи только сплошной живой текст речи.";
+
+pub(crate) fn record_model_timecode_pollution(model: &str) {
+    let m = model.trim();
+    if m.is_empty() {
+        return;
+    }
+    if let Ok(mut map) = MODEL_TIMECODE_PENALTY.lock() {
+        // Мягкое понижение приоритета модели на 15 минут (не блокируем полностью, чтобы оставался фолбек)
+        map.insert(m.to_string(), Instant::now() + Duration::from_secs(900));
+    }
+    if let Ok(mut last_model_lock) = LAST_WORKING_MODEL.lock() {
+        if last_model_lock.as_deref() == Some(m) {
+            *last_model_lock = None;
+        }
+    }
+}
+
+pub(crate) fn extract_gemini_model_from_label(label: &str) -> Option<String> {
+    static RE_MODEL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\b(gemini-[a-z0-9.\-]+)\b").unwrap()
+    });
+    RE_MODEL
+        .captures(label)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_lowercase())
+}
+
+pub(crate) fn has_stt_timestamp_pollution(text: &str) -> bool {
+    static RE_SRT_ARROW: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(
+            r"\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?\s*-->\s*\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?",
+        )
+        .unwrap()
+    });
+    static RE_MILLIS_TC: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"\b\d{1,2}:\d{2}(?::\d{2})?[.,]\d{2,3}\b").unwrap()
+    });
+    static RE_BRACKET_TC: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(
+            r"[\[\(]\s*\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?(?:\s*(?:[-–—]+|-->)\s*\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?)?\s*[\]\)]",
+        )
+        .unwrap()
+    });
+    static RE_LINE_START_BRACKET_TC: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| {
+            regex::Regex::new(
+                r"(?m)^\s*[\[\(]\s*\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?(?:\s*(?:[-–—]+|-->)\s*\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?)?\s*[\]\)]",
+            )
+            .unwrap()
+        });
+    static RE_LINE_START_BARE_TC: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| {
+            regex::Regex::new(r"(?m)^\s*\d{1,2}:\d{2}(?::\d{2})?\s+\S").unwrap()
+        });
+
+    let trimmed = text.trim_start_matches('\u{feff}').trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed.starts_with("WEBVTT") {
+        return true;
+    }
+    if RE_SRT_ARROW.is_match(trimmed) || RE_MILLIS_TC.is_match(trimmed) {
+        return true;
+    }
+    if RE_LINE_START_BRACKET_TC.is_match(trimmed) {
+        return true;
+    }
+    if RE_BRACKET_TC.find_iter(trimmed).count() >= 2 {
+        return true;
+    }
+    if RE_LINE_START_BARE_TC.find_iter(trimmed).count() >= 2 {
+        return true;
+    }
+    false
+}
+
+pub(crate) fn sanitize_stt_timestamps(text: &str) -> String {
+    static RE_WEBVTT_HEADER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)^\u{feff}?WEBVTT[^\n]*(?:\r?\n(?:(?:Kind|Language|Style|NOTE)[^\n]*))*\r?\n*")
+            .unwrap()
+    });
+    static RE_SRT_ARROW: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(
+            r"\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?\s*-->\s*\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?",
+        )
+        .unwrap()
+    });
+    static RE_TRAILING_SRT_INDEX: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| {
+            regex::Regex::new(r"(?:^|\r?\n)[ \t]*\d+[ \t]*\r?\n[ \t]*$").unwrap()
+        });
+    static RE_BRACKET_TC: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(
+            r"[ \t]*[\[\(]\s*\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?(?:\s*(?:[-–—]+|-->)\s*\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?)?\s*[\]\)][ \t]*",
+        )
+        .unwrap()
+    });
+    static RE_MILLIS_TC: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"[ \t]*\b\d{1,2}:\d{2}(?::\d{2})?[.,]\d{2,3}\b[ \t]*").unwrap()
+    });
+    static RE_LINE_START_BARE_TC: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| {
+            regex::Regex::new(r"(?m)^[ \t]*\d{1,2}:\d{2}(?::\d{2})?[ \t]+").unwrap()
+        });
+    static RE_SPACE_BEFORE_PUNCT: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"[ \t]+([,.;:!?])").unwrap());
+    static RE_MULTI_SPACE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"[ \t]{2,}").unwrap());
+    static RE_MULTI_NL: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"(?:\r?\n){3,}").unwrap());
+
+    if !has_stt_timestamp_pollution(text) && !RE_BRACKET_TC.is_match(text) {
+        return text.trim().to_string();
+    }
+
+    let mut work = RE_WEBVTT_HEADER.replace(text, "").into_owned();
+
+    // 1. Умное удаление SRT/VTT-интервалов (00:00:03,800 --> 00:00:05,280) с восстановлением
+    //    пробелов, запятых и разорванных пополам слов ("на 00:00:18,520 --> ...\nложение" -> "наложение")
+    if RE_SRT_ARROW.is_match(&work) {
+        // Проверяем, использует ли модель формат "\n <слово>" для границ слов после встроенного таймкода
+        let has_spaced_after_cue_newline = RE_SRT_ARROW.find_iter(&work).any(|m| {
+            let after = &work[m.end()..];
+            let after = after.trim_start_matches(|c| c == ' ' || c == '\t');
+            let rest = if let Some(r) = after.strip_prefix("\r\n") {
+                r
+            } else if let Some(r) = after.strip_prefix('\n') {
+                r
+            } else {
+                return false;
+            };
+            let trimmed_spaces = rest.trim_start_matches(|c| c == ' ' || c == '\t');
+            rest.len() > trimmed_spaces.len()
+                && trimmed_spaces
+                    .chars()
+                    .next()
+                    .map_or(false, |c| c.is_alphabetic())
+        });
+
+        let mut out = String::with_capacity(work.len());
+        let mut cursor = 0usize;
+
+        for m in RE_SRT_ARROW.find_iter(&work) {
+            if m.start() < cursor {
+                continue;
+            }
+            let before_raw = &work[cursor..m.start()];
+            let before_no_idx = RE_TRAILING_SRT_INDEX.replace(before_raw, "");
+            let before_trimmed = before_no_idx.trim_end_matches(|c| c == ' ' || c == '\t');
+            let had_same_line_text_before = before_trimmed
+                .rsplit('\n')
+                .next()
+                .map(|line| !line.trim().is_empty())
+                .unwrap_or(false);
+
+            out.push_str(before_trimmed);
+            // Убираем висящие пробелы и переводы строк перед удаляемым SRT-блоком,
+            // чтобы разделитель ниже выбирался чисто по смыслу (пробел / перенос после точки / склейка слова)
+            while out.ends_with(|c: char| c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+                out.pop();
+            }
+
+            let prev_char = out.chars().rev().find(|c| !c.is_whitespace());
+
+            let mut next_pos = m.end();
+            let rest = &work[next_pos..];
+            let ws_same_line = rest.len() - rest.trim_start_matches(|c| c == ' ' || c == '\t').len();
+            next_pos += ws_same_line;
+
+            let mut had_newline_after_cue = false;
+            if work[next_pos..].starts_with("\r\n") {
+                had_newline_after_cue = true;
+                next_pos += 2;
+            } else if work[next_pos..].starts_with('\n') {
+                had_newline_after_cue = true;
+                next_pos += 1;
+            }
+
+            let mut had_leading_space_on_next_line = false;
+            if had_newline_after_cue {
+                let after_nl = &work[next_pos..];
+                let lead_ws =
+                    after_nl.len() - after_nl.trim_start_matches(|c| c == ' ' || c == '\t').len();
+                if lead_ws > 0 {
+                    had_leading_space_on_next_line = true;
+                    next_pos += lead_ws;
+                }
+            }
+
+            let next_char = work[next_pos..].chars().next();
+            let sep = if out.trim().is_empty() || next_char.is_none() {
+                ""
+            } else if matches!(
+                next_char,
+                Some(',' | '.' | ';' | ':' | '!' | '?' | ')' | ']' | '»')
+            ) {
+                ""
+            } else if matches!(prev_char, Some('.' | '!' | '?' | '…')) {
+                if had_newline_after_cue {
+                    if out.ends_with('\n') { "" } else { "\n" }
+                } else {
+                    " "
+                }
+            } else if had_same_line_text_before
+                && has_spaced_after_cue_newline
+                && had_newline_after_cue
+                && !had_leading_space_on_next_line
+                && prev_char.map_or(false, |c| c.is_alphabetic())
+                && next_char.map_or(false, |c| c.is_lowercase())
+            {
+                // Склейка слова, разорванного моделью встроенным SRT-таймкодом (например "на" + "ложение")
+                ""
+            } else if out.ends_with('\n') {
+                ""
+            } else {
+                " "
+            };
+
+            out.push_str(sep);
+            cursor = next_pos;
+        }
+        out.push_str(&work[cursor..]);
+        work = out;
+    }
+
+    // 2. Удаляем скобочные таймкоды ([00:03], [00:03 - 00:05], (00:01:23))
+    if RE_BRACKET_TC.is_match(&work) {
+        work = RE_BRACKET_TC.replace_all(&work, " ").into_owned();
+    }
+
+    // 3. Удаляем одиночные миллисекундные таймкоды (00:00:03,800)
+    if RE_MILLIS_TC.is_match(&work) {
+        work = RE_MILLIS_TC.replace_all(&work, " ").into_owned();
+    }
+
+    // 4. Удаляем голые таймкоды в начале строк ("00:00 Привет\n00:05 Пока"), только если их >= 2
+    if RE_LINE_START_BARE_TC.find_iter(&work).count() >= 2 {
+        work = RE_LINE_START_BARE_TC.replace_all(&work, "").into_owned();
+    }
+
+    // 5. Нормализуем пробелы и пунктуацию после вырезания таймкодов
+    work = RE_SPACE_BEFORE_PUNCT.replace_all(&work, "$1").into_owned();
+    work = RE_MULTI_SPACE.replace_all(&work, " ").into_owned();
+    let cleaned_lines: Vec<&str> = work.lines().map(|l| l.trim()).collect();
+    work = cleaned_lines.join("\n");
+    work = RE_MULTI_NL.replace_all(&work, "\n\n").into_owned();
+    work.trim().to_string()
+}
+
+pub(crate) fn prioritize_audio_models_for_retry(
+    primary_model: &str,
+    model_override: Option<&str>,
+    previous_model: Option<&str>,
+) -> Vec<String> {
+    let base = build_audio_capable_models(primary_model);
+    let mut ordered = Vec::new();
+
+    match model_override.map(|s| s.trim()) {
+        Some("different") => {
+            let prev_lower = previous_model.map(|s| s.trim().to_lowercase());
+            let mut deferred_prev = None;
+            for m in base {
+                if prev_lower
+                    .as_deref()
+                    .map(|p| m.eq_ignore_ascii_case(p))
+                    .unwrap_or(false)
+                {
+                    deferred_prev = Some(m);
+                } else {
+                    ordered.push(m);
+                }
+            }
+            if let Some(prev) = deferred_prev {
+                ordered.push(prev);
+            }
+        }
+        Some(explicit)
+            if !explicit.is_empty()
+                && explicit != "auto"
+                && explicit != "whisper_local"
+                && !explicit.starts_with("local_")
+                && is_valid_multimodal_gemini_model(explicit) =>
+        {
+            ordered.push(explicit.to_string());
+            for m in base {
+                if !m.eq_ignore_ascii_case(explicit) {
+                    ordered.push(m);
+                }
+            }
+        }
+        _ => {
+            ordered = base;
+        }
+    }
+
+    ordered
+}
 
 pub(crate) fn compute_gemini_audio_timeout(duration_secs: u32) -> std::time::Duration {
     let secs = (35u64 + (duration_secs as u64) / 5).clamp(35, 150);
@@ -2363,6 +2655,20 @@ pub(crate) fn build_audio_capable_models(primary_model: &str) -> Vec<String> {
         .filter(|m| seen.insert(m.clone()))
         .collect();
 
+    let demote_timecode_offenders = |list: Vec<String>| -> Vec<String> {
+        if let Ok(mut penalty) = MODEL_TIMECODE_PENALTY.lock() {
+            let now = Instant::now();
+            penalty.retain(|_, until| *until > now);
+            if !penalty.is_empty() {
+                let (clean, penalized): (Vec<String>, Vec<String>) = list
+                    .into_iter()
+                    .partition(|m| !penalty.contains_key(m));
+                return clean.into_iter().chain(penalized).collect();
+            }
+        }
+        list
+    };
+
     if let Ok(mut locks) = MODEL_LOCKS.lock() {
         let now = Instant::now();
         locks.retain(|_, unlock_time| *unlock_time > now);
@@ -2375,7 +2681,7 @@ pub(crate) fn build_audio_capable_models(primary_model: &str) -> Vec<String> {
             .collect();
 
         if !unlocked.is_empty() {
-            return unlocked;
+            return demote_timecode_offenders(unlocked);
         }
 
         // Если абсолютно все модели заблокированы, НЕ сбрасываем все блокировки (чтобы не биться в суточные лимиты),
@@ -2390,7 +2696,7 @@ pub(crate) fn build_audio_capable_models(primary_model: &str) -> Vec<String> {
         }
     }
 
-    deduped
+    demote_timecode_offenders(deduped)
 }
 
 fn check_and_record_rate_limit(model: &str) -> Result<(usize, usize), String> {
@@ -5639,6 +5945,8 @@ fn load_config_internal(app_handle: &tauri::AppHandle) -> Result<AppConfig, Stri
     if ai_lower.contains("native-audio") || ai_lower.contains("-live") {
         config.ai_model = "gemini-2.5-flash".to_string();
     }
+    config.tts_gemini_model = normalize_gemini_live_tts_model(&config.tts_gemini_model);
+    config.tts_gemini_thinking = "off".to_string();
     config.layout_excluded_processes = sanitize_excluded_processes(config.layout_excluded_processes);
     Ok(config)
 }
@@ -5652,6 +5960,8 @@ async fn load_config(app_handle: tauri::AppHandle) -> Result<AppConfig, String> 
 
 #[tauri::command]
 async fn save_config(app_handle: tauri::AppHandle, mut config: AppConfig) -> Result<(), String> {
+    config.tts_gemini_model = normalize_gemini_live_tts_model(&config.tts_gemini_model);
+    config.tts_gemini_thinking = "off".to_string();
     config.layout_excluded_processes = sanitize_excluded_processes(config.layout_excluded_processes);
     let config_dir = app_handle
         .path()
@@ -5668,6 +5978,9 @@ async fn save_config(app_handle: tauri::AppHandle, mut config: AppConfig) -> Res
     OCR_ENABLED.store(config.ocr_mode_switch, Ordering::SeqCst);
     if let Ok(mut locks) = MODEL_LOCKS.lock() {
         locks.clear();
+    }
+    if let Ok(mut penalty) = MODEL_TIMECODE_PENALTY.lock() {
+        penalty.clear();
     }
     if let Ok(mut last_m) = LAST_WORKING_MODEL.lock() {
         *last_m = None;
@@ -5796,10 +6109,12 @@ async fn update_config_fields(app_handle: tauri::AppHandle, fields: serde_json::
             if let Some(s) = val.as_str() { config.tts_local_voice = s.to_string(); }
         }
         if let Some(val) = obj.get("tts_gemini_model") {
-            if let Some(s) = val.as_str() { config.tts_gemini_model = s.to_string(); }
+            if let Some(s) = val.as_str() {
+                config.tts_gemini_model = normalize_gemini_live_tts_model(s);
+            }
         }
-        if let Some(val) = obj.get("tts_gemini_thinking") {
-            if let Some(s) = val.as_str() { config.tts_gemini_thinking = s.to_string(); }
+        if obj.contains_key("tts_gemini_thinking") {
+            config.tts_gemini_thinking = "off".to_string();
         }
         if let Some(val) = obj.get("layout_converter_mode") {
             if let Some(n) = val.as_u64() { config.layout_converter_mode = n as u8; }
@@ -7236,10 +7551,14 @@ async fn save_audio(
             } else {
                 let api_key = config.api_key.trim().to_string();
                 let mut gemini_text: Option<String> = None;
+                let mut sanitized_backup: Option<(String, String)> = None;
                 let mut last_err = String::new();
 
                 if !CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
-                    let combined_prompt = "Сделай точную дословную транскрипцию речи из этой аудиозаписи на русском языке. Запиши речь точно так, как она звучит, без комментариев и постобработки. ВАЖНО: если на записи тишина, только фоновый шум, вздохи или нет разборчивой человеческой речи — верни строго пустую строку (ничего не выдумывай).";
+                    let combined_prompt = format!(
+                        "Сделай точную дословную транскрипцию речи из этой аудиозаписи на русском языке. Запиши речь точно так, как она звучит, без комментариев и постобработки. {} ВАЖНО: если на записи тишина, только фоновый шум, вздохи или нет разборчивой человеческой речи — верни строго пустую строку (ничего не выдумывай).",
+                        NO_TIMESTAMPS_AUDIO_RULE
+                    );
                     let contents = serde_json::json!([{
                         "parts": [
                             {"inlineData": {"mimeType": "audio/webm", "data": base64_audio}},
@@ -7280,8 +7599,25 @@ async fn save_audio(
                                         last_err = format!("Модель {} вернула заглушку: {}", model, text);
                                         continue;
                                     }
+                                    if has_stt_timestamp_pollution(&text) {
+                                        log_tts_error(
+                                            "Gemini STT timestamp pollution",
+                                            &format!("Model: {}, preset: none", model),
+                                        );
+                                        record_model_timecode_pollution(model);
+                                        let cleaned = sanitize_stt_timestamps(&text);
+                                        if !cleaned.is_empty() && sanitized_backup.is_none() {
+                                            sanitized_backup = Some((
+                                                cleaned,
+                                                format!("Gemini Cloud ({}) (RPM: {})", model, rpm),
+                                            ));
+                                        }
+                                        last_err = format!("Модель {} вернула таймкоды в тексте, пробуем следующую модель", model);
+                                        continue;
+                                    }
+                                    let clean_text = sanitize_stt_timestamps(&text);
                                     record_model_success(model);
-                                    gemini_text = Some(text);
+                                    gemini_text = Some(clean_text);
                                     used_stt_model = format!("Gemini Cloud ({}) (RPM: {})", model, rpm);
                                     break;
                                 } else {
@@ -7307,6 +7643,12 @@ async fn save_audio(
                                 last_err = format!("Сетевая ошибка ({}): {}", model, e);
                                 log_tts_error("Gemini STT network error", &last_err);
                             }
+                        }
+                    }
+                    if gemini_text.is_none() {
+                        if let Some((backup_text, backup_stt)) = sanitized_backup {
+                            gemini_text = Some(backup_text);
+                            used_stt_model = backup_stt;
                         }
                     }
                 }
@@ -7518,6 +7860,7 @@ async fn save_audio(
     let api_key = config.api_key.trim().to_string();
     let mut last_err = String::new();
     let mut gemini_text: Option<String> = None;
+    let mut sanitized_backup: Option<(String, String, String)> = None;
     let mut detected_silence = false;
 
     let has_custom_prompt = custom_prompt
@@ -7528,13 +7871,16 @@ async fn save_audio(
 
     if !CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
         let combined_prompt = if is_direct_clean_transcript {
-            r#"Сделай точную и полную литературно-грамотную транскрипцию всей речи из этой аудиозаписи на русском языке:
+            format!(
+                r#"Сделай точную и полную литературно-грамотную транскрипцию всей речи из этой аудиозаписи на русском языке:
 - Расставь правильную пунктуацию, заглавные буквы и абзацы по смыслу.
 - Убери явные звуки-паразиты («э-э», «м-м»), случайные заикания и оговорки, но ПОЛНОСТЬЮ сохрани все слова, детали, факты, структуру мысли и авторскую подачу без сокращений и без пересказа.
+- {}
 - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО отвечать на вопросы из аудио, комментировать речь, добавлять вводные фразы или обёртки ```.
 - КРИТИЧЕСКОЕ ПРАВИЛО НА ТИШИНУ: если на записи тишина, только фоновый шум, шорохи, вздохи, щелчки микрофона или нет разборчивой человеческой речи — верни СТРОГО маркер __SILENCE__ (ничего не выдумывай).
-Верни ТОЛЬКО готовый чистый текст речи (или __SILENCE__)."#
-                .to_string()
+Верни ТОЛЬКО готовый чистый текст речи (или __SILENCE__)."#,
+                NO_TIMESTAMPS_AUDIO_RULE
+            )
         } else {
             // Единый JSON-промпт: транскрипция + AI-результат в одном запросе с жесткой защитой от галлюцинаций на тишине
             format!(
@@ -7547,10 +7893,12 @@ async fn save_audio(
 Категорически запрещено выдумывать текст, отвечать на сам промпт или генерировать примеры, если в аудио нет речи!
 
 Правила (только если в аудио ЕСТЬ разборчивая речь):
-- "transcript": абсолютная дословная транскрипция речи из аудио (включая все слова-паразиты, заикания, повторы, оговорки и т.д.). Запиши только то, что реально произнесено голосом, без художественной обработки.
+- {}
+- "transcript": абсолютная дословная транскрипция речи из аудио (включая все слова-паразиты, заикания, повторы, оговорки и т.д.). Запиши только то, что реально произнесено голосом, без художественной обработки и без каких-либо таймкодов.
 - "ai_result": примени следующую инструкцию ТОЛЬКО к распознанной речи из поля transcript: {}
 
 В JSON-строках экранируй кавычки через \" и переносы строк через \n."#,
+                NO_TIMESTAMPS_AUDIO_RULE,
                 user_preset_prompt
             )
         };
@@ -7648,7 +7996,25 @@ async fn save_audio(
                                 detected_silence = true;
                                 break;
                             }
+                            if has_stt_timestamp_pollution(&clean) {
+                                log_tts_error(
+                                    "Gemini STT timestamp pollution",
+                                    &format!("Model: {}, preset: transcript", model),
+                                );
+                                record_model_timecode_pollution(model);
+                                let sanitized = sanitize_stt_timestamps(&clean);
+                                if !sanitized.is_empty() && sanitized_backup.is_none() {
+                                    sanitized_backup = Some((
+                                        sanitized,
+                                        format!("Gemini Cloud ({}) (RPM: {})", model, rpm),
+                                        format!("Gemini Cloud ({}) (Single-Pass)", model),
+                                    ));
+                                }
+                                last_err = format!("Модель {} вернула таймкоды в тексте, пробуем следующую модель", model);
+                                continue;
+                            }
 
+                            clean = sanitize_stt_timestamps(&clean);
                             record_model_success(model);
                             gemini_text = Some(clean);
                             used_stt_model = format!("Gemini Cloud ({}) (RPM: {})", model, rpm);
@@ -7676,6 +8042,29 @@ async fn save_audio(
                                     detected_silence = true;
                                     break;
                                 }
+                                if has_stt_timestamp_pollution(tr) || has_stt_timestamp_pollution(ai) {
+                                    log_tts_error(
+                                        "Gemini STT timestamp pollution",
+                                        &format!("Model: {}, preset: {}", model, preset),
+                                    );
+                                    record_model_timecode_pollution(model);
+                                    let san_tr = sanitize_stt_timestamps(tr);
+                                    let san_ai = sanitize_stt_timestamps(ai);
+                                    if !san_tr.is_empty() && sanitized_backup.is_none() {
+                                        let san_json = serde_json::json!({
+                                            "transcript": san_tr,
+                                            "ai_result": san_ai
+                                        })
+                                        .to_string();
+                                        sanitized_backup = Some((
+                                            san_json,
+                                            format!("Gemini Cloud ({}) (RPM: {})", model, rpm),
+                                            format!("Gemini Cloud ({})", model),
+                                        ));
+                                    }
+                                    last_err = format!("Модель {} вернула таймкоды в JSON, пробуем следующую модель", model);
+                                    continue;
+                                }
                             } else if is_stub_transcript(&text) {
                                 last_err = format!("Модель {} вернула заглушку: {}", model, text);
                                 log_tts_error("Gemini stub returned", &last_err);
@@ -7693,6 +8082,13 @@ async fn save_audio(
                         log_tts_error("Gemini empty candidates", &last_err);
                     }
                 }
+            }
+        }
+        if gemini_text.is_none() {
+            if let Some((backup_text, backup_stt, backup_llm)) = sanitized_backup {
+                gemini_text = Some(backup_text);
+                used_stt_model = backup_stt;
+                used_llm_model = backup_llm;
             }
         }
     }
@@ -7791,8 +8187,12 @@ async fn save_audio(
             // Пытаемся распарсить JSON
             match serde_json::from_str::<serde_json::Value>(&cleaned) {
                 Ok(v) => {
-                    let tr = v.get("transcript").and_then(|val| val.as_str()).unwrap_or("").trim().to_string();
-                    let ai = v.get("ai_result").and_then(|val| val.as_str()).unwrap_or("").trim().to_string();
+                    let tr = sanitize_stt_timestamps(
+                        v.get("transcript").and_then(|val| val.as_str()).unwrap_or("").trim(),
+                    );
+                    let ai = sanitize_stt_timestamps(
+                        v.get("ai_result").and_then(|val| val.as_str()).unwrap_or("").trim(),
+                    );
                     if tr.is_empty() || is_stub_transcript(&tr) || is_stub_transcript(&ai) {
                         let _ = std::fs::remove_file(&file_path);
                         return Err("На записи не обнаружена разборчивая речь (тишина или фоновый шум)".to_string());
@@ -7809,13 +8209,17 @@ async fn save_audio(
                     let re_ai = regex::Regex::new(r#""ai_result"\s*:\s*"((?:[^"\\]|\\.)*)""#).unwrap();
                     
                     let tr = if let Some(cap) = re_tr.captures(&cleaned) {
-                        cap.get(1).map(|m| m.as_str().replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\").trim().to_string()).unwrap_or_default()
+                        sanitize_stt_timestamps(
+                            &cap.get(1).map(|m| m.as_str().replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\").trim().to_string()).unwrap_or_default(),
+                        )
                     } else {
                         String::new()
                     };
                     
                     let ai = if let Some(cap) = re_ai.captures(&cleaned) {
-                        cap.get(1).map(|m| m.as_str().replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\").trim().to_string()).unwrap_or_default()
+                        sanitize_stt_timestamps(
+                            &cap.get(1).map(|m| m.as_str().replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\").trim().to_string()).unwrap_or_default(),
+                        )
                     } else {
                         String::new()
                     };
@@ -8006,8 +8410,8 @@ async fn process_ai_request(
         history[entry_idx].ai_results.extend(ai_results);
         history[entry_idx].llm_model = format!("{} ({})", server.name, server.model);
 
-        save_to_history_internal(&app_handle, history[entry_idx].clone())?;
-        let _ = app_handle.emit("history-updated", history[entry_idx].clone());
+        save_history_internal(&app_handle, &history)?;
+        let _ = app_handle.emit("history-updated", serde_json::json!({ "updated_id": entry_id }));
 
         return Ok(history);
     }
@@ -8020,6 +8424,7 @@ async fn process_ai_request(
     let api_key = config.api_key.trim().to_string();
     let mut last_err = String::new();
     let mut gemini_text: Option<String> = None;
+    let mut sanitized_backup: Option<(String, String)> = None;
     let mut used_llm_model = String::new();
 
     if !CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
@@ -8030,12 +8435,18 @@ async fn process_ai_request(
             let timeout = compute_gemini_audio_timeout(est_secs);
             let base64_audio = STANDARD.encode(&bytes);
 
-            let combined_prompt = format!(
-                r#"Прослушай аудиозапись и выполни следующую задачу:
-            {}
-            Ответь на русском языке."#,
-                prompt_essence
-            );
+            let combined_prompt = if preset == "transcript" {
+                format!(
+                    "Сделай точную и полную литературно-грамотную транскрипцию всей речи из этой аудиозаписи на русском языке: расставь пунктуацию и абзацы, убери слова-паразиты и случайные оговорки, но полностью сохрани весь смысл и детали. {} Верни ТОЛЬКО готовый чистый текст речи без вводных фраз.",
+                    NO_TIMESTAMPS_AUDIO_RULE
+                )
+            } else {
+                format!(
+                    "Прослушай аудиозапись и выполни следующую задачу:\n{}\n{}\nОтветь на русском языке.",
+                    prompt_essence,
+                    NO_TIMESTAMPS_AUDIO_RULE
+                )
+            };
 
             let payload = serde_json::json!([{
                 "parts": [
@@ -8102,8 +8513,27 @@ async fn process_ai_request(
                 }
                 Ok(Ok(body)) => {
                     if let Some(text) = extract_gemini_response_text(&body) {
+                        if source_type == "audio" && has_stt_timestamp_pollution(&text) {
+                            log_tts_error(
+                                "Gemini STT timestamp pollution",
+                                &format!("Model: {}, process_ai_request preset: {}", model, preset),
+                            );
+                            record_model_timecode_pollution(model);
+                            let cleaned = sanitize_stt_timestamps(&text);
+                            if !cleaned.is_empty() && sanitized_backup.is_none() {
+                                sanitized_backup =
+                                    Some((cleaned, format!("Gemini Cloud ({})", model)));
+                            }
+                            last_err = format!("Модель {} вернула таймкоды в тексте, пробуем следующую модель", model);
+                            continue;
+                        }
+                        let final_text = if source_type == "audio" {
+                            sanitize_stt_timestamps(&text)
+                        } else {
+                            text
+                        };
                         record_model_success(model);
-                        gemini_text = Some(text);
+                        gemini_text = Some(final_text);
                         used_llm_model = format!("Gemini Cloud ({})", model);
                         break;
                     } else {
@@ -8111,6 +8541,12 @@ async fn process_ai_request(
                         log_tts_error("Gemini empty candidates", &last_err);
                     }
                 }
+            }
+        }
+        if gemini_text.is_none() {
+            if let Some((backup_text, backup_llm)) = sanitized_backup {
+                gemini_text = Some(backup_text);
+                used_llm_model = backup_llm;
             }
         }
     }
@@ -8170,7 +8606,11 @@ async fn process_ai_request(
             } else if cleaned.starts_with("```") && cleaned.ends_with("```") {
                 cleaned = &cleaned[3..cleaned.len() - 3].trim();
             }
-            cleaned.to_string()
+            if source_type == "audio" {
+                sanitize_stt_timestamps(cleaned)
+            } else {
+                cleaned.to_string()
+            }
         }
     };
 
@@ -8189,7 +8629,515 @@ async fn process_ai_request(
     }
     save_history_internal(&app_handle, &history)?;
 
-    let _ = app_handle.emit("history-updated", ());
+    let _ = app_handle.emit("history-updated", serde_json::json!({ "updated_id": entry_id }));
+    Ok(history)
+}
+
+#[tauri::command]
+async fn retranscribe_history_entry(
+    app_handle: tauri::AppHandle,
+    entry_id: String,
+    mode: String,                   // "base" | "transcript_only" | "ai_index"
+    target_ai_index: Option<usize>,
+    model_override: Option<String>, // "different" | "auto" | "whisper_local" | "gemini-..." | "local_..."
+    preset_override: Option<String>,
+) -> Result<Vec<HistoryEntry>, String> {
+    CANCEL_REQUEST.store(false, std::sync::atomic::Ordering::SeqCst);
+
+    let mut history = load_history_internal(&app_handle)?;
+    let entry_idx = history
+        .iter()
+        .position(|e| e.id == entry_id)
+        .ok_or_else(|| "Запись не найдена в истории".to_string())?;
+
+    let audio_path_str = history[entry_idx].audio_path.clone();
+    if audio_path_str.trim().is_empty() || !std::path::Path::new(&audio_path_str).exists() {
+        return Err("Исходный аудиофайл для этой записи не найден на диске".to_string());
+    }
+
+    let config = load_config_internal(&app_handle)?;
+    let mode_norm = mode.trim().to_lowercase();
+    let model_opt = model_override
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+
+    // Определяем целевой пресет
+    let effective_preset = if mode_norm == "transcript_only" {
+        "none".to_string()
+    } else if let Some(ref po) = preset_override {
+        let p = po.trim();
+        if !p.is_empty() {
+            p.to_string()
+        } else {
+            "transcript".to_string()
+        }
+    } else if mode_norm == "ai_index" {
+        let idx = target_ai_index.unwrap_or(0);
+        history[entry_idx]
+            .ai_results
+            .get(idx)
+            .map(|r| r.preset.clone())
+            .filter(|p| !p.is_empty() && p != "error" && p != "custom")
+            .unwrap_or_else(|| "transcript".to_string())
+    } else {
+        history[entry_idx]
+            .ai_results
+            .first()
+            .map(|r| r.preset.clone())
+            .filter(|p| !p.is_empty() && p != "error" && p != "custom")
+            .or_else(|| {
+                let p = history[entry_idx].preset.trim();
+                if !p.is_empty() && p != "error" && p != "custom" {
+                    Some(p.to_string())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| "transcript".to_string())
+    };
+
+    let (user_preset_prompt, preset_label_str) = if effective_preset == "none" {
+        (String::new(), "Транскрипция".to_string())
+    } else {
+        let (p, l) = get_preset_prompt_and_label(&effective_preset);
+        (p.to_string(), l.to_string())
+    };
+
+    let now_ts = Local::now().format("%d.%m.%Y • %H:%M").to_string();
+    let use_whisper_only = model_opt == Some("whisper_local")
+        || (model_opt.is_none() || model_opt == Some("auto")) && config.stt_engine == "local";
+    let explicit_local_server = model_opt
+        .filter(|m| m.starts_with("local_"))
+        .and_then(|id| config.ai_servers.iter().find(|s| s.id == id))
+        .or_else(|| {
+            if (model_opt.is_none() || model_opt == Some("auto"))
+                && config.ai_model.starts_with("local_")
+            {
+                config.ai_servers.iter().find(|s| s.id == config.ai_model)
+            } else {
+                None
+            }
+        });
+
+    let (new_raw_opt, new_ai_opt, new_stt_model, new_llm_model): (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = if use_whisper_only || explicit_local_server.is_some() {
+        let local_tr = sanitize_stt_timestamps(&run_local_stt(&app_handle, &audio_path_str).await?);
+        if local_tr.trim().is_empty() || is_stub_transcript(&local_tr) {
+            return Err("Локальный Whisper не обнаружил разборчивую речь на записи".to_string());
+        }
+        let stt_label = format!("Whisper Local ({})", config.stt_local_model);
+
+        if mode_norm == "transcript_only" || effective_preset == "none" {
+            (
+                Some(local_tr),
+                None,
+                Some(stt_label),
+                Some("Нет (чистая транскрипция)".to_string()),
+            )
+        } else if let Some(server) = explicit_local_server {
+            let prompt = format!(
+                "Выполни постобработку текста по правилу: \"{}\". {}\nВерни только итоговый обработанный текст, без комментариев и без кавычек.\n\nТекст:\n{}",
+                user_preset_prompt, NO_TIMESTAMPS_AUDIO_RULE, local_tr
+            );
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(120))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new());
+            let processed = sanitize_stt_timestamps(&call_local_llm(&client, server, &prompt).await?);
+            (
+                Some(local_tr),
+                Some(processed),
+                Some(stt_label),
+                Some(format!("{} ({})", server.name, server.model)),
+            )
+        } else if model_opt == Some("whisper_local") {
+            // При явном выборе Локального Whisper — если выбран пресет, пробуем аккуратную постобработку или возвращаем чистый Whisper
+            if !config.api_key.trim().is_empty() && effective_preset != "transcript" {
+                match run_rest_text_postprocess(
+                    config.api_key.trim(),
+                    &config.ai_model,
+                    &local_tr,
+                    &effective_preset,
+                    &user_preset_prompt,
+                )
+                .await
+                {
+                    Ok((processed, llm_lbl)) => (
+                        Some(local_tr),
+                        Some(sanitize_stt_timestamps(&processed)),
+                        Some(stt_label),
+                        Some(llm_lbl),
+                    ),
+                    Err(_) => (
+                        Some(local_tr.clone()),
+                        Some(local_tr),
+                        Some(stt_label),
+                        Some("Нет (чистая транскрипция Whisper)".to_string()),
+                    ),
+                }
+            } else {
+                (
+                    Some(local_tr.clone()),
+                    Some(local_tr),
+                    Some(stt_label),
+                    Some("Нет (чистая транскрипция Whisper)".to_string()),
+                )
+            }
+        } else if !config.api_key.trim().is_empty() {
+            match run_rest_text_postprocess(
+                config.api_key.trim(),
+                &config.ai_model,
+                &local_tr,
+                &effective_preset,
+                &user_preset_prompt,
+            )
+            .await
+            {
+                Ok((processed, llm_lbl)) => (
+                    Some(local_tr),
+                    Some(sanitize_stt_timestamps(&processed)),
+                    Some(stt_label),
+                    Some(llm_lbl),
+                ),
+                Err(_) => (
+                    Some(local_tr.clone()),
+                    Some(local_tr),
+                    Some(stt_label),
+                    Some("Нет (чистая транскрипция Whisper)".to_string()),
+                ),
+            }
+        } else {
+            (
+                Some(local_tr.clone()),
+                Some(local_tr),
+                Some(stt_label),
+                Some("Нет (чистая транскрипция Whisper)".to_string()),
+            )
+        }
+    } else {
+        let api_key = config.api_key.trim().to_string();
+        if api_key.is_empty() {
+            return Err("API-ключ Gemini не настроен. Укажите его в Настройках или выберите Локальный Whisper.".to_string());
+        }
+
+        let bytes = std::fs::read(&audio_path_str)
+            .map_err(|e| format!("Не удалось прочитать аудиофайл: {}", e))?;
+        let est_secs = ((bytes.len() / 2000) as u32).max(history[entry_idx].duration_secs);
+        let audio_timeout = compute_gemini_audio_timeout(est_secs);
+        let base64_audio = STANDARD.encode(&bytes);
+
+        let prev_model = extract_gemini_model_from_label(&history[entry_idx].stt_model)
+            .or_else(|| extract_gemini_model_from_label(&history[entry_idx].llm_model));
+        let candidate_models = prioritize_audio_models_for_retry(
+            &config.ai_model,
+            model_opt,
+            prev_model.as_deref(),
+        );
+        let explicit_gemini_choice = model_opt
+            .filter(|m| is_valid_multimodal_gemini_model(m))
+            .map(|m| m.to_string());
+
+        let is_pure_verbatim = mode_norm == "transcript_only" || effective_preset == "none";
+        let is_direct_clean_transcript =
+            !is_pure_verbatim && effective_preset == "transcript";
+        let is_base_json = !is_pure_verbatim && !is_direct_clean_transcript && mode_norm == "base";
+
+        let combined_prompt = if is_pure_verbatim {
+            format!(
+                "Сделай точную дословную транскрипцию речи из этой аудиозаписи на русском языке. Запиши речь точно так, как она звучит, без комментариев и постобработки. {} ВАЖНО: если на записи тишина или нет разборчивой речи — верни строго __SILENCE__.",
+                NO_TIMESTAMPS_AUDIO_RULE
+            )
+        } else if is_direct_clean_transcript {
+            format!(
+                r#"Сделай точную и полную литературно-грамотную транскрипцию всей речи из этой аудиозаписи на русском языке:
+- Расставь правильную пунктуацию, заглавные буквы и абзацы по смыслу.
+- Убери явные звуки-паразиты («э-э», «м-м»), случайные заикания и оговорки, но ПОЛНОСТЬЮ сохрани все слова, детали, факты, структуру мысли и авторскую подачу без сокращений и без пересказа.
+- {}
+- КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО отвечать на вопросы из аудио, комментировать речь, добавлять вводные фразы или обёртки ```.
+- Если на записи тишина или нет разборчивой речи — верни СТРОГО маркер __SILENCE__.
+Верни ТОЛЬКО готовый чистый текст речи (или __SILENCE__)."#,
+                NO_TIMESTAMPS_AUDIO_RULE
+            )
+        } else if is_base_json {
+            format!(
+                r#"Ответь СТРОГО в формате JSON без markdown, без пояснений, без ```json, только чистый JSON:
+{{"transcript":"...","ai_result":"..."}}
+
+Правила:
+- Если в аудио нет разборчивой речи, верни {{"transcript":"","ai_result":""}}.
+- {}
+- "transcript": дословная транскрипция речи из аудио без таймкодов.
+- "ai_result": примени следующую инструкцию ТОЛЬКО к распознанной речи из поля transcript: {}
+
+В JSON-строках экранируй кавычки через \" и переносы строк через \n."#,
+                NO_TIMESTAMPS_AUDIO_RULE, user_preset_prompt
+            )
+        } else {
+            format!(
+                "Прослушай аудиозапись и выполни следующую задачу:\n{}\n{}\nОтветь на русском языке без вводных фраз и обёрток ```.",
+                user_preset_prompt, NO_TIMESTAMPS_AUDIO_RULE
+            )
+        };
+
+        let contents = serde_json::json!([{
+            "parts": [
+                {"inlineData": {"mimeType": "audio/webm", "data": base64_audio}},
+                {"text": combined_prompt}
+            ]
+        }]);
+
+        let client = build_gemini_http_client(audio_timeout);
+        let mut last_err = String::new();
+        let mut success_pair: Option<(Option<String>, Option<String>, String, String)> = None;
+        let mut sanitized_backup: Option<(Option<String>, Option<String>, String, String)> = None;
+
+        for model in &candidate_models {
+            if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err("Запрос отменен пользователем".to_string());
+            }
+            let is_user_explicit = explicit_gemini_choice
+                .as_deref()
+                .map(|m| m.eq_ignore_ascii_case(model))
+                .unwrap_or(false);
+            if !is_user_explicit && is_model_locked(model) {
+                last_err = format!("Модель {} временно заблокирована из-за 429", model);
+                continue;
+            }
+            let (rpm, _rpd) = match check_and_record_rate_limit(model) {
+                Ok(v) => v,
+                Err(limit_err) => {
+                    last_err = format!("Модель {} пропущена: {}", model, limit_err);
+                    continue;
+                }
+            };
+
+            let url = format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+                model, api_key
+            );
+            let preset_for_cfg = if is_pure_verbatim { "none" } else { &effective_preset };
+            match send_gemini_generate_content(
+                &client,
+                &url,
+                &contents,
+                model,
+                preset_for_cfg,
+                0.15,
+                is_base_json,
+            )
+            .await
+            {
+                Err(e) => {
+                    if CANCEL_REQUEST.load(std::sync::atomic::Ordering::SeqCst) {
+                        return Err("Запрос отменен пользователем".to_string());
+                    }
+                    last_err = format!("Сетевая ошибка ({}): {}", model, e);
+                    continue;
+                }
+                Ok(Err((status_code, err_text))) => {
+                    last_err = record_and_format_rest_error(model, status_code, &err_text);
+                    continue;
+                }
+                Ok(Ok(body)) => {
+                    let Some(raw_out) = extract_gemini_response_text(&body) else {
+                        last_err = format!("Пустой ответ от {}", model);
+                        continue;
+                    };
+
+                    if is_base_json {
+                        let mut cleaned = raw_out.trim().to_string();
+                        if let (Some(s), Some(e)) = (cleaned.find('{'), cleaned.rfind('}')) {
+                            if s <= e {
+                                cleaned = cleaned[s..=e].to_string();
+                            }
+                        }
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&cleaned) {
+                            let tr_raw = v.get("transcript").and_then(|x| x.as_str()).unwrap_or("").trim();
+                            let ai_raw = v.get("ai_result").and_then(|x| x.as_str()).unwrap_or("").trim();
+                            if tr_raw.is_empty() || is_stub_transcript(tr_raw) {
+                                last_err = format!("Модель {} вернула пустую речь или заглушку", model);
+                                continue;
+                            }
+                            let polluted = has_stt_timestamp_pollution(tr_raw)
+                                || has_stt_timestamp_pollution(ai_raw);
+                            let tr_clean = sanitize_stt_timestamps(tr_raw);
+                            let ai_clean = sanitize_stt_timestamps(ai_raw);
+                            let stt_lbl = format!("Gemini Cloud ({}) (RPM: {})", model, rpm);
+                            let llm_lbl = format!("Gemini Cloud ({})", model);
+                            if polluted {
+                                log_tts_error(
+                                    "Gemini STT timestamp pollution",
+                                    &format!("Model: {}, retranscribe JSON preset: {}", model, effective_preset),
+                                );
+                                record_model_timecode_pollution(model);
+                                if !tr_clean.is_empty() && sanitized_backup.is_none() {
+                                    sanitized_backup = Some((
+                                        Some(tr_clean),
+                                        Some(ai_clean),
+                                        stt_lbl,
+                                        llm_lbl,
+                                    ));
+                                }
+                                last_err = format!("Модель {} вернула таймкоды, пробуем следующую", model);
+                                continue;
+                            }
+                            record_model_success(model);
+                            success_pair = Some((Some(tr_clean), Some(ai_clean), stt_lbl, llm_lbl));
+                            break;
+                        } else {
+                            last_err = format!("Некорректный JSON от {}", model);
+                            continue;
+                        }
+                    } else {
+                        let mut clean = raw_out.trim().to_string();
+                        if let Some(rest) = clean.strip_prefix("```text") {
+                            clean = rest.to_string();
+                        } else if let Some(rest) = clean.strip_prefix("```") {
+                            clean = rest.to_string();
+                        }
+                        if let Some(rest) = clean.strip_suffix("```") {
+                            clean = rest.to_string();
+                        }
+                        clean = clean.trim().to_string();
+
+                        if clean.is_empty() || clean == "__SILENCE__" || is_stub_transcript(&clean) {
+                            last_err = format!("Модель {} вернула пустую речь или заглушку", model);
+                            continue;
+                        }
+
+                        let polluted = has_stt_timestamp_pollution(&clean);
+                        let sanitized = sanitize_stt_timestamps(&clean);
+                        let stt_lbl = format!("Gemini Cloud ({}) (RPM: {})", model, rpm);
+                        let llm_lbl = if is_pure_verbatim {
+                            "Нет (чистая транскрипция)".to_string()
+                        } else if is_direct_clean_transcript {
+                            format!("Gemini Cloud ({}) (Single-Pass)", model)
+                        } else {
+                            format!("Gemini Cloud ({})", model)
+                        };
+
+                        if polluted {
+                            log_tts_error(
+                                "Gemini STT timestamp pollution",
+                                &format!("Model: {}, retranscribe mode: {}", model, mode_norm),
+                            );
+                            record_model_timecode_pollution(model);
+                            if !sanitized.is_empty() && sanitized_backup.is_none() {
+                                let (r_opt, a_opt) = if is_pure_verbatim {
+                                    (Some(sanitized), None)
+                                } else if mode_norm == "ai_index" && !is_direct_clean_transcript {
+                                    (None, Some(sanitized))
+                                } else {
+                                    (Some(sanitized.clone()), Some(sanitized))
+                                };
+                                sanitized_backup = Some((r_opt, a_opt, stt_lbl, llm_lbl));
+                            }
+                            last_err = format!("Модель {} вернула таймкоды, пробуем следующую", model);
+                            continue;
+                        }
+
+                        record_model_success(model);
+                        let (r_opt, a_opt) = if is_pure_verbatim {
+                            (Some(sanitized), None)
+                        } else if mode_norm == "ai_index" && !is_direct_clean_transcript {
+                            (None, Some(sanitized))
+                        } else {
+                            (Some(sanitized.clone()), Some(sanitized))
+                        };
+                        success_pair = Some((r_opt, a_opt, stt_lbl, llm_lbl));
+                        break;
+                    }
+                }
+            }
+        }
+
+        let resolved = success_pair.or(sanitized_backup);
+        match resolved {
+            Some((r_opt, a_opt, stt_lbl, llm_lbl)) => {
+                (r_opt, a_opt, Some(stt_lbl), Some(llm_lbl))
+            }
+            None => {
+                return Err(format!(
+                    "Не удалось пересоздать транскрипцию: {}",
+                    clean_gemini_error(&last_err)
+                ));
+            }
+        }
+    };
+
+    // Обновляем запись в истории НА МЕСТЕ (без дублирования!)
+    if let Some(ref raw_tr) = new_raw_opt {
+        history[entry_idx].raw_transcript = raw_tr.clone();
+        history[entry_idx].transcript = raw_tr.clone();
+    }
+    if let Some(stt_lbl) = new_stt_model {
+        if mode_norm != "ai_index" || history[entry_idx].stt_model.is_empty() || new_raw_opt.is_some() {
+            history[entry_idx].stt_model = stt_lbl;
+        }
+    }
+    if let Some(llm_lbl) = new_llm_model {
+        if mode_norm != "transcript_only" || history[entry_idx].ai_results.is_empty() {
+            history[entry_idx].llm_model = llm_lbl;
+        }
+    }
+
+    if mode_norm == "transcript_only" {
+        if history[entry_idx].preset == "error" || history[entry_idx].preset.is_empty() {
+            history[entry_idx].preset = "transcript".to_string();
+            history[entry_idx].preset_label = "Транскрипция".to_string();
+        }
+    } else if mode_norm == "ai_index" {
+        if let Some(ai_text) = new_ai_opt {
+            let idx = target_ai_index.unwrap_or(0);
+            if let Some(existing) = history[entry_idx].ai_results.get_mut(idx) {
+                existing.text = ai_text;
+                existing.timestamp = now_ts;
+                if preset_override.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false) {
+                    existing.preset = effective_preset.clone();
+                    existing.preset_label = preset_label_str.clone();
+                }
+            } else {
+                history[entry_idx].ai_results.push(AiResult {
+                    preset: effective_preset.clone(),
+                    preset_label: preset_label_str.clone(),
+                    text: ai_text,
+                    timestamp: now_ts,
+                });
+            }
+        }
+    } else {
+        // mode == "base": обновляем базовый пресет и основной результат ai_results[0] на месте
+        history[entry_idx].preset = if effective_preset == "none" {
+            "transcript".to_string()
+        } else {
+            effective_preset.clone()
+        };
+        history[entry_idx].preset_label = preset_label_str.clone();
+
+        if let Some(ai_text) = new_ai_opt {
+            if let Some(first) = history[entry_idx].ai_results.first_mut() {
+                first.preset = effective_preset.clone();
+                first.preset_label = preset_label_str.clone();
+                first.text = ai_text;
+                first.timestamp = now_ts;
+            } else {
+                history[entry_idx].ai_results.push(AiResult {
+                    preset: effective_preset.clone(),
+                    preset_label: preset_label_str.clone(),
+                    text: ai_text,
+                    timestamp: now_ts,
+                });
+            }
+        }
+    }
+
+    save_history_internal(&app_handle, &history)?;
+    let _ = app_handle.emit("history-updated", serde_json::json!({ "updated_id": entry_id }));
     Ok(history)
 }
 
@@ -13925,7 +14873,8 @@ pub fn run() {
             process_ocr_hybrid,
             start_ocr_scan_async,
             get_virtual_desktop_rect,
-            process_ai_request
+            process_ai_request,
+            retranscribe_history_entry
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -14538,5 +15487,120 @@ mod layout_tests {
         assert_eq!(simulate_phrase_typing(&["Option", "B", "is", "good"], true), "Option B is good");
         assert_eq!(simulate_phrase_typing(&["Vitamin", "C", "works"], true), "Vitamin C works");
         assert_eq!(simulate_phrase_typing(&["hello", "z", "levf."], true), "hello я думаю");
+    }
+
+    #[test]
+    fn test_gemini_live_tts_always_disables_thinking() {
+        assert_eq!(
+            normalize_gemini_live_tts_model(""),
+            "gemini-2.5-flash-native-audio-latest"
+        );
+        assert_eq!(
+            normalize_gemini_live_tts_model("models/gemini-2.5-flash-native-audio-latest"),
+            "gemini-2.5-flash-native-audio-latest"
+        );
+        assert_eq!(
+            normalize_gemini_live_tts_model("gemini-3.8-live-extended-thinking"),
+            "gemini-3.8-live"
+        );
+        assert_eq!(
+            normalize_gemini_live_tts_model("models/gemini-3.8-live-extended-thinking"),
+            "gemini-3.8-live"
+        );
+        assert_eq!(
+            normalize_gemini_live_tts_model("gemini-3.1-flash-live-preview"),
+            "gemini-3.1-flash-live-preview"
+        );
+
+        let cfg_25 = build_gemini_live_tts_gen_config(
+            "models/gemini-2.5-flash-native-audio-latest",
+            "Aoede",
+        );
+        assert_eq!(cfg_25["thinkingConfig"]["thinkingBudget"], 0);
+        assert_eq!(cfg_25["thinkingConfig"]["includeThoughts"], false);
+        assert!(cfg_25["thinkingConfig"].get("thinkingLevel").is_none());
+        assert_eq!(
+            cfg_25["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"],
+            "Aoede"
+        );
+
+        let cfg_31 = build_gemini_live_tts_gen_config(
+            "models/gemini-3.1-flash-live-preview",
+            "Kore",
+        );
+        assert_eq!(cfg_31["thinkingConfig"]["thinkingLevel"], "MINIMAL");
+        assert_eq!(cfg_31["thinkingConfig"]["includeThoughts"], false);
+        assert!(cfg_31["thinkingConfig"].get("thinkingBudget").is_none());
+
+        let cfg_38 = build_gemini_live_tts_gen_config("models/gemini-3.8-live", "Charon");
+        assert!(cfg_38.get("thinkingConfig").is_none());
+    }
+
+    #[test]
+    fn test_stt_timestamp_detection_sanitization_and_retry_order() {
+        // 1. Точный пример со скриншота пользователя (inline SRT + разрыв слова "на" / "ложение")
+        let screenshot_sample = concat!(
+            "Ну пройдись по всему терминалу, его 00:00:03,800 --> 00:00:05,280\n",
+            " недавно обновили.\n",
+            "Похоже 00:00:05,520 --> 00:00:08,260\n",
+            ", появились много чего ещё нужно перевести 00:00:08,260 --> 00:00:10,240\n",
+            ", новые функции появились и так далее. 00:00:10,720 --> 00:00:13,240\n",
+            "А ещё посмотри какой-то баг 00:00:13,760 --> 00:00:15,700\n",
+            " происходит в тот момент, когда я нажимаю 00:00:15,700 --> 00:00:17,320\n",
+            " на три точки,\n",
+            "происходит на 00:00:18,520 --> 00:00:23,100\n",
+            "ложение нашей панели переключения языков."
+        );
+        assert!(has_stt_timestamp_pollution(screenshot_sample));
+        let cleaned = sanitize_stt_timestamps(screenshot_sample);
+        assert!(!has_stt_timestamp_pollution(&cleaned));
+        assert!(cleaned.contains("его недавно обновили."));
+        assert!(cleaned.contains("Похоже, появились"));
+        assert!(cleaned.contains("перевести, новые функции появились и так далее."));
+        assert!(cleaned.contains("происходит наложение нашей панели переключения языков."));
+        assert!(!cleaned.contains("-->"));
+        assert!(!cleaned.contains("00:00:"));
+
+        // 2. Классический многострочный SRT не должен склеивать отдельные слова
+        let classic_srt = "1\n00:00:00,000 --> 00:00:02,000\nпривет\n\n2\n00:00:02,000 --> 00:00:04,000\nмир";
+        assert!(has_stt_timestamp_pollution(classic_srt));
+        let cleaned_srt = sanitize_stt_timestamps(classic_srt);
+        assert_eq!(cleaned_srt, "привет мир");
+
+        // 3. Скобочные и WEBVTT таймкоды
+        let vtt = "WEBVTT\n\n00:00.000 --> 00:02.500\n[00:00] Проверка связи.\n[00:03] Всё работает.";
+        assert!(has_stt_timestamp_pollution(vtt));
+        assert_eq!(sanitize_stt_timestamps(vtt), "Проверка связи.\nВсё работает.");
+
+        // 4. Обычная живая речь со временем НЕ должна считаться таймкодами и НЕ должна портиться
+        let normal_speech = "Встреча назначена на 14:30, а созвон с 10:00 до 12:00.";
+        assert!(!has_stt_timestamp_pollution(normal_speech));
+        assert_eq!(sanitize_stt_timestamps(normal_speech), normal_speech);
+
+        // 5. Извлечение имени модели из подписи и порядок выбора другой модели при повторной транскрибации
+        assert_eq!(
+            extract_gemini_model_from_label("Gemini Cloud (gemini-3.5-flash) (RPM: 1)").as_deref(),
+            Some("gemini-3.5-flash")
+        );
+        assert_eq!(
+            extract_gemini_model_from_label("Whisper Local (ggml-base.bin)"),
+            None
+        );
+
+        let diff_order = prioritize_audio_models_for_retry(
+            "gemini-3.5-flash",
+            Some("different"),
+            Some("gemini-3.5-flash"),
+        );
+        assert!(!diff_order.is_empty());
+        assert_ne!(diff_order[0], "gemini-3.5-flash");
+        assert_eq!(diff_order.last().map(|s| s.as_str()), Some("gemini-3.5-flash"));
+
+        let explicit_order = prioritize_audio_models_for_retry(
+            "gemini-3.5-flash",
+            Some("gemini-2.5-flash"),
+            Some("gemini-3.5-flash"),
+        );
+        assert_eq!(explicit_order.first().map(|s| s.as_str()), Some("gemini-2.5-flash"));
     }
 }

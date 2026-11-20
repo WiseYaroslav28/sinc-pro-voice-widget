@@ -1,6 +1,6 @@
 [package]
 name = "sinc-pro-voice-widget"
-version = "3.5.61"
+version = "3.5.62"
 description = "SincPro"
 authors = ["WiseYaroslav"]
 edition = "2021"

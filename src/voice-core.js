@@ -234,8 +234,11 @@ class VoiceCore {
                 }
                 if (config.tts_engine) this.settings.tts_engine = config.tts_engine;
                 if (config.tts_local_voice) this.settings.tts_local_voice = config.tts_local_voice;
-                if (config.tts_gemini_model) this.settings.tts_gemini_model = config.tts_gemini_model;
-                if (config.tts_gemini_thinking) this.settings.tts_gemini_thinking = config.tts_gemini_thinking;
+                if (config.tts_gemini_model) {
+                    const m = String(config.tts_gemini_model).trim();
+                    this.settings.tts_gemini_model = m.toLowerCase().includes('extended-thinking') ? 'gemini-3.8-live' : m;
+                }
+                this.settings.tts_gemini_thinking = 'off';
                 this.settings.installedVoices = voices;
                 this.audioElement.playbackRate = this.settings.speed;
                 this.applyEffectiveVolume(this.settings.volume);
@@ -254,8 +257,8 @@ class VoiceCore {
                 startBufferChars: isNaN(parsedBuf) ? 300 : Math.max(0, Math.min(5000, parsedBuf)),
                 tts_engine: savedSettings.tts_engine || 'edge',
                 tts_local_voice: savedSettings.tts_local_voice || 'ru_RU-dmitri-medium.onnx',
-                tts_gemini_model: savedSettings.tts_gemini_model || 'gemini-2.5-flash-native-audio-latest',
-                tts_gemini_thinking: savedSettings.tts_gemini_thinking || 'off'
+                tts_gemini_model: (savedSettings.tts_gemini_model && !String(savedSettings.tts_gemini_model).toLowerCase().includes('extended-thinking')) ? savedSettings.tts_gemini_model : 'gemini-2.5-flash-native-audio-latest',
+                tts_gemini_thinking: 'off'
             };
         }
 
@@ -1352,9 +1355,12 @@ class VoiceCore {
                         if (p.tts_engine !== undefined) this.settings.tts_engine = p.tts_engine;
                         if (p.tts_local_voice !== undefined) this.settings.tts_local_voice = p.tts_local_voice;
                         if (p.tts_gemini_model !== undefined) this.settings.tts_gemini_model = p.tts_gemini_model;
-                        if (p.tts_gemini_thinking !== undefined) this.settings.tts_gemini_thinking = p.tts_gemini_thinking;
                         if (p.installedVoices !== undefined) this.settings.installedVoices = p.installedVoices;
                     }
+                    if (this.settings.tts_gemini_model && String(this.settings.tts_gemini_model).toLowerCase().includes('extended-thinking')) {
+                        this.settings.tts_gemini_model = 'gemini-3.8-live';
+                    }
+                    this.settings.tts_gemini_thinking = 'off';
                     if (src.tts_engine !== undefined) {
                         const ttsEngEl = document.getElementById('setting-tts-engine');
                         if (ttsEngEl) ttsEngEl.value = src.tts_engine;

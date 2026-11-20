@@ -211,7 +211,7 @@
               <h1 class="font-bold text-[#d2bbff] tracking-tight text-[18px] leading-none sidebar-logo">SINC PRO</h1>
               <div class="flex items-center gap-1.5 mt-1 sidebar-subtext">
                 <p class="text-[9px] text-[#ccc3d8] uppercase tracking-wider">Audio Intelligence</p>
-                <span id="sidebar-version-badge" class="text-[9px] text-[#a377ff] font-semibold">v3.5.61</span>
+                <span id="sidebar-version-badge" class="text-[9px] text-[#a377ff] font-semibold">v3.5.62</span>
               </div>
             </div>
           </div>
@@ -352,10 +352,18 @@
                   <option value="transcript">📝 Транскрипция</option>
                 </select>
 
+                <!-- Кнопка: Обновить / пересоздать транскрипцию из исходного аудио -->
+                <button type="button" id="btn-retranscribe-active"
+                        class="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-[#7bd6d1] border border-[#7bd6d1]/30 bg-[#7bd6d1]/5 hover:bg-[#7bd6d1]/15 hover:border-[#7bd6d1]/60 transition-all flex-shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                        title="Пересоздать транскрипцию или результат из аудио с новой моделью">
+                  <span class="material-symbols-outlined text-[14px]" id="btn-retranscribe-icon">autorenew</span>
+                  <span class="hidden sm:inline">Обновить</span>
+                </button>
+
                 <!-- Кнопка: Новый запрос -->
                 <button id="btn-new-request"
                         class="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-[#8e52ff] border border-[#8e52ff]/30 bg-[#8e52ff]/5 hover:bg-[#8e52ff]/15 hover:border-[#8e52ff]/60 transition-all flex-shrink-0"
-                        title="Начать новую запись (Ctrl+Win)">
+                        title="Создать дополнительный ИИ-запрос по этой записи">
                   <span class="material-symbols-outlined text-[14px]">add_circle</span>
                   <span class="hidden sm:inline">Новый запрос</span>
                 </button>
@@ -391,9 +399,17 @@
               <!-- Текст сводки — занимает всё свободное место -->
               <div class="flex-1 relative overflow-hidden flex flex-col">
                 <!-- Тонкая аккуратная плашка с моделью -->
-                <div id="model-chain-info" class="hidden px-5 py-1.5 bg-[#1b1b20]/40 border-b border-[#4a4455]/10 text-[10px] text-[#b3a8c4]/80 items-center gap-1.5 font-medium select-none flex-shrink-0">
-                  <span class="material-symbols-outlined text-[12px] text-[#d2bbff]">neurology</span>
-                  <span id="model-chain-text">STT: ... ➔ LLM: ...</span>
+                <div id="model-chain-info" class="hidden px-5 py-1.5 bg-[#1b1b20]/40 border-b border-[#4a4455]/10 text-[10px] text-[#b3a8c4]/80 items-center justify-between gap-2 font-medium select-none flex-shrink-0">
+                  <div class="flex items-center gap-1.5 min-w-0">
+                    <span class="material-symbols-outlined text-[12px] text-[#d2bbff] flex-shrink-0">neurology</span>
+                    <span id="model-chain-text" class="truncate">STT: ... ➔ LLM: ...</span>
+                  </div>
+                  <button type="button" id="timestamp-warning-pill"
+                          class="hidden items-center gap-1 px-2 py-0.5 rounded-full text-[10px] text-[#ffd162] bg-[#ffd162]/10 border border-[#ffd162]/30 hover:bg-[#ffd162]/20 transition-colors cursor-pointer flex-shrink-0"
+                          title="В тексте обнаружены таймкоды субтитров — нажмите, чтобы пересоздать с другой моделью">
+                    <span class="material-symbols-outlined text-[12px]">schedule</span>
+                    <span>Таймкоды · Пересоздать</span>
+                  </button>
                 </div>
 
                 <div class="p-5 h-full overflow-y-auto flex-1">
@@ -680,22 +696,12 @@
                     <span class="text-[10px] text-[#7bd6d1]/80 bg-[#7bd6d1]/10 px-2 py-0.5 rounded border border-[#7bd6d1]/25">Unlimited RPM / RPD</span>
                   </div>
                   <select class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#7bd6d1]" id="setting-tts-gemini-model">
-                    <option value="gemini-2.5-flash-native-audio-latest">Gemini 2.5 Flash Native Audio Dialog — 1M TPM, Unlimited RPM/RPD</option>
-                    <option value="gemini-3.8-live">Gemini 3.8 Live — Сверхбыстрая (~0.5с), Unlimited RPM/RPD</option>
-                    <option value="gemini-3.1-flash-live-preview">Gemini 3 Flash Live — 65K TPM, Unlimited RPM/RPD</option>
-                    <option value="gemini-3.8-live-extended-thinking">Gemini 3.8 Live Extended Thinking — С размышлением, Unlimited RPM/RPD</option>
+                    <option value="gemini-2.5-flash-native-audio-latest">Gemini 2.5 Flash Native Audio Dialog — 1M TPM, без размышлений, Unlimited</option>
+                    <option value="gemini-3.8-live">Gemini 3.8 Live — Сверхбыстрая (~0.5с), нативно без размышлений, Unlimited</option>
+                    <option value="gemini-3.1-flash-live-preview">Gemini 3.1 Flash Live — 65K TPM, минимум размышлений (MINIMAL), Unlimited</option>
                   </select>
-                </div>
-                <div class="flex flex-col gap-2">
-                  <label class="text-[11px] text-[#ccc3d8]">Глубина размышления при озвучке Gemini (Thinking)</label>
-                  <select class="bg-[#0e0e13] border border-[#4a4455]/30 text-white rounded-lg p-2.5 text-[13px] focus:outline-none focus:border-[#7bd6d1]" id="setting-tts-gemini-thinking">
-                    <option value="off">Отключено / Минимальная (Budget: 0 / LOW) — мгновенный старт</option>
-                    <option value="low">Низкая (Budget: 128 / LOW)</option>
-                    <option value="medium">Средняя (Budget: 512 / MEDIUM)</option>
-                    <option value="high">Глубокая (Budget: 1024 / HIGH)</option>
-                  </select>
-                  <div class="text-[10px] text-[#ccc3d8]/65 leading-relaxed">
-                    Для включения озвучки через Gemini выберите любой голос <b>Gemini (Aoede, Kore, Charon, Fenrir...)</b> в меню выбора голоса плеера. Соединение держится через единый постоянный WebSocket с поддержкой обратной текстовой транскрибации.
+                  <div class="text-[10px] text-[#ccc3d8]/70 leading-relaxed">
+                    Режим размышления (<b>Thinking</b>) отключён для всех моделей Live-озвучки (<code class="text-[#7bd6d1]">thinkingBudget: 0</code> для 2.5 Native Audio, нативно без Thinking у 3.8 Live, <code class="text-[#7bd6d1]">thinkingLevel: MINIMAL</code> для 3.1 Flash Live) — текст озвучивается напрямую без лишних рассуждений. Для включения выберите любой голос <b>Gemini (Aoede, Kore, Charon, Fenrir...)</b> в плеере.
                   </div>
                 </div>
               </div>
@@ -1031,7 +1037,7 @@
               title="Нажмите, чтобы проверить обновления"
             >
               <span class="material-symbols-outlined text-[14px] text-[#a377ff]" id="dashboard-version-icon">verified</span>
-              <span id="dashboard-version-text" class="font-medium text-[#e4e1e9]">Версия 3.5.61</span>
+              <span id="dashboard-version-text" class="font-medium text-[#e4e1e9]">Версия 3.5.62</span>
               <span
                 id="dashboard-version-status"
                 class="text-[10px] px-1.5 py-0.5 rounded-full bg-[#7bd6d1]/15 text-[#7bd6d1] font-semibold border border-[#7bd6d1]/25 leading-none"
@@ -1427,13 +1433,12 @@
 
             document.getElementById('setting-stt-local-model').value = config.stt_local_model || 'ggml-base.bin';
             document.getElementById('setting-tts-local-voice').value = config.tts_local_voice || 'ru_RU-dmitri-medium.onnx';
+            const normalizedGeminiTtsModel = (config.tts_gemini_model && !String(config.tts_gemini_model).toLowerCase().includes('extended-thinking'))
+              ? config.tts_gemini_model
+              : (String(config.tts_gemini_model || '').toLowerCase().includes('extended-thinking') ? 'gemini-3.8-live' : 'gemini-2.5-flash-native-audio-latest');
             const geminiTtsModelEl = document.getElementById('setting-tts-gemini-model');
             if (geminiTtsModelEl) {
-              geminiTtsModelEl.value = config.tts_gemini_model || 'gemini-2.5-flash-native-audio-latest';
-            }
-            const geminiTtsThinkingEl = document.getElementById('setting-tts-gemini-thinking');
-            if (geminiTtsThinkingEl) {
-              geminiTtsThinkingEl.value = config.tts_gemini_thinking || 'off';
+              geminiTtsModelEl.value = normalizedGeminiTtsModel;
             }
             const magnetToggle = document.getElementById('setting-capsule-magnet');
             if (magnetToggle) {
@@ -1456,8 +1461,8 @@
             if (window.ttsEngine) {
               window.ttsEngine.settings.expressive = intonationVal;
               window.ttsEngine.settings.startBufferChars = startBufferCharsVal;
-              window.ttsEngine.settings.tts_gemini_model = config.tts_gemini_model || 'gemini-2.5-flash-native-audio-latest';
-              window.ttsEngine.settings.tts_gemini_thinking = config.tts_gemini_thinking || 'off';
+              window.ttsEngine.settings.tts_gemini_model = normalizedGeminiTtsModel;
+              window.ttsEngine.settings.tts_gemini_thinking = 'off';
               localStorage.setItem('tts-settings', JSON.stringify(window.ttsEngine.settings));
             }
             if (window.__TAURI__) {
@@ -1466,8 +1471,8 @@
                 settings: {
                   expressive: intonationVal,
                   startBufferChars: startBufferCharsVal,
-                  tts_gemini_model: config.tts_gemini_model || 'gemini-2.5-flash-native-audio-latest',
-                  tts_gemini_thinking: config.tts_gemini_thinking || 'off'
+                  tts_gemini_model: normalizedGeminiTtsModel,
+                  tts_gemini_thinking: 'off'
                 }
               }).catch(() => {});
             }
@@ -1569,7 +1574,7 @@
             stt_local_model: sttLocalModel,
             tts_local_voice: document.getElementById('setting-tts-local-voice').value,
             tts_gemini_model: document.getElementById('setting-tts-gemini-model')?.value || 'gemini-2.5-flash-native-audio-latest',
-            tts_gemini_thinking: document.getElementById('setting-tts-gemini-thinking')?.value || 'off',
+            tts_gemini_thinking: 'off',
             tts_expressive_intonation: ttsExpressiveVal,
             tts_start_buffer_chars: ttsStartBufferCharsVal,
             widget_scale: widgetScaleVal,
@@ -2174,7 +2179,6 @@
       document.getElementById('setting-stt-local-model').addEventListener('change', () => saveConfig(true));
       document.getElementById('setting-tts-local-voice').addEventListener('change', () => saveConfig(true));
       document.getElementById('setting-tts-gemini-model')?.addEventListener('change', () => saveConfig(true));
-      document.getElementById('setting-tts-gemini-thinking')?.addEventListener('change', () => saveConfig(true));
 
       const userNameInputEl = document.getElementById('setting-user-name');
       if (userNameInputEl) {
@@ -2741,13 +2745,16 @@
       // ==========================================================================
       // ЛОГИКА ИСТОРИИ И АКТИВНОСТИ
       // ==========================================================================
-      async function refreshHistory() {
+      async function refreshHistory(preferredEntryId = null) {
         if (invoke) {
           try {
             currentHistory = await invoke('load_history');
             renderHistory();
             if (currentHistory.length > 0) {
-              renderActiveCard(currentHistory[0]);
+              const target = preferredEntryId
+                ? currentHistory.find(e => e.id === preferredEntryId)
+                : null;
+              renderActiveCard(target || currentHistory[0]);
             } else {
               renderActiveCard(null);
             }
@@ -2907,6 +2914,9 @@
                     <button class="p-1 rounded text-[#ccc3d8] hover:text-[#d2bbff] hbtn-copy" data-id="${entry.id}" title="Копировать">
                       <span class="material-symbols-outlined text-[14px]">content_copy</span>
                     </button>
+                    ${entry.audio_path ? `<button type="button" class="p-1 rounded text-[#ccc3d8] hover:text-[#7bd6d1] hbtn-retranscribe" data-id="${entry.id}" title="Обновить транскрипцию из аудио с новой моделью">
+                      <span class="material-symbols-outlined text-[14px]">autorenew</span>
+                    </button>` : ''}
                     <button class="p-1 rounded text-[#ccc3d8] hover:text-[#7bd6d1] hbtn-edit" data-id="${entry.id}" title="Редактировать" id="hbtn-edit-${entry.id}">
                       <span class="material-symbols-outlined text-[14px]">edit</span>
                     </button>
@@ -3095,6 +3105,31 @@
 
       let dashboardViewMode = localStorage.getItem('dashboardViewMode') || 'ai_0';
 
+      function hasTimestampArtifacts(text) {
+        if (!text) return false;
+        return /\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?\s*-->\s*\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?/.test(text)
+          || /\b\d{1,2}:\d{2}(?::\d{2})?[.,]\d{2,3}\b/.test(text)
+          || /^\s*WEBVTT\b/i.test(text)
+          || /^\s*[\[\(]\s*\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?\s*[\]\)]/m.test(text);
+      }
+
+      function syncActiveRetranscribeControls(entry, displayText) {
+        const btnRetranscribe = document.getElementById('btn-retranscribe-active');
+        const hasAudio = !!(entry && entry.audio_path && String(entry.audio_path).trim().length > 0);
+        if (btnRetranscribe) {
+          btnRetranscribe.disabled = !hasAudio;
+          btnRetranscribe.title = hasAudio
+            ? 'Пересоздать транскрипцию или результат из аудио с новой моделью'
+            : 'Для этой записи нет исходного аудиофайла';
+        }
+        const warningPill = document.getElementById('timestamp-warning-pill');
+        if (warningPill) {
+          const showWarn = hasAudio && hasTimestampArtifacts(displayText);
+          warningPill.classList.toggle('hidden', !showWarn);
+          warningPill.classList.toggle('flex', showWarn);
+        }
+      }
+
       function onDashboardViewChange() {
         const combo = document.getElementById('dashboard-view-combo');
         if (!combo) return;
@@ -3107,6 +3142,7 @@
         const summaryText = document.getElementById('summary-text');
         const displayText = getDisplayText(currentActiveEntry, dashboardViewMode);
         if (summaryText) summaryText.innerHTML = (displayText || '—').replace(/\n/g, '<br>');
+        syncActiveRetranscribeControls(currentActiveEntry, displayText);
       }
 
       // Озвучить — отправляем текст в локальный VoiceCore через tts-state-sync
@@ -3277,6 +3313,7 @@
             modelChainInfo.classList.add('hidden');
             modelChainInfo.classList.remove('flex');
           }
+          syncActiveRetranscribeControls(null, '');
           return;
         }
 
@@ -3315,6 +3352,7 @@
         // Отображаем текст
         const displayText = getDisplayText(entry, dashboardViewMode);
         if (summaryText) summaryText.innerHTML = (displayText || '—').replace(/\n/g, '<br>');
+        syncActiveRetranscribeControls(entry, displayText);
         if (spoilerContent) spoilerContent.textContent = entry.raw_transcript || '—';
         if (activityTime) activityTime.textContent = entry.timestamp || '—';
         if (activityModel) {
@@ -3627,6 +3665,20 @@
           dashboardViewCombo.addEventListener('change', onDashboardViewChange);
         }
 
+        const btnRetranscribeActive = document.getElementById('btn-retranscribe-active');
+        if (btnRetranscribeActive) {
+          btnRetranscribeActive.addEventListener('click', () => {
+            openRetranscribeModal(currentActiveEntry ? currentActiveEntry.id : null);
+          });
+        }
+
+        const timestampWarningPill = document.getElementById('timestamp-warning-pill');
+        if (timestampWarningPill) {
+          timestampWarningPill.addEventListener('click', () => {
+            openRetranscribeModal(currentActiveEntry ? currentActiveEntry.id : null, { preferDifferent: true });
+          });
+        }
+
         const btnNewRequest = document.getElementById('btn-new-request');
         if (btnNewRequest) {
           btnNewRequest.addEventListener('click', () => {
@@ -3645,8 +3697,9 @@
           });
         }
 
-        // Инициализируем события модального окна нового запроса
+        // Инициализируем события модальных окон нового запроса и повторной транскрибации
         setupNewRequestModalEvents();
+        setupRetranscribeModalEvents();
 
         const magnetTrack = document.getElementById('magnet-toggle-track');
         const magnetToggle = document.getElementById('setting-capsule-magnet');
@@ -3710,6 +3763,17 @@
               e.stopPropagation();
               const id = copyBtn.getAttribute('data-id');
               copyHistoryText(id);
+              return;
+            }
+
+            // 4b. Кнопка обновления транскрипции из исходного аудио
+            const retranscribeBtn = e.target.closest('.hbtn-retranscribe');
+            if (retranscribeBtn) {
+              e.stopPropagation();
+              const id = retranscribeBtn.getAttribute('data-id');
+              const sel = document.getElementById(`hcard-view-${id}`);
+              const viewMode = sel ? sel.value : 'ai_0';
+              openRetranscribeModal(id, { viewMode });
               return;
             }
 
@@ -4115,11 +4179,343 @@
         }
       }
 
+      // ==========================================================================
+      // ЛОГИКА МОДАЛЬНОГО ОКНА "ОБНОВИТЬ / ПЕРЕСОЗДАТЬ ТРАНСКРИПЦИЮ" (<dialog>)
+      // ==========================================================================
+      let retranscribeTargetEntryId = null;
+      let retranscribeTargetAiIndex = 0;
+      let isRetranscribing = false;
+
+      function toggleRetranscribeBusy(busy) {
+        isRetranscribing = busy;
+        const modelSel = document.getElementById('retranscribe-model-select');
+        const modeSel = document.getElementById('retranscribe-mode-select');
+        const presetSel = document.getElementById('retranscribe-preset-select');
+        const closeBtn = document.getElementById('retranscribe-close-btn');
+        const cancelBtn = document.getElementById('retranscribe-cancel-btn');
+        const submitBtn = document.getElementById('retranscribe-submit-btn');
+        const submitIcon = document.getElementById('retranscribe-submit-icon');
+        const spinner = document.getElementById('retranscribe-spinner');
+        const submitText = document.getElementById('retranscribe-submit-text');
+
+        if (modelSel) modelSel.disabled = busy;
+        if (modeSel) modeSel.disabled = busy;
+        if (presetSel) presetSel.disabled = busy;
+        if (closeBtn) closeBtn.disabled = busy;
+        if (cancelBtn) cancelBtn.disabled = busy;
+        if (submitBtn) {
+          submitBtn.disabled = busy;
+          submitBtn.classList.toggle('opacity-70', busy);
+          submitBtn.classList.toggle('cursor-not-allowed', busy);
+        }
+        if (submitIcon) submitIcon.classList.toggle('hidden', busy);
+        if (spinner) spinner.hidden = !busy;
+        if (submitText) submitText.textContent = busy ? 'Обновление...' : 'Пересоздать';
+      }
+
+      function syncRetranscribePresetRowVisibility() {
+        const modeSel = document.getElementById('retranscribe-mode-select');
+        const presetRow = document.getElementById('retranscribe-preset-row');
+        if (!modeSel || !presetRow) return;
+        presetRow.classList.toggle('hidden', modeSel.value !== 'base');
+      }
+
+      function openRetranscribeModal(entryId, opts = {}) {
+        const targetId = entryId || (currentActiveEntry && currentActiveEntry.id);
+        const entry = currentHistory.find(e => e.id === targetId) || currentActiveEntry;
+        if (!entry) {
+          showToast('Сначала выберите или запишите аудио', true);
+          return;
+        }
+        if (!entry.audio_path || !String(entry.audio_path).trim()) {
+          showToast('Для этой записи нет сохранённого аудиофайла', true);
+          return;
+        }
+
+        const dialog = document.getElementById('retranscribe-modal');
+        const modelSel = document.getElementById('retranscribe-model-select');
+        const modeSel = document.getElementById('retranscribe-mode-select');
+        const presetSel = document.getElementById('retranscribe-preset-select');
+        const prevBadge = document.getElementById('retranscribe-prev-model-badge');
+        const errorBlock = document.getElementById('retranscribe-error-block');
+        if (!dialog || !modelSel || !modeSel || !presetSel) return;
+
+        retranscribeTargetEntryId = entry.id;
+        if (errorBlock) errorBlock.classList.add('hidden');
+        toggleRetranscribeBusy(false);
+
+        const prevChainLabel = [entry.stt_model, entry.llm_model].filter(Boolean).join(' ➔ ');
+        const prevMatch = String(entry.stt_model || entry.llm_model || '').match(/gemini-[a-z0-9.-]+/i);
+        const prevGeminiModel = prevMatch ? prevMatch[0].toLowerCase() : null;
+
+        if (prevBadge) {
+          if (prevChainLabel) {
+            prevBadge.textContent = `Ранее: ${prevChainLabel}`;
+            prevBadge.classList.remove('hidden');
+          } else {
+            prevBadge.classList.add('hidden');
+          }
+        }
+
+        // Заполняем модели (другая Gemini по умолчанию + список из настроек + Whisper Local)
+        modelSel.innerHTML = '';
+        if (prevGeminiModel) {
+          const optDiff = document.createElement('option');
+          optDiff.value = 'different';
+          optDiff.textContent = `🔄 Другая модель Gemini (авто, кроме ${prevGeminiModel})`;
+          modelSel.appendChild(optDiff);
+        }
+
+        const settingModelSel = document.getElementById('setting-ai-model');
+        const currentSettingModel = settingModelSel ? settingModelSel.value : '';
+        const optAuto = document.createElement('option');
+        optAuto.value = 'auto';
+        optAuto.textContent = currentSettingModel
+          ? `⚡ Текущая из настроек (${currentSettingModel})`
+          : '⚡ Текущая из настроек (авто)';
+        modelSel.appendChild(optAuto);
+
+        const seenModels = new Set();
+        const geminiModels = [];
+        if (settingModelSel) {
+          Array.from(settingModelSel.options).forEach(opt => {
+            const val = (opt.value || '').trim();
+            if (val && val.toLowerCase().startsWith('gemini-') && !seenModels.has(val.toLowerCase())) {
+              seenModels.add(val.toLowerCase());
+              geminiModels.push({ id: val, label: opt.textContent.trim() });
+            }
+          });
+        }
+        [
+          'gemini-3.5-flash',
+          'gemini-3.5-flash-lite',
+          'gemini-3.6-flash',
+          'gemini-2.5-flash',
+          'gemini-2.5-flash-lite',
+          'gemini-3-flash-preview',
+          'gemini-3.7-flash',
+          'gemini-3.8-flash',
+          'gemini-2.5-pro'
+        ].forEach(id => {
+          if (!seenModels.has(id)) {
+            seenModels.add(id);
+            geminiModels.push({ id, label: id });
+          }
+        });
+
+        const geminiGroup = document.createElement('optgroup');
+        geminiGroup.label = 'Облачные модели Gemini (Аудио)';
+        geminiModels.forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = m.id;
+          const isPrev = prevGeminiModel && m.id.toLowerCase() === prevGeminiModel;
+          opt.textContent = isPrev ? `${m.label} (предыдущая)` : m.label;
+          geminiGroup.appendChild(opt);
+        });
+        modelSel.appendChild(geminiGroup);
+
+        const localGroup = document.createElement('optgroup');
+        localGroup.label = 'Локальные движки';
+        const optWhisper = document.createElement('option');
+        optWhisper.value = 'whisper_local';
+        optWhisper.textContent = '💻 Локальный Whisper (офлайн)';
+        localGroup.appendChild(optWhisper);
+        (localAiServers || []).forEach(srv => {
+          const opt = document.createElement('option');
+          opt.value = srv.id;
+          opt.textContent = `🖥️ ${srv.name} (${srv.model})`;
+          localGroup.appendChild(opt);
+        });
+        modelSel.appendChild(localGroup);
+
+        modelSel.value = (prevGeminiModel && (opts.preferDifferent !== false)) ? 'different' : 'auto';
+
+        // Заполняем режим обновления (базовый результат, текущая вкладка, или чистая транскрипция)
+        const activeView = opts.viewMode || (currentActiveEntry && currentActiveEntry.id === entry.id ? dashboardViewMode : 'ai_0');
+        const baseFirstAi = entry.ai_results && entry.ai_results[0];
+        const basePreset = (baseFirstAi && baseFirstAi.preset && baseFirstAi.preset !== 'error' && baseFirstAi.preset !== 'custom')
+          ? baseFirstAi.preset
+          : ((entry.preset && entry.preset !== 'error' && entry.preset !== 'custom') ? entry.preset : 'transcript');
+        const baseLabel = baseFirstAi ? baseFirstAi.preset_label : (entry.preset_label || 'Текст');
+
+        modeSel.innerHTML = '';
+        const optBase = document.createElement('option');
+        optBase.value = 'base';
+        optBase.textContent = `📝 Базовую транскрипцию и основной текст («${baseLabel}»)`;
+        modeSel.appendChild(optBase);
+
+        let defaultMode = 'base';
+        retranscribeTargetAiIndex = 0;
+        if (activeView && activeView.startsWith('ai_')) {
+          const aiIdx = parseInt(activeView.replace('ai_', ''), 10);
+          if (!isNaN(aiIdx) && entry.ai_results && entry.ai_results[aiIdx]) {
+            retranscribeTargetAiIndex = aiIdx;
+            const curAi = entry.ai_results[aiIdx];
+            const optCurAi = document.createElement('option');
+            optCurAi.value = 'ai_index';
+            optCurAi.textContent = `🎯 Только текущую вкладку («${curAi.preset_label}»)`;
+            modeSel.appendChild(optCurAi);
+            if (aiIdx > 0 && !opts.preferDifferent) {
+              defaultMode = 'ai_index';
+            }
+          }
+        }
+
+        const optRaw = document.createElement('option');
+        optRaw.value = 'transcript_only';
+        optRaw.textContent = '📄 Только чистую дословную транскрипцию (без пресета)';
+        modeSel.appendChild(optRaw);
+
+        modeSel.value = defaultMode;
+        presetSel.value = ['transcript', 'essence', 'tasks', 'email', 'none'].includes(basePreset)
+          ? basePreset
+          : 'transcript';
+        syncRetranscribePresetRowVisibility();
+
+        if (!dialog.open) {
+          dialog.showModal();
+        }
+      }
+
+      function closeRetranscribeModal() {
+        if (isRetranscribing) return;
+        const dialog = document.getElementById('retranscribe-modal');
+        if (dialog && dialog.open) {
+          dialog.close('cancel');
+        }
+      }
+
+      async function submitRetranscribe() {
+        if (isRetranscribing || !retranscribeTargetEntryId) return;
+
+        const dialog = document.getElementById('retranscribe-modal');
+        const modelSel = document.getElementById('retranscribe-model-select');
+        const modeSel = document.getElementById('retranscribe-mode-select');
+        const presetSel = document.getElementById('retranscribe-preset-select');
+        const errorBlock = document.getElementById('retranscribe-error-block');
+        const errorText = document.getElementById('retranscribe-error-text');
+        if (!dialog || !modelSel || !modeSel || !presetSel) return;
+
+        const mode = modeSel.value || 'base';
+        const modelOverride = modelSel.value || 'different';
+        const presetOverride = mode === 'base' ? presetSel.value : null;
+
+        if (errorBlock) errorBlock.classList.add('hidden');
+        toggleRetranscribeBusy(true);
+
+        if (window.__TAURI__) {
+          try {
+            const updatedHistory = await window.__TAURI__.core.invoke('retranscribe_history_entry', {
+              entryId: retranscribeTargetEntryId,
+              mode,
+              targetAiIndex: mode === 'ai_index' ? retranscribeTargetAiIndex : null,
+              modelOverride,
+              presetOverride
+            });
+
+            currentHistory = updatedHistory;
+            renderHistory();
+
+            const updatedEntry = currentHistory.find(e => e.id === retranscribeTargetEntryId);
+            if (updatedEntry) {
+              if (mode === 'transcript_only' || (mode === 'base' && presetOverride === 'none')) {
+                dashboardViewMode = 'transcript';
+              } else if (mode === 'ai_index') {
+                dashboardViewMode = `ai_${retranscribeTargetAiIndex}`;
+              } else {
+                dashboardViewMode = (updatedEntry.ai_results && updatedEntry.ai_results.length > 0) ? 'ai_0' : 'transcript';
+              }
+              localStorage.setItem('dashboardViewMode', dashboardViewMode);
+              renderActiveCard(updatedEntry);
+            }
+
+            toggleRetranscribeBusy(false);
+            if (dialog.open) dialog.close('submit');
+            showToast('Транскрипция успешно обновлена из исходного аудио!', false);
+          } catch (err) {
+            console.error('Ошибка повторной транскрибации:', err);
+            if (errorText) errorText.textContent = String(err);
+            if (errorBlock) errorBlock.classList.remove('hidden');
+            toggleRetranscribeBusy(false);
+          }
+        } else {
+          setTimeout(() => {
+            const entry = currentHistory.find(e => e.id === retranscribeTargetEntryId);
+            if (entry) {
+              const mockClean = `[Mock обновлённая транскрипция, модель: ${modelOverride}] Текст успешно пересоздан без таймкодов.`;
+              entry.raw_transcript = mockClean;
+              entry.transcript = mockClean;
+              if (entry.ai_results && entry.ai_results.length > 0 && mode !== 'transcript_only') {
+                const idx = mode === 'ai_index' ? retranscribeTargetAiIndex : 0;
+                if (entry.ai_results[idx]) entry.ai_results[idx].text = mockClean;
+              }
+              renderHistory();
+              renderActiveCard(entry);
+            }
+            toggleRetranscribeBusy(false);
+            if (dialog.open) dialog.close('submit');
+            showToast('Транскрипция обновлена! (Mock)', false);
+          }, 900);
+        }
+      }
+
+      function setupRetranscribeModalEvents() {
+        const dialog = document.getElementById('retranscribe-modal');
+        const closeBtn = document.getElementById('retranscribe-close-btn');
+        const cancelBtn = document.getElementById('retranscribe-cancel-btn');
+        const submitBtn = document.getElementById('retranscribe-submit-btn');
+        const modeSel = document.getElementById('retranscribe-mode-select');
+        const form = document.getElementById('retranscribe-form');
+
+        if (!dialog) return;
+
+        // Запрещаем закрытие по Esc во время активного сетевого запроса
+        dialog.addEventListener('cancel', (e) => {
+          if (isRetranscribing) {
+            e.preventDefault();
+          }
+        });
+
+        // Очищаем returnValue после закрытия (по гайду native <dialog>)
+        dialog.addEventListener('close', () => {
+          dialog.returnValue = '';
+        });
+
+        // Прогрессивный фолбек light-dismiss для браузеров без поддержки <dialog closedby="any">
+        if (!('closedBy' in HTMLDialogElement.prototype)) {
+          const isOutside = (e) => {
+            const r = dialog.getBoundingClientRect();
+            return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+          };
+          let pressedOutside = false;
+          dialog.addEventListener('pointerdown', (e) => {
+            pressedOutside = isOutside(e);
+          });
+          dialog.addEventListener('pointerup', (e) => {
+            if (!isRetranscribing && pressedOutside && isOutside(e)) {
+              dialog.close('backdrop');
+            }
+          });
+        }
+
+        if (closeBtn) closeBtn.addEventListener('click', closeRetranscribeModal);
+        if (cancelBtn) cancelBtn.addEventListener('click', closeRetranscribeModal);
+        if (modeSel) modeSel.addEventListener('change', syncRetranscribePresetRowVisibility);
+        if (form) {
+          form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            submitRetranscribe();
+          });
+        } else if (submitBtn) {
+          submitBtn.addEventListener('click', submitRetranscribe);
+        }
+      }
+
       // Инициализация при загрузке
-      window.__SINC_APP_VERSION__ = '3.5.61';
+      window.__SINC_APP_VERSION__ = '3.5.62';
 
       function syncAppVersionDisplays(version, isMock = false) {
-        const cleanVer = String(version || '3.5.61').trim();
+        const cleanVer = String(version || '3.5.62').trim();
         window.__SINC_APP_VERSION__ = cleanVer;
         const suffix = isMock ? ' (Mock)' : '';
 
@@ -4144,10 +4540,10 @@
             syncAppVersionDisplays(version, false);
           }).catch(err => {
             console.error("Failed to load app version:", err);
-            syncAppVersionDisplays('3.5.61', false);
+            syncAppVersionDisplays('3.5.62', false);
           });
         } else {
-          syncAppVersionDisplays('3.5.61', true);
+          syncAppVersionDisplays('3.5.62', true);
         }
 
         setupAudioPlayer();
@@ -4185,7 +4581,7 @@
           'sidebar-toggle', 'player-play', 'player-progress',
           'api-status-text', 'api-status-dot',
           'dashboard-version-pill', 'btn-dashboard-github-star', 'btn-dashboard-feedback',
-          'update-modal', 'feedback-modal',
+          'update-modal', 'feedback-modal', 'btn-retranscribe-active', 'retranscribe-modal',
         ];
         REQUIRED_IDS.forEach(id => {
           check(`DOM: #${id} существует`, () => !!document.getElementById(id));
@@ -4482,9 +4878,10 @@
           switchTab('tab-history');
         });
 
-        // Слушаем событие обновления истории от капсулы
-        window.__TAURI__.event.listen('history-updated', () => {
-          refreshHistory();
+        // Слушаем событие обновления истории от капсулы или перетранскрибации
+        window.__TAURI__.event.listen('history-updated', (event) => {
+          const updatedId = event && event.payload && event.payload.updated_id ? event.payload.updated_id : null;
+          refreshHistory(updatedId);
         });
 
         // Слушаем событие обновления списка процессов-исключений автораскладки (Shift+Pause)
@@ -4635,7 +5032,7 @@
           const modalNotes = document.getElementById('update-modal-notes');
           const modalSkipBtn = document.getElementById('update-modal-skip-btn');
           if (modalVerBadge) modalVerBadge.textContent = `v${update.version}`;
-          if (modalCurVer) modalCurVer.textContent = `v${window.__SINC_APP_VERSION__ || '3.5.61'}`;
+          if (modalCurVer) modalCurVer.textContent = `v${window.__SINC_APP_VERSION__ || '3.5.62'}`;
           if (modalNotes) modalNotes.textContent = formatUpdateNotesForModal(update.body);
           if (modalSkipBtn) modalSkipBtn.textContent = `Пропустить v${update.version}`;
         }
@@ -4807,7 +5204,7 @@
                 if (skippedVer !== update.version && !sessionDismissedVersions.has(update.version)) {
                   await invoke('show_update_popup', {
                     payload: {
-                      currentVersion: window.__SINC_APP_VERSION__ || '3.5.61',
+                      currentVersion: window.__SINC_APP_VERSION__ || '3.5.62',
                       newVersion: update.version,
                       notes: update.body || ''
                     }
@@ -5063,7 +5460,7 @@
             <div>
               <h3 class="text-sm font-semibold tracking-wide text-white" id="update-modal-title">Доступно обновление SincPro</h3>
               <div class="text-[11px] text-[#ccc3d8] flex items-center gap-1.5 mt-0.5">
-                <span id="update-modal-cur-ver">v3.5.61</span>
+                <span id="update-modal-cur-ver">v3.5.62</span>
                 <span>→</span>
                 <span id="update-modal-ver-badge" class="font-bold text-[#7bd6d1]">v—</span>
               </div>
@@ -5507,7 +5904,7 @@
               };
               const meta = typeMap[selectedType] || typeMap.bug;
               const fullTitle = `${meta.prefix} ${rawTitle}`;
-              const appVer = window.__SINC_APP_VERSION__ || '3.5.61';
+              const appVer = window.__SINC_APP_VERSION__ || '3.5.62';
 
               let reportText = `## ${meta.heading}\n\n${rawBody}`;
               if (includeDiag) {
@@ -5606,6 +6003,72 @@
         </div>
       </div>
     </div>
+
+    <!-- Native Modal Dialog: Обновить / пересоздать транскрипцию из исходного аудио -->
+    <dialog id="retranscribe-modal" closedby="any" aria-labelledby="retranscribe-modal-title" class="sinc-dialog">
+      <form id="retranscribe-form" class="bg-[#1b1b20] border border-[#4a4455]/40 rounded-2xl w-[440px] max-w-full p-6 shadow-2xl flex flex-col gap-4 text-[#e4e1e9]">
+        <!-- Шапка -->
+        <div class="flex items-start justify-between gap-3 pb-3 border-b border-[#4a4455]/20">
+          <div class="flex items-start gap-2.5 min-w-0">
+            <span class="material-symbols-outlined text-[#7bd6d1] text-[20px] mt-0.5 flex-shrink-0">autorenew</span>
+            <div class="min-w-0">
+              <h3 id="retranscribe-modal-title" class="text-sm font-semibold tracking-wide text-white">Обновить транскрипцию</h3>
+              <p id="retranscribe-prev-model-badge" class="hidden text-[10px] text-[#b3a8c4]/80 mt-0.5 truncate"></p>
+            </div>
+          </div>
+          <button type="button" id="retranscribe-close-btn" aria-label="Закрыть" class="p-1 rounded-lg text-[#ccc3d8] hover:text-white hover:bg-[#2a292f] transition-all cursor-pointer outline-none flex-shrink-0">
+            <span class="material-symbols-outlined text-[18px]">close</span>
+          </button>
+        </div>
+
+        <!-- Параметры повторной транскрибации -->
+        <div class="flex flex-col gap-4">
+          <div class="flex flex-col gap-1.5">
+            <label for="retranscribe-model-select" class="text-[11px] text-[#ccc3d8] font-medium">Модель для повторной обработки</label>
+            <select id="retranscribe-model-select" autofocus class="bg-[#0e0e13] border border-[#4a4455]/30 text-[#e4e1e9] rounded-lg px-3 py-2 text-[12px] focus:outline-none focus:border-[#7bd6d1] focus:ring-1 focus:ring-[#7bd6d1] w-full transition-all cursor-pointer">
+            </select>
+          </div>
+
+          <div class="flex flex-col gap-1.5">
+            <label for="retranscribe-mode-select" class="text-[11px] text-[#ccc3d8] font-medium">Что обновить</label>
+            <select id="retranscribe-mode-select" class="bg-[#0e0e13] border border-[#4a4455]/30 text-[#e4e1e9] rounded-lg px-3 py-2 text-[12px] focus:outline-none focus:border-[#7bd6d1] focus:ring-1 focus:ring-[#7bd6d1] w-full transition-all cursor-pointer">
+            </select>
+          </div>
+
+          <div id="retranscribe-preset-row" class="flex flex-col gap-1.5">
+            <label for="retranscribe-preset-select" class="text-[11px] text-[#ccc3d8] font-medium">Базовый пресет обработки</label>
+            <select id="retranscribe-preset-select" class="bg-[#0e0e13] border border-[#4a4455]/30 text-[#e4e1e9] rounded-lg px-3 py-2 text-[12px] focus:outline-none focus:border-[#7bd6d1] focus:ring-1 focus:ring-[#7bd6d1] w-full transition-all cursor-pointer">
+              <option value="transcript">✍️ Текст (очищенная литературная речь)</option>
+              <option value="essence">💡 Суть (структурированный концепт)</option>
+              <option value="tasks">📋 Задачи (список TODO)</option>
+              <option value="email">✉️ Письмо (деловой Email)</option>
+              <option value="none">📄 Чистая дословная транскрипция</option>
+            </select>
+          </div>
+
+          <p class="text-[10px] text-[#ccc3d8]/70 leading-relaxed bg-[#13131a] border border-[#4a4455]/20 rounded-lg px-3 py-2">
+            Исходный аудиофайл будет распознан заново с защитой от таймкодов, а выбранный результат обновится на месте без создания дубликатов.
+          </p>
+
+          <div id="retranscribe-error-block" class="hidden text-[11px] text-[#ffb4ab] bg-[#ffb4ab]/10 border border-[#ffb4ab]/30 p-2.5 rounded-lg flex items-start gap-1.5">
+            <span class="material-symbols-outlined text-[14px] flex-shrink-0 mt-0.5">error</span>
+            <span id="retranscribe-error-text">Произошла ошибка</span>
+          </div>
+        </div>
+
+        <!-- Подвал -->
+        <div class="flex items-center justify-end gap-2.5 pt-3 border-t border-[#4a4455]/20 mt-1">
+          <button type="button" id="retranscribe-cancel-btn" class="px-4 py-2 rounded-xl text-[12px] font-medium text-[#ccc3d8] hover:text-white hover:bg-[#2a292f] border border-transparent transition-all cursor-pointer outline-none">
+            Отмена
+          </button>
+          <button type="submit" id="retranscribe-submit-btn" class="px-4 py-2 rounded-xl text-[12px] font-semibold text-[#0e0e13] bg-[#7bd6d1] hover:bg-[#95e2dd] shadow-lg shadow-[#7bd6d1]/15 transition-all cursor-pointer outline-none flex items-center justify-center gap-1.5 min-w-[126px]">
+            <span class="material-symbols-outlined text-[14px]" id="retranscribe-submit-icon">autorenew</span>
+            <progress id="retranscribe-spinner" class="loading-spinner" aria-label="Выполняется повторная транскрибация" hidden></progress>
+            <span id="retranscribe-submit-text">Пересоздать</span>
+          </button>
+        </div>
+      </form>
+    </dialog>
 
     <!-- Toast Notification -->
     <div class="fixed bottom-6 right-6 bg-[#1f1f24] text-white text-[13px] px-4 py-2.5 rounded-xl shadow-2xl border border-[#8e52ff]/30 transition-all duration-300 opacity-0 pointer-events-none z-[100] flex items-center gap-2" id="dashboard-toast">
